@@ -51,9 +51,9 @@ option_end()
 
 add_rules("mode.debug", "mode.release")
 
-add_requires("nng", {system = false, configs = {cxflags = "-fPIC"}})
-add_requires("nlohmann_json", {system = false})
-add_requires("zlib", {system = false})
+add_requires("nng", {configs = {cxflags = "-fPIC"}})
+add_requires("nlohmann_json")
+add_requires("gzip-hpp")
 
 
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
@@ -71,7 +71,7 @@ set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
 target("hkuserver")
     set_kind("$(kind)")
     
-    add_packages("hku_utils", "boost", "fmt", "spdlog", "flatbuffers", "nng", "nlohmann_json", "zlib")
+    add_packages("hku_utils", "boost", "fmt", "spdlog", "flatbuffers", "nng", "nlohmann_json", "gzip-hpp")
 
     add_includedirs("./src")
 
