@@ -69,12 +69,12 @@ add_requires("hku_utils",
 set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
 set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
 
-target("hkuserver")
+target("hku_httpd")
     set_kind("$(kind)")
     
     add_packages("hku_utils", "boost", "fmt", "spdlog", "flatbuffers", "nng", "nlohmann_json", "gzip-hpp")
 
-    add_includedirs("./src")
+    add_includedirs(".")
 
     if is_plat("windows") then
         add_cxflags("-wd4819")  
@@ -107,7 +107,7 @@ target("hkuserver")
     end
     
     -- add files
-    add_files("src/**.cpp")
+    add_files("hikyuu/**.cpp")
 
     after_build(function(target)
         -- os.cp("$(projectdir)/i8n/", target:targetdir())
