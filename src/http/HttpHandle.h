@@ -13,7 +13,7 @@
 
 #include <nlohmann/json.hpp>
 #include "HttpError.h"
-#include "mo/mo.h"
+#include "hikyuu/utilities/mo/mo.h"
 #include "hikyuu/utilities/log.h"
 
 using json = nlohmann::json;                  // 不保持插入排序

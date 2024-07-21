@@ -60,6 +60,7 @@ add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.gi
 add_requires("hku_utils", 
     {configs = {
         shared = true, 
+        mo = true,
         mysql = get_config("mysql"), 
         sqlite = get_config("sqlite"),
         stacktrace = get_config("stacktrace")
