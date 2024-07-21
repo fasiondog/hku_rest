@@ -9,9 +9,13 @@
 
 #include <string>
 
+#ifndef HKU_HTTP_API
+#define HKU_HTTP_API
+#endif
+
 namespace hku {
 
-std::string url_escape(const char* istr);
-std::string url_unescape(const char* istr);
+std::string HKU_HTTP_API url_escape(const char* istr);
+std::string HKU_HTTP_API url_unescape(const char* istr);
 
 }  // namespace hku

@@ -15,7 +15,7 @@
 
 namespace hku {
 
-class HttpServer {
+class HKU_HTTP_API HttpServer {
     CLASS_LOGGER_IMP(HttpServer)
 
 public:

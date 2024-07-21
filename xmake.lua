@@ -76,6 +76,17 @@ target("hku_httpd")
 
     add_includedirs(".")
 
+    if is_kind("shared") then 
+        if is_plat("windows") then
+            add_defines("HKU_HTTP_API=__declspec(dllexport)")
+        else
+            add_defines("HKU_HTTP_API=__attribute__((visibility(\"default\")))")
+            add_cxflags("-fPIC", {force=true})
+        end
+    elseif is_kind("static") and not is_plat("windows") then
+        add_cxflags("-fPIC", {force=true})
+    end    
+
     if is_plat("windows") then
         add_cxflags("-wd4819")  
         add_cxflags("-wd4251")  --template dll export warning

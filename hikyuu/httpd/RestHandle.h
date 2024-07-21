@@ -15,7 +15,7 @@
 
 namespace hku {
 
-class RestHandle : public HttpHandle {
+class HKU_HTTP_API RestHandle : public HttpHandle {
     CLASS_LOGGER(RestHandle)
 
 public:

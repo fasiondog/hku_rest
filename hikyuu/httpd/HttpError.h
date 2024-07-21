@@ -13,6 +13,10 @@
 #include <nng/nng.h>
 #include <nng/supplemental/http/http.h>
 
+#ifndef HKU_HTTP_API
+#define HKU_HTTP_API
+#endif
+
 namespace hku {
 
 #if !defined(__clang__) && !defined(__GNUC__)

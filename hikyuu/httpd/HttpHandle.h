@@ -37,7 +37,7 @@ namespace hku {
         }                                                                \
     }
 
-class HttpHandle {
+class HKU_HTTP_API HttpHandle {
     CLASS_LOGGER_IMP(HttpHandle)
 
 public:
