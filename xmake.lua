@@ -129,7 +129,7 @@ target("hku_httpd")
         add_links("mysqlclient")
     end
 
-    add_headerfiles("$(projectdir)/(hikyuu/**.h)", "$(projectdir)/(hikyuu/**.hpp)")
+    add_headerfiles("$(projectdir)/hikyuu/httpd/*.h")
     
     -- add files
     add_files("hikyuu/**.cpp")
