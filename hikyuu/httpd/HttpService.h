@@ -11,7 +11,7 @@
 
 namespace hku {
 
-class HKU_HTTP_API HttpService {
+class HttpService {
 public:
     HttpService() : HttpService("") {}
     HttpService(const char *url) : m_url(url) {}

@@ -13,6 +13,10 @@
 #include <hikyuu/utilities/thread/FuncWrapper.h>
 #include "HttpHandle.h"
 
+#ifndef HKU_HTTP_API
+#define HKU_HTTP_API
+#endif
+
 namespace hku {
 
 class HKU_HTTP_API HttpServer {

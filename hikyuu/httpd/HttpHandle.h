@@ -16,6 +16,10 @@
 #include "hikyuu/utilities/mo/mo.h"
 #include "hikyuu/utilities/log.h"
 
+#ifndef HKU_HTTP_API
+#define HKU_HTTP_API
+#endif
+
 using json = nlohmann::json;                  // 不保持插入排序
 using ordered_json = nlohmann::ordered_json;  // 保持插入排序
 

@@ -11,12 +11,16 @@
 #include <string_view>
 #include <string>
 #include <vector>
-#include "http/HttpHandle.h"
+#include "HttpHandle.h"
+
+#ifndef HKU_HTTP_API
+#define HKU_HTTP_API
+#endif
 
 namespace hku {
 
-class HKU_HTTP_API RestHandle : public HttpHandle {
-    CLASS_LOGGER(RestHandle)
+class RestHandle : public HttpHandle {
+    CLASS_LOGGER_IMP(RestHandle)
 
 public:
     explicit RestHandle(nng_aio *aio) : HttpHandle(aio) {

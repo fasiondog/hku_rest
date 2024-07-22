@@ -69,10 +69,22 @@ add_requires("hku_utils",
 set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
 set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
 
+-- for the windows platform (msvc)
+if is_plat("windows") then
+    -- add some defines only for windows
+    add_defines("NOCRYPT", "NOGDI")
+    add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
+    add_cxflags("-wd4819") -- template dll export warning
+    add_defines("WIN32_LEAN_AND_MEAN")
+    if is_mode("debug") then
+        add_cxflags("-Gs", "-RTC1", "/bigobj")
+    end
+end
+
 target("hku_httpd")
     set_kind("$(kind)")
     
-    add_packages("hku_utils", "boost", "fmt", "spdlog", "flatbuffers", "nng", "nlohmann_json", "gzip-hpp")
+    add_packages("hku_utils", "boost", "fmt", "spdlog", "nng", "nlohmann_json", "gzip-hpp")
 
     add_includedirs(".")
 
@@ -116,6 +128,8 @@ target("hku_httpd")
         add_links("sqlite3")
         add_links("mysqlclient")
     end
+
+    add_headerfiles("$(projectdir)/(hikyuu/**.h)", "$(projectdir)/(hikyuu/**.hpp)")
     
     -- add files
     add_files("hikyuu/**.cpp")
@@ -146,3 +160,6 @@ target("hku_httpd")
     end)
     
 target_end()
+
+
+includes("example/rest_server")
