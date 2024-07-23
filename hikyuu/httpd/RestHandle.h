@@ -13,8 +13,8 @@
 #include <vector>
 #include "HttpHandle.h"
 
-#ifndef HKU_HTTP_API
-#define HKU_HTTP_API
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
 #endif
 
 namespace hku {

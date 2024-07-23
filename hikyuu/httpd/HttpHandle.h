@@ -16,8 +16,8 @@
 #include "hikyuu/utilities/mo/mo.h"
 #include "hikyuu/utilities/log.h"
 
-#ifndef HKU_HTTP_API
-#define HKU_HTTP_API
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
 #endif
 
 using json = nlohmann::json;                  // 不保持插入排序
@@ -41,7 +41,7 @@ namespace hku {
         }                                                                \
     }
 
-class HKU_HTTP_API HttpHandle {
+class HKU_HTTPD_API HttpHandle {
     CLASS_LOGGER_IMP(HttpHandle)
 
 public:

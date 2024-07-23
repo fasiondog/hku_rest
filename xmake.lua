@@ -90,9 +90,9 @@ target("hku_httpd")
 
     if is_kind("shared") then 
         if is_plat("windows") then
-            add_defines("HKU_HTTP_API=__declspec(dllexport)")
+            add_defines("HKU_HTTPD_API=__declspec(dllexport)")
         else
-            add_defines("HKU_HTTP_API=__attribute__((visibility(\"default\")))")
+            add_defines("HKU_HTTPD_API=__attribute__((visibility(\"default\")))")
             add_cxflags("-fPIC", {force=true})
         end
     elseif is_kind("static") and not is_plat("windows") then

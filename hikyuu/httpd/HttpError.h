@@ -13,8 +13,8 @@
 #include <nng/nng.h>
 #include <nng/supplemental/http/http.h>
 
-#ifndef HKU_HTTP_API
-#define HKU_HTTP_API
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
 #endif
 
 namespace hku {
@@ -67,7 +67,7 @@ protected:
 // llvm 中的 std::exception 不接受参数
 class HttpError : public std::exception {
 public:
-    HttpError() : m_name("HttpErrot"), m_msg("Unknown http error!"){};
+    HttpError() : m_name("HttpErrot"), m_msg("Unknown http error!") {};
     explicit HttpError(const char* name) : m_name(name), m_msg("Unknown http error!") {}
     HttpError(const char* name, int http_status)
     : HttpError(name, http_status, fmt::format("Http status {}", http_status)) {}

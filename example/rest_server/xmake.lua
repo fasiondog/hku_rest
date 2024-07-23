@@ -12,7 +12,7 @@ target("rest_server")
         if is_plat("windows") then
             local pkg = target:dep("hku_httpd")
             if pkg:kind() == "shared" then
-                target:add("defines", "HKU_HTTP_API=__declspec(dllimport)")
+                target:add("defines", "HKU_HTTPD_API=__declspec(dllimport)")
             end
         end
     end)
