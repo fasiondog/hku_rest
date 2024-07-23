@@ -84,7 +84,7 @@ end
 target("hku_httpd")
     set_kind("$(kind)")
     
-    add_packages("hku_utils", "boost", "fmt", "spdlog", "nng", "nlohmann_json", "gzip-hpp")
+    add_packages("hku_utils", "nng", "nlohmann_json", "gzip-hpp")
 
     add_includedirs(".")
 
