@@ -92,24 +92,24 @@ void HttpHandle::printTraceInfo() {
 #endif
     if (traceid.empty()) {
         CLS_TRACE(
-          "╔════════════════════════════════════════════════════════════\n"
+          "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url: {}\n"
           "{}║  method: {}\n"
           "{}║  request: {}\n"
           "{}║  response: {}\n"
           "{}╚════════════════════════════════════════",
-          str, url, str, nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(),
-          str);
+          str, str, url, str, nng_http_req_get_method(m_nng_req), str, getReqData(), str,
+          getResData(), str);
     } else {
         CLS_TRACE(
-          "╔════════════════════════════════════════════════════════════\n"
+          "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url:{}\n"
           "{}║  method: {}\n"
           "{}║  traceid: {}\n"
           "{}║  request: {}\n"
           "{}║  response: {}\n{}╚════════════════════════════════════════",
-          str, url, str, nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(), str,
-          getResData(), str);
+          str, str, url, str, nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(),
+          str, getResData(), str);
     }
 }
 

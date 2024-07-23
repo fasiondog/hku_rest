@@ -12,8 +12,6 @@
 
 using namespace hku;
 
-#define HKU_SERVICE_API(name) "/hku/" #name "/v1"
-
 void signal_handle(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         HKU_INFO("Shutdown now ...");
@@ -40,7 +38,7 @@ int main(int argc, char* argv[]) {
                              fmt::format(R"({{"ret": false,"errcode":{}, "errmsg":"Not Found"}})",
                                          int(NNG_HTTP_STATUS_NOT_FOUND)));
 
-        HelloService hello_service(HKU_SERVICE_API(hello));
+        HelloService hello_service("/");
         hello_service.bind(&server);
 
         HKU_INFO("start server ... You can press Ctrl-C stop");
