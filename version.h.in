@@ -1,0 +1,44 @@
+/*
+ *  Copyright(C) 2021 hikyuu.org
+ *
+ *  Create on: 2021-01-08
+ *     Author: fasiondog
+ */
+
+#pragma once
+
+#include <string>
+
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
+#endif
+
+// clang-format off
+#define HKU_HTTPD_VERSION "${VERSION}"
+#define HKU_HTTPD_VERSION_MAJOR ${VERSION_MAJOR}
+#define HKU_HTTPD_VERSION_MINOR ${VERSION_MINOR}
+#define HKU_HTTPD_VERSION_ALTER ${VERSION_ALTER}
+#define HKU_HTTPD_VERSION_BUILD ${VERSION_BUILD}
+// clang-format on
+
+#if defined(_DEBUG) || defined(DEBUG)
+#define HKU_COMPILE_MODE "debug"
+#else
+#define HKU_COMPILE_MODE "release"
+#endif
+
+namespace hku {
+namespace httpd {
+
+/**
+ * 获取主版本号
+ */
+std::string HKU_HTTPD_API getVersion();
+
+/**
+ * 获取详细版本号，包含构建时间
+ */
+std::string HKU_HTTPD_API getVersionWithBuild();
+
+}  // namespace httpd
+}  // namespace hku

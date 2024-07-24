@@ -1,4 +1,4 @@
-set_xmakever("2.8.2")
+set_version("1.0.0", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 
@@ -46,7 +46,6 @@ option("stacktrace")
     set_showmenu(true)
     set_category("hikyuu")
     set_description("Enable check/assert with stack trace info.")
-    add_defines("HKU_ENABLE_STACK_TRACE")
 option_end()
 
 add_rules("mode.debug", "mode.release")
@@ -69,6 +68,14 @@ add_requires("hku_utils",
 set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
 set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
 
+-- is release now
+if is_mode("release") then
+    if is_plat("windows") then
+        -- Unix-like systems hidden symbols will cause the link dynamic libraries to failed!
+        set_symbols("hidden")
+    end
+end
+
 -- for the windows platform (msvc)
 if is_plat("windows") then
     -- add some defines only for windows
@@ -83,6 +90,10 @@ end
 
 target("hku_httpd")
     set_kind("$(kind)")
+
+    set_configdir("$(projectdir)/hikyuu/httpd")
+    add_configfiles("$(projectdir)/version.h.in")
+    add_configfiles("$(projectdir)/config.h.in")    
     
     add_packages("hku_utils", "nng", "nlohmann_json", "gzip-hpp")
 
