@@ -8,7 +8,6 @@ set_languages("cxx17", "c99")
 option("mysql")
     set_default(true)
     set_showmenu(true)
-    set_category("hikyuu")
     set_description("Enable mysql kdata engine.")
     if is_plat("macosx") then
         if os.exists("/usr/local/opt/mysql-client/lib") then
@@ -34,19 +33,8 @@ option("mysql")
     end        
 option_end()
 
-option("sqlite")
-    set_default(true)
-    set_showmenu(true)
-    set_category("hikyuu")
-    set_description("Enable sqlite kdata engine.")
-option_end()
-
-option("stacktrace")
-    set_default(true)
-    set_showmenu(true)
-    set_category("hikyuu")
-    set_description("Enable check/assert with stack trace info.")
-option_end()
+option("sqlite", {description = "Enable sqlite.", default = true})
+option("stacktrace", {description = "Enable check/assert with stack trace info.", default = false})
 
 add_rules("mode.debug", "mode.release")
 
@@ -60,9 +48,9 @@ add_requires("hku_utils",
     {configs = {
         shared = true, 
         mo = true,
-        mysql = get_config("mysql"), 
-        sqlite = get_config("sqlite"),
-        stacktrace = get_config("stacktrace")
+        mysql = has_config("mysql"), 
+        sqlite = has_config("sqlite"),
+        stacktrace = has_config("stacktrace")
 }})
 
 set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
