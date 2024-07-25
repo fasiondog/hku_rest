@@ -22,15 +22,15 @@ void Config::_loadFromIniFile(const std::string& filename) {  // NOSONAR
 
     // 读取当前部署环境
     std::string deploy = ini.get("deploy", "current");
+    HKU_INFO("current deploy environment: {}", deploy);
     _loadFromIni(ini, deploy);
 }
 
 void Config::_loadFromIni(const IniParser& ini, const std::string& deploy) {
     // 读取当前部署环境
-    std::string section = m_params["deploy"];
-    auto options = ini.getOptionList(section);
+    auto options = ini.getOptionList(deploy);
     for (auto iter = options->begin(), end = options->end(); iter != end; ++iter) {
-        m_params[*iter] = ini.get(section, *iter);
+        m_params[*iter] = ini.get(deploy, *iter);
     }
 }
 

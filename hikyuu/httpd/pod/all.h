@@ -8,7 +8,11 @@
 #pragma once
 
 #include <string>
-#include "SQLitePod.h"
+#include "hikyuu/httpd/config.h"
+
+#if HKU_ENABLE_SQLITE
+#include "sqlite/SQLitePod.h"
+#endif
 
 namespace hku {
 namespace pod {
@@ -16,12 +20,12 @@ namespace pod {
 /**
  * 初始化所有资源
  */
-void init(const std::string& filename);
+void HKU_HTTPD_API init(const std::string& filename);
 
 /**
  * 清理所有资源
  */
-void quit();
+void HKU_HTTPD_API quit();
 
 }  // namespace pod
 }  // namespace hku

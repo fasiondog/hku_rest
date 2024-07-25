@@ -16,4 +16,8 @@ target("rest_server")
             end
         end
     end)
+
+    before_run(function(target)
+        os.cp("$(projectdir)/example/rest_server/rest_server.ini", "$(buildir)/$(mode)/$(plat)/$(arch)/lib/")
+    end)
 target_end()

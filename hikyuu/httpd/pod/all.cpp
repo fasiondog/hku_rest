@@ -7,7 +7,6 @@
 
 #include "all.h"
 #include "PodConfig.h"
-#include "SQLitePod.h"
 
 namespace hku {
 namespace pod {
@@ -23,8 +22,6 @@ void init(const std::string& filename) {
 }
 
 void quit() {
-    HKU_INFO("Release all Pods.");
-
 #if HKU_ENABLE_SQLITE
     SQLitePod::quit();
 #endif

@@ -5,10 +5,8 @@
  *      Author: fasiondog
  */
 
-#include "PodConfig.h"
+#include "../PodConfig.h"
 #include "SQLitePod.h"
-
-#if HKU_ENABLE_SQLITE
 
 namespace hku {
 namespace pod {
@@ -16,8 +14,10 @@ namespace pod {
 std::unique_ptr<ResourcePool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
-    CLS_INFO("Init SQLitePod ...");
     auto& config = PodConfig::instance();
+    HKU_IF_RETURN(!config.get<bool>("sqlite_enable"), void());
+
+    CLS_INFO("Init SQLitePod ...");
     Parameter param;
     param.set<std::string>("db", config.get<std::string>("sqlite_db"));
     ms_db_pool = std::make_unique<ResourcePool<SQLiteConnect>>(param);
@@ -34,12 +34,10 @@ void SQLitePod::init() {
 
 void SQLitePod::quit() {
     if (ms_db_pool) {
-        CLS_INFO("release local db pool! ");
+        CLS_INFO("release local db pool!");
         ms_db_pool.reset();
     }
 }
 
 }  // namespace pod
 }  // namespace hku
-
-#endif

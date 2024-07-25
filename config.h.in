@@ -4,6 +4,10 @@
 
 #include "hikyuu/utilities/config.h"
 
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
+#endif
+
 // clang-format off
 
 // clang-format on

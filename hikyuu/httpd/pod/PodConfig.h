@@ -12,7 +12,7 @@
 namespace hku {
 namespace pod {
 
-class PodConfig {
+class HKU_HTTPD_API PodConfig {
 public:
     PodConfig(const PodConfig&) = delete;
     PodConfig& operator=(const PodConfig&) = delete;

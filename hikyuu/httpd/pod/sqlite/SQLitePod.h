@@ -7,19 +7,14 @@
 
 #pragma once
 
-#include "hikyuu/httpd/config.h"
-
-#if HKU_ENABLE_SQLITE
-
 #include "hikyuu/utilities/ResourcePool.h"
 #include "hikyuu/utilities/db_connect/DBConnect.h"
-#include "hikyuu/utilities/db_connect/sqlite/SQLiteConnect.h"
 #include "hikyuu/utilities/log.h"
 
 namespace hku {
 namespace pod {
 
-class SQLitePod {
+class HKU_HTTPD_API SQLitePod {
     CLASS_LOGGER_IMP(SQLitePod)
 
 public:
@@ -49,5 +44,3 @@ private:
 
 }  // namespace pod
 }  // namespace hku
-
-#endif

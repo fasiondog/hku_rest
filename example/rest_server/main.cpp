@@ -16,8 +16,8 @@ using namespace hku;
 void signal_handle(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         HKU_INFO("Shutdown now ...");
-        HttpServer::stop();
         hku::pod::quit();
+        HttpServer::stop();
         exit(0);
     }
 }
@@ -35,7 +35,7 @@ int main(int argc, char* argv[]) {
     HttpHandle::enableTrace(true, false);
 
     try {
-        pod::init("hku_httpd.ini");
+        pod::init("rest_server.ini");
 
         // 设置 404 返回信息
         server.set_error_msg(NNG_HTTP_STATUS_NOT_FOUND,
@@ -51,12 +51,11 @@ int main(int argc, char* argv[]) {
 
     } catch (std::exception& e) {
         HKU_FATAL(e.what());
-        server.stop();
     } catch (...) {
         HKU_FATAL("Unknow error!");
-        server.stop();
     }
 
     hku::pod::quit();
+    server.stop();
     return 0;
 }

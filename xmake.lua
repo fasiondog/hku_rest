@@ -32,7 +32,7 @@ option("mysql")
     end        
 option_end()
 
-option("sqlite", {description = "Enable sqlite.", default = true})
+option("sqlite", {description = "Enable sqlite.", default = false})
 option("stacktrace", {description = "Enable check/assert with stack trace info.", default = false})
 
 add_rules("mode.debug", "mode.release")
@@ -127,10 +127,19 @@ target("hku_httpd")
         add_links("mysqlclient")
     end
 
-    add_headerfiles("$(projectdir)/hikyuu/httpd/*.h")
+    add_headerfiles("$(projectdir)/(hikyuu/httpd/**.h)")
     
     -- add files
-    add_files("hikyuu/**.cpp")
+    add_files("hikyuu/httpd/*.cpp")
+    add_files("hikyuu/httpd/pod/*.cpp")
+
+    if has_config("sqlite") then
+        add_files("hikyuu/httpd/pod/sqlite/*.cpp")
+    end
+
+    if has_config("mysql") then
+        add_files("hikyuu/httpd/pod/mysql/*.cpp")
+    end
 
     after_build(function(target)
         -- os.cp("$(projectdir)/i8n/", target:targetdir())
