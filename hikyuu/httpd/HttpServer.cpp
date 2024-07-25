@@ -62,7 +62,9 @@ void HttpServer::start() {
     g_old_cp = GetConsoleOutputCP();
     SetConsoleOutputCP(CP_UTF8);
 #endif
+}
 
+void HttpServer::loop() {
     for (;;) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
     }

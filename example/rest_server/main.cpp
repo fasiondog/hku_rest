@@ -8,6 +8,7 @@
 #include <locale>
 #include <csignal>
 #include "hikyuu/httpd/HttpServer.h"
+#include "hikyuu/httpd/pod/all.h"
 #include "HelloService.h"
 
 using namespace hku;
@@ -16,6 +17,7 @@ void signal_handle(int signal) {
     if (signal == SIGINT || signal == SIGTERM) {
         HKU_INFO("Shutdown now ...");
         HttpServer::stop();
+        hku::pod::quit();
         exit(0);
     }
 }
@@ -33,6 +35,8 @@ int main(int argc, char* argv[]) {
     HttpHandle::enableTrace(true, false);
 
     try {
+        pod::init("hku_httpd.ini");
+
         // 设置 404 返回信息
         server.set_error_msg(NNG_HTTP_STATUS_NOT_FOUND,
                              fmt::format(R"({{"ret": false,"errcode":{}, "errmsg":"Not Found"}})",
@@ -43,6 +47,7 @@ int main(int argc, char* argv[]) {
 
         HKU_INFO("start server ... You can press Ctrl-C stop");
         server.start();
+        server.loop();
 
     } catch (std::exception& e) {
         HKU_FATAL(e.what());
@@ -52,5 +57,6 @@ int main(int argc, char* argv[]) {
         server.stop();
     }
 
+    hku::pod::quit();
     return 0;
 }

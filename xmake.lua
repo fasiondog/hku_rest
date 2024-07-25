@@ -1,8 +1,7 @@
+set_project("hku_httpd")
 set_version("1.0.0", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
-
--- set language: C99, c++ standard
 set_languages("cxx17", "c99")
 
 option("mysql")

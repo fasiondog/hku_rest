@@ -27,6 +27,7 @@ public:
     virtual ~HttpServer();
 
     static void start();
+    static void loop();
     static void stop();
 
     /**
