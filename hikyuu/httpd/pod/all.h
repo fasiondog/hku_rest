@@ -14,6 +14,10 @@
 #include "sqlite/SQLitePod.h"
 #endif
 
+#if HKU_ENABLE_MYSQL
+#include "mysql/MySQLPod.h"
+#endif
+
 namespace hku {
 namespace pod {
 

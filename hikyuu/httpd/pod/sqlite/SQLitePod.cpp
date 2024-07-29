@@ -15,13 +15,13 @@ std::unique_ptr<ResourcePool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
     auto& config = PodConfig::instance();
-    HKU_IF_RETURN(!config.get<bool>("sqlite_enable"), void());
+    CLS_INFO_IF_RETURN(!config.get<bool>("sqlite_enable", false), void(), "sqlite is disabled");
 
     CLS_INFO("Init SQLitePod ...");
     Parameter param;
     param.set<std::string>("db", config.get<std::string>("sqlite_db"));
     ms_db_pool = std::make_unique<ResourcePool<SQLiteConnect>>(param);
-    HKU_CHECK(ms_db_pool, "Failed allocate sqlite connect pool!");
+    CLS_CHECK(ms_db_pool, "Failed allocate sqlite connect pool!");
 
     auto connect = ms_db_pool->get();
     connect->exec(

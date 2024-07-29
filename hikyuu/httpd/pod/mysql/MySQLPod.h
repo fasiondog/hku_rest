@@ -23,6 +23,21 @@ public:
     static void init();
     static void quit();
 
+    /** 获取本地数据库空闲连接数量 */
+    static DBConnectPtr getConnect() {
+        return ms_db_pool->getAndWait();
+    }
+
+    /** 获取本地数据库连接总数量 */
+    static size_t getCount() {
+        return ms_db_pool->count();
+    }
+
+    /** 获取本地数据库空闲连接数量 */
+    static size_t getIdleCount() {
+        return ms_db_pool->idleCount();
+    }
+
 private:
     static std::unique_ptr<ResourcePool<MySQLConnect>> ms_db_pool;  // 本地任务数据库
 };

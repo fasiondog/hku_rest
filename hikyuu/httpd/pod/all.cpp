@@ -19,11 +19,19 @@ void init(const std::string& filename) {
 #if HKU_ENABLE_SQLITE
     SQLitePod::init();
 #endif
+
+#if HKU_ENABLE_MYSQL
+    MySQLPod::init();
+#endif
 }
 
 void quit() {
 #if HKU_ENABLE_SQLITE
     SQLitePod::quit();
+#endif
+
+#if HKU_ENABLE_MYSQL
+    MySQLPod::quit();
 #endif
 }
 

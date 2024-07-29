@@ -9,6 +9,10 @@
 
 #include "Config.h"
 
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
+#endif
+
 namespace hku {
 namespace pod {
 
