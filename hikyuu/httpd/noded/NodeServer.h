@@ -190,7 +190,6 @@ private:
             }
 
             res = iter->second(std::move(req));
-            res["cmd"] = cmd;
             res["ret"] = NodeErrorCode::SUCCESS;
             encodeMsg(msg, res);
 
@@ -204,7 +203,6 @@ private:
 
         } catch (const NodeError& e) {
             CLS_ERROR(e.what());
-            res["cmd"] = 0;
             res["ret"] = e.errcode();
             res["msg"] = e.what();
             encodeMsg(msg, res);
@@ -214,7 +212,6 @@ private:
 
         } catch (const std::exception& e) {
             CLS_ERROR(e.what());
-            res["cmd"] = 0;
             res["ret"] = NodeErrorCode::UNKNOWN_ERROR;
             res["msg"] = e.what();
             encodeMsg(msg, res);
@@ -225,7 +222,6 @@ private:
         } catch (...) {
             std::string errmsg = "Unknown error!";
             CLS_ERROR(errmsg);
-            res["cmd"] = 0;
             res["ret"] = NodeErrorCode::UNKNOWN_ERROR;
             res["msg"] = errmsg;
             nng_aio_set_msg(work->aio, msg);

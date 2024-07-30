@@ -59,13 +59,11 @@ public:
 
             return true;
 
+        } catch (const std::exception& e) {
+            HKU_ERROR_IF(m_show_log, "Failed dail server: {}! {}", m_server_addr, e.what());
         } catch (...) {
+            HKU_ERROR_IF(m_show_log, "Failed dail server: {}! Unknown error!", m_server_addr);
         }
-        // } catch (const std::exception& e) {
-        //     HKU_ERROR("Failed dail server: {}! {}", m_server_addr, e.what());
-        // } catch (...) {
-        //     HKU_ERROR("Failed dail server: {}! Unknown error!", m_server_addr);
-        // }
 
         m_connected = false;
         nng_close(m_socket);
@@ -101,6 +99,10 @@ public:
         return _send(req) && _recv(res);
     }
 
+    void showLog(bool show) {
+        m_show_log = show;
+    }
+
 private:
     bool _send(const json& req) const noexcept {
         bool success = false;
@@ -118,13 +120,11 @@ private:
             NODE_NNG_CHECK(rv, "Failed nng_sendmsg!");
             success = true;
 
+        } catch (const std::exception& e) {
+            HKU_ERROR_IF(m_show_log, "Failed send result! {}", e.what());
         } catch (...) {
+            HKU_ERROR_IF(m_show_log, "Failed send result! Unknown error!");
         }
-        // } catch (const std::exception& e) {
-        //     HKU_ERROR("Failed send result! {}", e.what());
-        // } catch (...) {
-        //     HKU_ERROR("Failed send result! Unknown error!");
-        // }
 
         if (!success) {
             nng_msg_free(msg);
@@ -145,13 +145,11 @@ private:
             res = decodeMsg(msg);
             success = true;
 
+        } catch (const std::exception& e) {
+            HKU_ERROR_IF(m_show_log, "Failed recv response! {}", e.what());
         } catch (...) {
+            HKU_ERROR_IF(m_show_log, "Failed recv response! Unknown error!");
         }
-        // } catch (const std::exception& e) {
-        //     HKU_ERROR("Failed recv response! {}", e.what());
-        // } catch (...) {
-        //     HKU_ERROR("Failed recv response! Unknown error!");
-        // }
 
         nng_msg_free(msg);
         return success;
@@ -161,8 +159,9 @@ private:
     std::mutex m_mutex;
     std::string m_server_addr;  // 服务端地址
     nng_socket m_socket;
-    std::atomic_bool m_connected{false};
     Datetime m_last_ack_time{Datetime::now()};  // 最后一次接收服务端响应的时间
+    std::atomic_bool m_connected{false};
+    std::atomic_bool m_show_log{true};
 };
 
 }  // namespace hku
