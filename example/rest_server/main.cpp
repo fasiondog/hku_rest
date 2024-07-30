@@ -14,12 +14,10 @@
 using namespace hku;
 
 void signal_handle(int signal) {
-    if (signal == SIGINT || signal == SIGTERM) {
-        HKU_INFO("Shutdown now ...");
-        hku::pod::quit();
-        HttpServer::stop();
-        exit(0);
-    }
+    HKU_INFO("Shutdown now ...");
+    hku::pod::quit();
+    HttpServer::stop();
+    exit(0);
 }
 
 int main(int argc, char* argv[]) {
@@ -30,6 +28,8 @@ int main(int argc, char* argv[]) {
 
     std::signal(SIGINT, signal_handle);
     std::signal(SIGTERM, signal_handle);
+    std::signal(SIGABRT, signal_handle);
+    std::signal(SIGSEGV, signal_handle);
 
     HttpServer server("http://*", 8080);
     HttpHandle::enableTrace(true, false);

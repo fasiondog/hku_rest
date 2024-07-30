@@ -1,4 +1,4 @@
-set_project("hku_httpd")
+set_project("hku_rest")
 set_version("1.0.0", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
@@ -45,7 +45,7 @@ add_requires("gzip-hpp")
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 add_requires("hku_utils", 
     {configs = {
-        shared = true, 
+        shared = is_kind("shared"), 
         mo = true,
         http_client = false,
         mysql = has_config("mysql"), 
@@ -171,3 +171,4 @@ target_end()
 
 
 includes("example/rest_server")
+includes("example/node_server")
