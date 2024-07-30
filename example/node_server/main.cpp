@@ -7,8 +7,8 @@
 
 #include <locale>
 #include <csignal>
-#include "hikyuu/httpd/noded/NodeServer.h"
-#include "hikyuu/httpd/noded/NodeClient.h"
+#include "hikyuu/utilities/node/NodeServer.h"
+#include "hikyuu/utilities/node/NodeClient.h"
 #include "hikyuu/httpd/pod/all.h"
 
 using namespace hku;
