@@ -47,6 +47,7 @@ add_requires("hku_utils",
     {configs = {
         shared = true, 
         mo = true,
+        http_client = false,
         mysql = has_config("mysql"), 
         sqlite = has_config("sqlite"),
         stacktrace = has_config("stacktrace")
