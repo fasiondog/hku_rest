@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 
         server.setAddr(server_addr);
 
-        server.regHandle(2, [](json&& req) {
+        server.regHandle("2", [](json&& req) {
             json res;
             HKU_INFO("Hello world!");
             return res;

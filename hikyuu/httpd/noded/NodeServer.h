@@ -45,11 +45,11 @@ public:
         m_addr = addr;
     }
 
-    void regHandle(int cmd, const std::function<json(json&& req)>& handle) {
+    void regHandle(const std::string& cmd, const std::function<json(json&& req)>& handle) {
         m_handles[cmd] = handle;
     }
 
-    void regHandle(int cmd, std::function<json(json&& req)>&& handle) {
+    void regHandle(const std::string& cmd, std::function<json(json&& req)>&& handle) {
         m_handles[cmd] = std::move(handle);
     }
 
@@ -160,7 +160,9 @@ private:
             json req = decodeMsg(msg);
             NODE_CHECK(req.contains("cmd"), NodeErrorCode::MISSING_CMD, "Missing command!");
 
-            int cmd = req["cmd"].get<int>();
+            // 兼容老版本数字cmd
+            std::string cmd = req["cmd"].is_number() ? fmt::format("{}", req["cmd"].get<int>())
+                                                     : req["cmd"].get<std::string>();
             auto iter = server->m_handles.find(cmd);
             NODE_CHECK(iter != server->m_handles.end(), NodeErrorCode::INVALID_CMD,
                        "The server does not know how to process the message: {}", cmd);
@@ -235,7 +237,7 @@ private:
     nng_socket m_socket;
     nng_listener m_listener;
     std::vector<Work> m_works;
-    std::unordered_map<int, std::function<json(json&& req)>> m_handles;
+    std::unordered_map<std::string, std::function<json(json&& req)>> m_handles;
 };
 
 }  // namespace hku
