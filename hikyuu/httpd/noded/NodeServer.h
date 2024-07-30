@@ -86,7 +86,7 @@ public:
     }
 
     void stop() {
-        // CLS_INFO("stop NodeServer");
+        HKU_IF_RETURN(m_works.empty(), void());
         for (size_t i = 0, total = m_works.size(); i < total; i++) {
             Work* w = &m_works[i];
             w->server = nullptr;
@@ -102,6 +102,8 @@ public:
         // 关闭 socket 服务节点
         nng_listener_close(m_listener);
         nng_close(m_socket);
+        m_works.clear();
+        CLS_INFO("stopped node server.");
     }
 
 private:

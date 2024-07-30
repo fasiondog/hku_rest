@@ -8,6 +8,7 @@
 #include <locale>
 #include <csignal>
 #include "hikyuu/httpd/noded/NodeServer.h"
+#include "hikyuu/httpd/noded/NodeClient.h"
 #include "hikyuu/httpd/pod/all.h"
 
 using namespace hku;
@@ -23,6 +24,8 @@ void signal_handle(int signal) {
     }
 }
 
+static std::string server_addr = "inproc://tmp";
+
 int main(int argc, char* argv[]) {
     initLogger();
 
@@ -32,7 +35,7 @@ int main(int argc, char* argv[]) {
     try {
         pod::init("node_server.ini");
 
-        server.setAddr("tcp://0.0.0.0:9080");
+        server.setAddr(server_addr);
 
         server.regHandle(2, [](json&& req) {
             json res;
@@ -42,7 +45,18 @@ int main(int argc, char* argv[]) {
 
         HKU_INFO("start node server ... You can press Ctrl-C stop");
         server.start();
-        server.loop();
+
+        auto t = std::thread([]() {
+            NodeClient cli(server_addr);
+            cli.dial();
+
+            json req, res;
+            req["cmd"] = 2;
+            cli.post(req, res);
+        });
+        t.join();
+
+        // server.loop();
 
     } catch (std::exception& e) {
         HKU_FATAL(e.what());
