@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <unordered_map>
 #include <hikyuu/utilities/ini_parser/IniParser.h>
 #include <hikyuu/utilities/arithmetic.h>
@@ -21,6 +22,7 @@ public:
 
     template <class T>
     T get(const std::string& key) const {
+        std::lock_guard<std::mutex> lock(m_mutex);
         auto iter = m_params.find(key);
         if (iter == m_params.end()) {
             HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -30,8 +32,19 @@ public:
 
     template <class T>
     T get(const std::string& key, const T& default_val) const {
+        std::lock_guard<std::mutex> lock(m_mutex);
         auto iter = m_params.find(key);
         return iter != m_params.end() ? iter->second : default_val;
+    }
+
+    void set(const std::string& key, const std::string& val) {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_params[key] = val;
+    }
+
+    void clear() {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        m_params.clear();
     }
 
 private:
@@ -39,11 +52,13 @@ private:
     void _loadFromIniFile(const std::string& filename);
 
 private:
+    mutable std::mutex m_mutex;
     std::unordered_map<std::string, std::string> m_params;
 };
 
 template <>
 inline int Config::get(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter == m_params.end()) {
         HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -53,6 +68,7 @@ inline int Config::get(const std::string& key) const {
 
 template <>
 inline int64_t Config::get(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter == m_params.end()) {
         HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -62,6 +78,7 @@ inline int64_t Config::get(const std::string& key) const {
 
 template <>
 inline double Config::get(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter == m_params.end()) {
         HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -71,6 +88,7 @@ inline double Config::get(const std::string& key) const {
 
 template <>
 inline float Config::get(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter == m_params.end()) {
         HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -80,6 +98,7 @@ inline float Config::get(const std::string& key) const {
 
 template <>
 inline bool Config::get(const std::string& key) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter == m_params.end()) {
         HKU_THROW_EXCEPTION(std::out_of_range, "Not found key: {}", key);
@@ -100,6 +119,7 @@ inline bool Config::get(const std::string& key) const {
 
 template <>
 inline int Config::get(const std::string& key, const int& default_val) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter != m_params.end()) {
         return std::stoi(iter->second);
@@ -109,6 +129,7 @@ inline int Config::get(const std::string& key, const int& default_val) const {
 
 template <>
 inline int64_t Config::get(const std::string& key, const int64_t& default_val) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter != m_params.end()) {
         return std::stoll(iter->second);
@@ -118,6 +139,7 @@ inline int64_t Config::get(const std::string& key, const int64_t& default_val) c
 
 template <>
 inline double Config::get(const std::string& key, const double& default_val) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter != m_params.end()) {
         return std::stod(iter->second);
@@ -127,6 +149,7 @@ inline double Config::get(const std::string& key, const double& default_val) con
 
 template <>
 inline float Config::get(const std::string& key, const float& default_val) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter != m_params.end()) {
         return std::stof(iter->second);
@@ -136,6 +159,7 @@ inline float Config::get(const std::string& key, const float& default_val) const
 
 template <>
 inline bool Config::get(const std::string& key, const bool& default_val) const {
+    std::lock_guard<std::mutex> lock(m_mutex);
     auto iter = m_params.find(key);
     if (iter != m_params.end()) {
         bool result = false;

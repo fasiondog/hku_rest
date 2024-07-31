@@ -11,6 +11,7 @@ namespace hku {
 namespace pod {
 
 void Config::loadConfig(const std::string& filename) {
+    std::lock_guard<std::mutex> lock(m_mutex);
     _loadFromIniFile(filename);
 }
 

@@ -11,9 +11,7 @@
 namespace hku {
 namespace pod {
 
-void init(const std::string& filename) {
-    auto& config = PodConfig::instance();
-    config.loadConfig(filename);
+void init() {
     CommonPod::init();
 
 #if HKU_ENABLE_SQLITE
@@ -23,6 +21,12 @@ void init(const std::string& filename) {
 #if HKU_ENABLE_MYSQL
     MySQLPod::init();
 #endif
+}
+
+void init(const std::string& filename) {
+    auto& config = PodConfig::instance();
+    config.loadConfig(filename);
+    init();
 }
 
 void quit() {
