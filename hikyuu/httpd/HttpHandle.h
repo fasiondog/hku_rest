@@ -14,7 +14,7 @@
 #include <nlohmann/json.hpp>
 #include "HttpError.h"
 #include "hikyuu/utilities/mo/mo.h"
-#include "hikyuu/utilities/log.h"
+#include "hikyuu/utilities/Log.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API

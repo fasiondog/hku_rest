@@ -55,14 +55,6 @@ protected:
         }
     }
 
-    template <typename ModelTable>
-    void check_enum_field(const std::string &field, const std::string &value) {
-        if (!DB::isValidEumValue(ModelTable::getTableName(), field, value)) {
-            throw HttpBadRequestError(BadRequestErrorCode::WRONG_PARAMETER,
-                                      fmt::format("Invalid field({}) value: {}", field, value));
-        }
-    }
-
 protected:
     json req;  // 子类在 run 方法中，直接使用次req
     json res;
