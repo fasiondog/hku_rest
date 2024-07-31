@@ -11,6 +11,10 @@
 #include "hikyuu/utilities/db_connect/DBConnect.h"
 #include "hikyuu/utilities/log.h"
 
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
+#endif
+
 namespace hku {
 namespace pod {
 

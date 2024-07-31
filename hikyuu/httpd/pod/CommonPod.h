@@ -13,6 +13,10 @@
 #include <hikyuu/utilities/snowflake.h>
 #include <hikyuu/utilities/Log.h>
 
+#ifndef HKU_HTTPD_API
+#define HKU_HTTPD_API
+#endif
+
 namespace hku {
 namespace pod {
 
