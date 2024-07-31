@@ -14,7 +14,7 @@ namespace pod {
 void init(const std::string& filename) {
     auto& config = PodConfig::instance();
     config.loadConfig(filename);
-    // CommonPod::init();
+    CommonPod::init();
 
 #if HKU_ENABLE_SQLITE
     SQLitePod::init();
@@ -26,6 +26,8 @@ void init(const std::string& filename) {
 }
 
 void quit() {
+    CommonPod::quit();
+
 #if HKU_ENABLE_SQLITE
     SQLitePod::quit();
 #endif

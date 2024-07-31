@@ -8,10 +8,10 @@
 #include <string_view>
 #include <hikyuu/utilities/arithmetic.h>
 #include <hikyuu/utilities/datetime/Datetime.h>
+#include <hikyuu/utilities/http_client/url.h>
 #include "gzip/compress.hpp"
 #include "gzip/decompress.hpp"
 #include "gzip/utils.hpp"
-#include "url.h"
 #include "HttpHandle.h"
 
 namespace hku {
