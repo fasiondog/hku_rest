@@ -37,11 +37,6 @@ option("stacktrace", {description = "Enable check/assert with stack trace info."
 
 add_rules("mode.debug", "mode.release")
 
-add_requires("nng", {configs = {cxflags = "-fPIC"}})
-add_requires("nlohmann_json")
-add_requires("gzip-hpp")
-
-
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 add_requires("hku_utils", 
     {configs = {
@@ -77,6 +72,8 @@ if is_plat("windows") then
     end
 end
 
+add_packages("hku_utils") 
+
 target("hku_httpd")
     set_kind("$(kind)")
 
@@ -84,8 +81,6 @@ target("hku_httpd")
     add_configfiles("$(projectdir)/version.h.in")
     add_configfiles("$(projectdir)/config.h.in")    
     
-    add_packages("hku_utils", "nng", "nlohmann_json", "gzip-hpp")
-
     add_includedirs(".")
 
     if is_kind("shared") then 
