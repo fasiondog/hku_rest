@@ -40,15 +40,15 @@ jobs:
 
     - name: config
       run: |
-        xmake f -c
+        xmake f -c -y -vD
 
     - name: build1
       run: |
-        xmake -b rest_server
+        xmake -bvD rest_server
 
     - name: build2
       run: |
-        xmake -b node_server
+        xmake -bvD node_server
 
     - name: test
       run: |

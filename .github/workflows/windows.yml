@@ -32,10 +32,10 @@ jobs:
     - name: configure
       shell: cmd
       run: |
-        xmake f -c
+        xmake f -c -y -vD
 
     - name: build
       shell: cmd
       run: |
-        xmake -b rest_server
+        xmake -bvD rest_server
 
