@@ -11,11 +11,11 @@
 #include "hikyuu/httpd/config.h"
 #include "CommonPod.h"
 
-#if HKU_ENABLE_SQLITE
+#if HKU_HTTPD_POD_USE_SQLITE
 #include "sqlite/SQLitePod.h"
 #endif
 
-#if HKU_ENABLE_MYSQL
+#if HKU_HTTPD_POD_USE_MYSQL
 #include "mysql/MySQLPod.h"
 #endif
 

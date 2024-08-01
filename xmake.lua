@@ -80,6 +80,9 @@ target("hku_httpd")
     set_configdir("$(projectdir)/hikyuu/httpd")
     add_configfiles("$(projectdir)/version.h.in")
     add_configfiles("$(projectdir)/config.h.in")    
+
+    set_configvar("HKU_HTTPD_POD_USE_SQLITE", has_config("sqlite") and 1 or 0)
+    set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
     
     add_includedirs(".")
 

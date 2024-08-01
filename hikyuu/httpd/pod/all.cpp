@@ -14,11 +14,11 @@ namespace pod {
 void init() {
     CommonPod::init();
 
-#if HKU_ENABLE_SQLITE
+#if HKU_HTTPD_POD_USE_SQLITE
     SQLitePod::init();
 #endif
 
-#if HKU_ENABLE_MYSQL
+#if HKU_HTTPD_POD_USE_MYSQL
     MySQLPod::init();
 #endif
 }
@@ -32,11 +32,11 @@ void init(const std::string& filename) {
 void quit() {
     CommonPod::quit();
 
-#if HKU_ENABLE_SQLITE
+#if HKU_HTTPD_POD_USE_SQLITE
     SQLitePod::quit();
 #endif
 
-#if HKU_ENABLE_MYSQL
+#if HKU_HTTPD_POD_USE_MYSQL
     MySQLPod::quit();
 #endif
 }

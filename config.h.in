@@ -10,6 +10,16 @@
 
 // clang-format off
 
+${define HKU_HTTPD_POD_USE_SQLITE}
+#if !HKU_ENABLE_SQLITE && HKU_HTTPD_POD_USE_SQLITE
+#error "hku_utils has configured to not support sqlite!"
+#endif
+
+${define HKU_HTTPD_POD_USE_MYSQL}
+#if !HKU_ENABLE_MYSQL && HKU_HTTPD_POD_USE_MYSQL
+#error "hku_utils has configured to not support mysql!"
+#endif
+
 // clang-format on
 
 #endif /* HKU_HTTPD_CONFIG_H_*/
