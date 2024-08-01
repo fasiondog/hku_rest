@@ -9,7 +9,7 @@
 
 #include "hikyuu/utilities/ResourcePool.h"
 #include "hikyuu/utilities/db_connect/DBConnect.h"
-#include "hikyuu/utilities/log.h"
+#include "hikyuu/utilities/Log.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
