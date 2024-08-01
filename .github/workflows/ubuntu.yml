@@ -1,0 +1,56 @@
+name: ubuntu-build
+
+on: 
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+    
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Cache packages
+      id: cache-xmake-ubuntu
+      uses: actions/cache@v4
+      env:
+        cache-name: cache-node-modules
+      with:
+        path: ~/.xmake
+        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-build-${{ env.cache-name }}-
+          ${{ runner.os }}-build-
+          ${{ runner.os }}-
+
+    - uses: xmake-io/github-action-setup-xmake@v1
+      with:
+        xmake-version: 2.9.2
+        actions-cache-folder: '.xmake-cache'
+        actions-cache-key: 'ubuntu'
+
+    - name: config
+      run: |
+        xmake f -c
+
+    - name: build1
+      run: |
+        xmake -b rest_server
+
+    - name: build2
+      run: |
+        xmake -b node_server
+
+    - name: test
+      run: |
+        xmake r node_server
+  
