@@ -110,8 +110,10 @@ target("hku_httpd")
     if is_plat("macosx") then
         --add_linkdirs("/usr/local/opt/libiconv/lib")
         add_links("iconv")
-        add_includedirs("/usr/local/opt/mysql-client/include")
-        add_linkdirs("/usr/local/opt/mysql-client/lib")
+        if has_config("mysql") then
+            add_includedirs("/usr/local/opt/mysql-client/include")
+            add_linkdirs("/usr/local/opt/mysql-client/lib")
+        end
     end
 
     if is_plat("windows") then 
@@ -120,8 +122,12 @@ target("hku_httpd")
     end
 
     if is_plat("linux") or is_plat("macosx") then
-        add_links("sqlite3")
-        add_links("mysqlclient")
+        if has_config("sqlite") then
+            add_links("sqlite3")
+        end
+        if has_config("mysql") then
+            add_links("mysqlclient")
+        end
     end
 
     add_headerfiles("$(projectdir)/(hikyuu/httpd/**.h)")
