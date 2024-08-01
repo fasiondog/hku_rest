@@ -38,7 +38,7 @@ public:
     virtual void after_run() override {
         // 强制关闭连接，即仅有短连接
         // nng_http_res_set_status(m_nng_res, NNG_HTTP_STATUS_OK);
-        res["ret"] = true;
+        res["result"] = true;
         setResData(res);
     }
 

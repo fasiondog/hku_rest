@@ -38,9 +38,10 @@ int main(int argc, char* argv[]) {
         pod::init("rest_server.ini");
 
         // 设置 404 返回信息
-        server.set_error_msg(NNG_HTTP_STATUS_NOT_FOUND,
-                             fmt::format(R"({{"ret": false,"errcode":{}, "errmsg":"Not Found"}})",
-                                         int(NNG_HTTP_STATUS_NOT_FOUND)));
+        server.set_error_msg(
+          NNG_HTTP_STATUS_NOT_FOUND,
+          fmt::format(R"({{"result": false,"errcode":{}, "errmsg":"Not Found"}})",
+                      int(NNG_HTTP_STATUS_NOT_FOUND)));
 
         HelloService hello_service("/");
         hello_service.bind(&server);

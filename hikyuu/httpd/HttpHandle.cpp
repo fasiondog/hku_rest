@@ -14,6 +14,17 @@
 #include "gzip/utils.hpp"
 #include "HttpHandle.h"
 
+#include <hikyuu/utilities/osdef.h>
+#if HKU_OS_WINDOWS
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <WS2tcpip.h>
+#include <Ws2ipdef.h>
+#else
+#include <arpa/inet.h>
+#endif
+
 namespace hku {
 
 HttpHandle::HttpHandle(nng_aio* aio) : m_http_aio(aio) {}
@@ -29,7 +40,6 @@ void HttpHandle::operator()() {
 
     try {
         m_nng_req = (nng_http_req*)nng_aio_get_input(m_http_aio, 0);
-        m_nng_conn = (nng_http_conn*)nng_aio_get_input(m_http_aio, 2);
 
         for (const auto& filter : m_filters) {
             filter(this);
@@ -74,6 +84,69 @@ void HttpHandle::operator()() {
     nng_aio_finish(m_http_aio, 0);
 }
 
+HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) {
+    ClientAddress ret;
+    nng_http_conn* http_conn = (nng_http_conn*)nng_aio_get_input(m_http_aio, 2);
+    CLS_IF_RETURN(http_conn == nullptr, ret);
+
+    struct ConvertConn {
+        nng_stream* sock;
+    };
+    ConvertConn* tmp_conn = (ConvertConn*)http_conn;
+    nng_sockaddr ra;
+    int rv = nng_stream_get_addr(tmp_conn->sock, NNG_OPT_REMADDR, &ra);
+    CLS_IF_RETURN(rv != 0, ret);
+
+    if (ra.s_family == NNG_AF_INET) {
+        ret.ip.resize(INET_ADDRSTRLEN);
+        inet_ntop(AF_INET, (void*)&ra.s_in.sa_addr, ret.ip.data(), INET_ADDRSTRLEN);
+        ret.port = ntohs(ra.s_in.sa_port);
+    } else if (ra.s_family == NNG_AF_INET6) {
+        ret.ip.resize(INET6_ADDRSTRLEN);
+        inet_ntop(AF_INET6, (void*)&ra.s_in.sa_addr, ret.ip.data(), INET6_ADDRSTRLEN);
+        ret.port = ntohs(ra.s_in6.sa_port);
+    }
+
+    if (tryFromHeader) {
+        std::string ip_hdr;
+        std::string unknown("unknown");
+        ip_hdr = getReqHeader("X-Real-IP");
+        to_lower(ip_hdr);
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("X-Forwarded-For");
+            to_lower(ip_hdr);
+        }
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("Proxy-Client-IP");
+            to_lower(ip_hdr);
+        }
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("WL-Proxy-Client-IP");
+            to_lower(ip_hdr);
+        }
+        // if (ip_hdr.empty() || ip_hdr == unknown) {
+        //     ip_hdr = getReqHeader("HTTP_CLIENT_IP");
+        //     to_lower(ip_hdr);
+        // }
+        // if (ip_hdr.empty() || ip_hdr == unknown) {
+        //     ip_hdr = getReqHeader("HTTP_X_FORWARDED_FOR");
+        //     to_lower(ip_hdr);
+        // }
+
+        if (!ip_hdr.empty()) {
+            auto ips = split(ip_hdr, ",");
+            for (auto&& x : ips) {
+                if (!x.empty() && x != unknown) {
+                    ret.ip = std::move(x);
+                    break;
+                }
+            }
+        }
+    }
+
+    return ret;
+}
+
 void HttpHandle::printTraceInfo() {
     std::string url = getReqUrl();
     std::string traceid = getReqHeader("traceid");
@@ -90,31 +163,37 @@ void HttpHandle::printTraceInfo() {
       "{:>4d}-{:>02d}-{:>02d} {:>02d}:{:>02d}:{:>02d}.{:<03d} [HttpHandle-T] - ", now.year(),
       now.month(), now.day(), now.hour(), now.minute(), now.second(), now.millisecond());
 #endif
+
+    auto client_addr = getClientAddress();
     if (traceid.empty()) {
         CLS_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url: {}\n"
+          "{}║  client: {}:{}\n"
           "{}║  method: {}\n"
           "{}║  request: {}\n"
           "{}║  response: {}\n"
           "{}╚════════════════════════════════════════",
-          str, str, url, str, nng_http_req_get_method(m_nng_req), str, getReqData(), str,
-          getResData(), str);
+          str, str, url, str, client_addr.ip, client_addr.port, str,
+          nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
     } else {
         CLS_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url:{}\n"
+          "{}║  client: {}:{}\n"
           "{}║  method: {}\n"
           "{}║  traceid: {}\n"
           "{}║  request: {}\n"
           "{}║  response: {}\n{}╚════════════════════════════════════════",
-          str, str, url, str, nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(),
-          str, getResData(), str);
+          str, str, url, str, client_addr.ip, client_addr.port, str,
+          nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(), str, getResData(),
+          str);
     }
 }
 
 void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
     try {
+        nng_http_res_reset(m_nng_res);
         nng_http_res_set_header(m_nng_res, "Content-Type", "application/json; charset=UTF-8");
         nng_http_res_set_status(m_nng_res, http_status);
         nng_http_res_set_reason(m_nng_res, err_msg.data());

@@ -150,6 +150,36 @@ public:
 
     void operator()();
 
+protected:
+    struct ClientAddress {
+        std::string ip;
+        uint16_t port = 0;
+
+        ClientAddress() = default;
+        ClientAddress(const ClientAddress &) = default;
+        ClientAddress(ClientAddress &&rhs) : ip(std::move(rhs.ip)), port(rhs.port) {
+            rhs.port = 0;
+        }
+
+        ClientAddress &operator=(const ClientAddress &) = default;
+        ClientAddress &operator=(ClientAddress &&rhs) {
+            if (this != &rhs) {
+                ip = std::move(rhs.ip);
+                port = rhs.port;
+                rhs.port = 0;
+            }
+            return *this;
+        }
+    };
+
+    /**
+     * 获取客户端地址
+     * @param tryFromHeader 优先尝试从请求头中获取真实客户ip，否则为直连对端ip
+     * @return ClientAddress
+     * @note port 始终为直连对端的port（即可能是代理的port)。
+     */
+    ClientAddress getClientAddress(bool tryFromHeader = true);
+
 private:
     void processException(int http_status, int errcode, std::string_view err_msg);
 
@@ -157,7 +187,6 @@ protected:
     nng_aio *m_http_aio{nullptr};
     nng_http_res *m_nng_res{nullptr};
     nng_http_req *m_nng_req{nullptr};
-    nng_http_conn *m_nng_conn{nullptr};
     std::vector<std::function<void(HttpHandle *)>> m_filters;
 
 public:
