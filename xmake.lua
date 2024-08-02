@@ -41,7 +41,7 @@ add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.gi
 add_requires("hku_utils", 
     {configs = {
         shared = is_kind("shared"), 
-        log_level = "trace",
+        log_level = 0,
         mo = true,
         http_client = true,
         http_client_zip = true,

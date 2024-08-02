@@ -200,8 +200,8 @@ protected:
 
 private:
     // 是否跟踪请求打印
-    inline static bool ms_enable_trace = false;
-    inline static bool ms_enable_only_traceid = false;
+    static bool ms_enable_trace;
+    static bool ms_enable_only_traceid;
 };
 
 #define HTTP_HANDLE_IMP(cls) \

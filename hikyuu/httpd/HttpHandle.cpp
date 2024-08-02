@@ -27,6 +27,9 @@
 
 namespace hku {
 
+bool HttpHandle::ms_enable_trace = false;
+bool HttpHandle::ms_enable_only_traceid = false;
+
 HttpHandle::HttpHandle(nng_aio* aio) : m_http_aio(aio) {}
 
 void HttpHandle::operator()() {
