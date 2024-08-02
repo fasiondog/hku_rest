@@ -14,7 +14,7 @@ namespace hku {
 class HelloHandle : public RestHandle {
     REST_HANDLE_IMP(HelloHandle)
     virtual void run() override {
-        res["data"] = "hello word!";
+        res["msg"] = "hello word!";
     }
 };
 
