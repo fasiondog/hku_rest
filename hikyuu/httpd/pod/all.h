@@ -9,6 +9,8 @@
 
 #include <string>
 #include "hikyuu/httpd/config.h"
+#include "hikyuu/utilities/mo/mo.h"
+#include "PodConfig.h"
 #include "CommonPod.h"
 
 #if HKU_HTTPD_POD_USE_SQLITE

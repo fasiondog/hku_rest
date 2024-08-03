@@ -15,7 +15,7 @@ std::unique_ptr<ResourcePool<MySQLConnect>> MySQLPod::ms_db_pool;
 
 void MySQLPod::init() {
     auto& config = PodConfig::instance();
-    CLS_INFO_IF_RETURN(!config.get<bool>("mysql_enable", false), void(), "mysql is disabled");
+    CLS_WARN_IF_RETURN(!config.get<bool>("mysql_enable", false), void(), "mysql is disabled");
 
     CLS_INFO("Init MySQLPod ...");
     Parameter param;

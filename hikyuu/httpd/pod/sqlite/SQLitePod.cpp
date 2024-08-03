@@ -15,7 +15,7 @@ std::unique_ptr<ResourcePool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
     auto& config = PodConfig::instance();
-    CLS_INFO_IF_RETURN(!config.get<bool>("sqlite_enable", false), void(), "sqlite is disabled");
+    CLS_WARN_IF_RETURN(!config.get<bool>("sqlite_enable", false), void(), "sqlite is disabled");
 
     CLS_INFO("Init SQLitePod ...");
     Parameter param;
