@@ -169,7 +169,7 @@ void HttpHandle::printTraceInfo() {
 
     auto client_addr = getClientAddress();
     if (traceid.empty()) {
-        CLS_TRACE(
+        HKU_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url: {}\n"
           "{}║  client: {}:{}\n"
@@ -180,7 +180,7 @@ void HttpHandle::printTraceInfo() {
           str, str, url, str, client_addr.ip, client_addr.port, str,
           nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
     } else {
-        CLS_TRACE(
+        HKU_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url:{}\n"
           "{}║  client: {}:{}\n"
