@@ -20,7 +20,7 @@ void MySQLPod::init() {
     CLS_INFO("Init MySQLPod ...");
     Parameter param;
     param.set<std::string>("host", config.get<std::string>("mysql_host"));
-    param.set<int>("port", config.get<int>("mysql_host", 3306));
+    param.set<int>("port", config.get<int>("mysql_port", 3306));
     param.set<std::string>("user", config.get<std::string>("mysql_user"));
     param.set<std::string>("pwd", config.get<std::string>("mysql_pwd"));
     param.set<std::string>("db", config.get<std::string>("mysql_db", ""));
