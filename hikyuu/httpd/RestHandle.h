@@ -38,8 +38,10 @@ public:
     virtual void after_run() override {
         // 强制关闭连接，即仅有短连接
         // nng_http_res_set_status(m_nng_res, NNG_HTTP_STATUS_OK);
-        res["result"] = true;
-        setResData(res);
+        json new_res;
+        new_res["ret"] = 0;
+        new_res["data"] = std::move(res);
+        setResData(new_res);
     }
 
 protected:

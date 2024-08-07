@@ -169,7 +169,7 @@ void HttpHandle::printTraceInfo() {
 
     auto client_addr = getClientAddress();
     if (traceid.empty()) {
-        CLS_TRACE(
+        HKU_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url: {}\n"
           "{}║  client: {}:{}\n"
@@ -180,7 +180,7 @@ void HttpHandle::printTraceInfo() {
           str, str, url, str, client_addr.ip, client_addr.port, str,
           nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
     } else {
-        CLS_TRACE(
+        HKU_TRACE(
           "\n{}╔════════════════════════════════════════════════════════════\n"
           "{}║  url:{}\n"
           "{}║  client: {}:{}\n"
@@ -200,8 +200,7 @@ void HttpHandle::processException(int http_status, int errcode, std::string_view
         nng_http_res_set_header(m_nng_res, "Content-Type", "application/json; charset=UTF-8");
         nng_http_res_set_status(m_nng_res, http_status);
         nng_http_res_set_reason(m_nng_res, err_msg.data());
-        setResData(
-          fmt::format(R"({{"result":false,"errcode":{},"errmsg":"{}"}})", errcode, err_msg));
+        setResData(fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg));
         nng_aio_set_output(m_http_aio, 0, m_nng_res);
     } catch (std::exception& e) {
         CLS_ERROR(e.what());

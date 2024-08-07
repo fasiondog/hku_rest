@@ -23,9 +23,6 @@ void signal_handle(int signal) {
 int main(int argc, char* argv[]) {
     initLogger();
 
-    // 初始化多语言支持
-    MOHelper::init();
-
     std::signal(SIGINT, signal_handle);
     std::signal(SIGTERM, signal_handle);
     std::signal(SIGABRT, signal_handle);
@@ -38,10 +35,9 @@ int main(int argc, char* argv[]) {
         pod::init("rest_server.ini");
 
         // 设置 404 返回信息
-        server.set_error_msg(
-          NNG_HTTP_STATUS_NOT_FOUND,
-          fmt::format(R"({{"result": false,"errcode":{}, "errmsg":"Not Found"}})",
-                      int(NNG_HTTP_STATUS_NOT_FOUND)));
+        server.set_error_msg(NNG_HTTP_STATUS_NOT_FOUND,
+                             fmt::format(R"({{"ret": {}, "errmsg":"Content not Found"}})",
+                                         int(NNG_HTTP_STATUS_NOT_FOUND)));
 
         HelloService hello_service("/");
         hello_service.bind(&server);

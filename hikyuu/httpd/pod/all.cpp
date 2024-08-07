@@ -6,12 +6,14 @@
  */
 
 #include "all.h"
-#include "PodConfig.h"
 
 namespace hku {
 namespace pod {
 
 void init() {
+    // 初始化多语言支持
+    MOHelper::init();
+
     CommonPod::init();
 
 #if HKU_HTTPD_POD_USE_SQLITE

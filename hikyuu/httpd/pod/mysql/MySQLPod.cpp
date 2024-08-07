@@ -15,12 +15,12 @@ std::unique_ptr<ResourcePool<MySQLConnect>> MySQLPod::ms_db_pool;
 
 void MySQLPod::init() {
     auto& config = PodConfig::instance();
-    CLS_INFO_IF_RETURN(!config.get<bool>("mysql_enable", false), void(), "mysql is disabled");
+    CLS_WARN_IF_RETURN(!config.get<bool>("mysql_enable", false), void(), "mysql is disabled");
 
     CLS_INFO("Init MySQLPod ...");
     Parameter param;
     param.set<std::string>("host", config.get<std::string>("mysql_host"));
-    param.set<int>("port", config.get<int>("mysql_host", 3306));
+    param.set<int>("port", config.get<int>("mysql_port", 3306));
     param.set<std::string>("user", config.get<std::string>("mysql_user"));
     param.set<std::string>("pwd", config.get<std::string>("mysql_pwd"));
     param.set<std::string>("db", config.get<std::string>("mysql_db", ""));
