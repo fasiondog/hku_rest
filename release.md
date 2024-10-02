@@ -1,5 +1,9 @@
 # 版本发布说明
 
+## 1.0.1 - 2024年10月2日
+
+增加 use_hikyuu 编译参数，以便可以使用 hikyuu 替换 hku_utils
+
 ## 1.0.0 - 2024年8月2日
 
 initial version
