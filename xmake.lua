@@ -34,19 +34,26 @@ option_end()
 
 option("sqlite", {description = "Enable sqlite.", default = false})
 option("stacktrace", {description = "Enable check/assert with stack trace info.", default = false})
+option("log_level", {description = "set log level.", default = 2, values = {1, 2, 3, 4, 5, 6}})
+option("async_log", {description = "Use async log.", default = false})
+option("leak_check", {description = "Enable leak check for test", default = false})
+
 option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
 add_rules("mode.debug", "mode.release")
 
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
+
+local log_level = get_config("log_level")
 if get_config("use_hikyuu") then
     add_requires("hikyuu", 
     {configs = {
         shared = is_kind("shared"), 
-        log_level = 0,
+        log_level = log_level,
         mo = true,
         http_client = true,
         http_client_zip = true,
+        async_log = has_config("async_log"),
         mysql = has_config("mysql"), 
         sqlite = has_config("sqlite"),
         stacktrace = has_config("stacktrace")
@@ -55,10 +62,11 @@ else
     add_requires("hku_utils", 
         {configs = {
             shared = is_kind("shared"), 
-            log_level = 0,
+            log_level = log_level,
             mo = true,
             http_client = true,
             http_client_zip = true,
+            async_log = has_config("async_log"),
             mysql = has_config("mysql"), 
             sqlite = has_config("sqlite"),
             stacktrace = has_config("stacktrace")
@@ -92,6 +100,14 @@ if get_config("use_hikyuu") then
     add_packages("hikyuu")
 else
     add_packages("hku_utils") 
+end
+
+if get_config("leak_check") then
+    -- 需要 export LD_PRELOAD=libasan.so
+    set_policy("build.sanitizer.address", true)
+    set_policy("build.sanitizer.leak", true)
+    -- set_policy("build.sanitizer.memory", true)
+    -- set_policy("build.sanitizer.thread", true)
 end
 
 target("hku_httpd")
