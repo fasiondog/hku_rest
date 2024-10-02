@@ -34,11 +34,13 @@ option_end()
 
 option("sqlite", {description = "Enable sqlite.", default = false})
 option("stacktrace", {description = "Enable check/assert with stack trace info.", default = false})
+option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
 add_rules("mode.debug", "mode.release")
 
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
-add_requires("hku_utils", 
+if get_config("use_hikyuu") then
+    add_requires("hikyuu", 
     {configs = {
         shared = is_kind("shared"), 
         log_level = 0,
@@ -48,7 +50,20 @@ add_requires("hku_utils",
         mysql = has_config("mysql"), 
         sqlite = has_config("sqlite"),
         stacktrace = has_config("stacktrace")
-}})
+    }})
+else
+    add_requires("hku_utils", 
+        {configs = {
+            shared = is_kind("shared"), 
+            log_level = 0,
+            mo = true,
+            http_client = true,
+            http_client_zip = true,
+            mysql = has_config("mysql"), 
+            sqlite = has_config("sqlite"),
+            stacktrace = has_config("stacktrace")
+    }})
+end
 
 set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
 set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
@@ -66,6 +81,8 @@ if is_plat("windows") then
     -- add some defines only for windows
     add_defines("NOCRYPT", "NOGDI")
     add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
+    add_shflags("/NODEFAULTLIB:MSVCRT.lib")
+    add_ldflags("/NODEFAULTLIB:MSVCRT.lib")
     add_cxflags("-wd4819") -- template dll export warning
     add_defines("WIN32_LEAN_AND_MEAN")
     if is_mode("debug") then
@@ -73,7 +90,11 @@ if is_plat("windows") then
     end
 end
 
-add_packages("hku_utils") 
+if get_config("use_hikyuu") then
+    add_packages("hikyuu")
+else
+    add_packages("hku_utils") 
+end
 
 target("hku_httpd")
     set_kind("$(kind)")
