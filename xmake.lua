@@ -81,8 +81,6 @@ if is_plat("windows") then
     -- add some defines only for windows
     add_defines("NOCRYPT", "NOGDI")
     add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
-    add_shflags("/NODEFAULTLIB:MSVCRT.lib")
-    add_ldflags("/NODEFAULTLIB:MSVCRT.lib")
     add_cxflags("-wd4819") -- template dll export warning
     add_defines("WIN32_LEAN_AND_MEAN")
     if is_mode("debug") then
