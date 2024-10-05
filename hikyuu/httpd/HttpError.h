@@ -174,4 +174,6 @@ enum BadRequestErrorCode {
         }                                                                 \
     }
 
+#define REQ_THROW(errcode, ...) throw HttpBadRequestError(errcode, fmt::format(__VA_ARGS__))
+
 }  // namespace hku
