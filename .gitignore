@@ -37,3 +37,4 @@ build
 tmp
 hikyuu/httpd/version.h
 hikyuu/httpd/config.h
+.DS_Store

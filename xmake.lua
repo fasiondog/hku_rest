@@ -4,34 +4,7 @@ set_version("1.0.0", {build="%Y%m%d%H%M"})
 set_warnings("all")
 set_languages("cxx17", "c99")
 
-option("mysql")
-    set_default(true)
-    set_showmenu(true)
-    set_description("Enable mysql kdata engine.")
-    if is_plat("macosx") then
-        if os.exists("/usr/local/opt/mysql-client/lib") then
-            add_includedirs("/usr/local/opt/mysql-client/include/mysql")
-            add_includedirs("/usr/local/opt/mysql-client/include")
-            add_linkdirs("/usr/local/opt/mysql-client/lib")
-            add_rpathdirs("/usr/local/opt/mysql-client/lib")
-        end
-        if os.exists("/usr/local/mysql/lib") then
-            add_linkdirs("/usr/local/mysql/lib")
-            add_rpathdirs("/usr/local/mysql/lib")
-        end
-        if not os.exists("/usr/local/include/mysql") then
-            if os.exists("/usr/local/mysql/include") then
-                os.run("ln -s /usr/local/mysql/include /usr/local/include/mysql")
-            else
-                print("Not Found MySQL include dir!")
-            end
-        end
-        add_links("mysqlclient")
-    elseif is_plat("windows") then
-        add_defines("NOMINMAX")
-    end        
-option_end()
-
+option("mysql", {description = "Enable sqlite driver.", default = true})
 option("sqlite", {description = "Enable sqlite.", default = false})
 option("stacktrace", {description = "Enable check/assert with stack trace info.", default = false})
 option("log_level", {description = "set log level.", default = 2, values = {1, 2, 3, 4, 5, 6}})
@@ -42,7 +15,7 @@ option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false}
 
 add_rules("mode.debug", "mode.release")
 
-add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
+add_repositories("hikyuu-repo https://gitee.com/fasiondog/hikyuu_extern_libs.git")
 
 local log_level = get_config("log_level")
 if get_config("use_hikyuu") then
@@ -147,12 +120,7 @@ target("hku_httpd")
     end
     
     if is_plat("macosx") then
-        --add_linkdirs("/usr/local/opt/libiconv/lib")
         add_links("iconv")
-        if has_config("mysql") then
-            add_includedirs("/usr/local/opt/mysql-client/include")
-            add_linkdirs("/usr/local/opt/mysql-client/lib")
-        end
     end
 
     if is_plat("windows") then 
