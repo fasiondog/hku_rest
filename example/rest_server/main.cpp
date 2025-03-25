@@ -29,8 +29,10 @@ int main(int argc, char* argv[]) {
     std::signal(SIGABRT, signal_handle);
     std::signal(SIGSEGV, signal_handle);
 
-    HttpServer server("https://*", 8080);
+    HttpServer server("https://*", 8443);
     HttpHandle::enableTrace(true, false);
+
+    server.set_tls("ca.crt", "ca.key");
 
     try {
         pod::init("rest_server.ini");

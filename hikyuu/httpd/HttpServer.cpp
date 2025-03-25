@@ -8,6 +8,7 @@
 #include <csignal>
 #include <nng/nng.h>
 #include <nng/supplemental/tls/tls.h>
+#include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
 
 #if defined(_WIN32)
@@ -92,6 +93,9 @@ void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
 }
 
 void HttpServer::set_tls(const char* ca_file, const char* key_file) {
+    HKU_CHECK(existFile(ca_file), "Not exist ca file: {}", ca_file);
+    HKU_CHECK(existFile(key_file), "Not exist key file: {}", key_file);
+
     nng_tls_config* cfg;
     int rv;
 
@@ -102,12 +106,12 @@ void HttpServer::set_tls(const char* ca_file, const char* key_file) {
     // 设置证书和私钥文件
     if ((rv = nng_tls_config_cert_key_file(cfg, ca_file, key_file)) != 0) {
         nng_tls_config_free(cfg);
-        HKU_THROW("nng_tls_config_cert_key_file falied!");
+        HKU_THROW("nng_tls_config_cert_key_file falied! err: {}", nng_strerror(rv));
     }
 
     if ((rv = nng_http_server_set_tls(ms_server, cfg)) != 0) {
         nng_tls_config_free(cfg);
-        HKU_THROW("nng_http_server_set_tls falied!");
+        HKU_THROW("nng_http_server_set_tls falied! err: {}", nng_strerror(rv));
     }
     nng_tls_config_free(cfg);
 }
