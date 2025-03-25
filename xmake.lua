@@ -1,5 +1,5 @@
 set_project("hku_rest")
-set_version("1.0.1", {build="%Y%m%d%H%M"})
+set_version("1.0.3", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 set_languages("cxx17", "c99")
