@@ -9,7 +9,7 @@
 
 #include <string>
 #include <unordered_set>
-#include <hikyuu/utilities/thread/MQStealThreadPool.h>
+#include <hikyuu/utilities/thread/thread.h>
 #include <hikyuu/utilities/thread/FuncWrapper.h>
 #include "HttpHandle.h"
 
@@ -81,7 +81,7 @@ private:
 
 private:
     static nng_http_server *ms_server;
-    static MQStealThreadPool ms_tg;
+    static ThreadPool ms_tg;  // 网络应用中，尤其是大小核架构，集中队列效率最高
 };
 
 }  // namespace hku
