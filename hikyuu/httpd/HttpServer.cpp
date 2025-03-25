@@ -93,7 +93,7 @@ void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
 }
 
 void HttpServer::set_tls(const char* ca_key_file, const char* password) {
-    HKU_CHECK(existFile(ca_file), "Not exist ca file: {}", ca_file);
+    HKU_CHECK(existFile(ca_key_file), "Not exist ca file: {}", ca_key_file);
 
     nng_tls_config* cfg;
     int rv;
@@ -103,7 +103,7 @@ void HttpServer::set_tls(const char* ca_key_file, const char* password) {
                      "nng_tls_config_alloc failed!");
 
     // 设置证书和私钥文件
-    if ((rv = nng_tls_config_cert_key_file(cfg, ca_file, key_file)) != 0) {
+    if ((rv = nng_tls_config_cert_key_file(cfg, ca_key_file, password)) != 0) {
         nng_tls_config_free(cfg);
         HKU_THROW("nng_tls_config_cert_key_file falied! err: {}", nng_strerror(rv));
     }
