@@ -31,8 +31,7 @@ int main(int argc, char* argv[]) {
 
     HttpServer server("https://*", 8443);
     HttpHandle::enableTrace(true, false);
-
-    server.set_tls("ca.crt", "ca.key");
+    HttpServer::set_tls("ca.crt", nullptr);
 
     try {
         pod::init("rest_server.ini");

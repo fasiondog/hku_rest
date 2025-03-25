@@ -92,9 +92,8 @@ void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
                      "Failed nng_http_server_set_error_page");
 }
 
-void HttpServer::set_tls(const char* ca_file, const char* key_file) {
+void HttpServer::set_tls(const char* ca_key_file, const char* password) {
     HKU_CHECK(existFile(ca_file), "Not exist ca file: {}", ca_file);
-    HKU_CHECK(existFile(key_file), "Not exist key file: {}", key_file);
 
     nng_tls_config* cfg;
     int rv;
