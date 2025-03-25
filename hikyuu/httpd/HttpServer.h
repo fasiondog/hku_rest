@@ -41,8 +41,9 @@ public:
      * 设置 tls 配置，启动前设置
      * @param ca_key_file ca文件路径(同时包含PEM格式的cert和key的文件)
      * @param password ca文件密码,无密码时指定空指针
+     * @param mode 0 无需客户端认证 | 1 客户端认证可选 | 2 需客户端认证
      */
-    static void set_tls(const char *ca_key_file, const char *password);
+    static void set_tls(const char *ca_key_file, const char *password, int mode = 0);
 
     template <typename Handle>
     void GET(const char *path) {

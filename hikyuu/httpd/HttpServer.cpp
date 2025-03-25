@@ -92,7 +92,7 @@ void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
                      "Failed nng_http_server_set_error_page");
 }
 
-void HttpServer::set_tls(const char* ca_key_file, const char* password) {
+void HttpServer::set_tls(const char* ca_key_file, const char* password, int mode) {
     HKU_CHECK(existFile(ca_key_file), "Not exist ca file: {}", ca_key_file);
 
     nng_tls_config* cfg;
@@ -106,6 +106,11 @@ void HttpServer::set_tls(const char* ca_key_file, const char* password) {
     if ((rv = nng_tls_config_cert_key_file(cfg, ca_key_file, password)) != 0) {
         nng_tls_config_free(cfg);
         HKU_THROW("nng_tls_config_cert_key_file falied! err: {}", nng_strerror(rv));
+    }
+
+    if ((rv = nng_tls_config_auth_mode(cfg, static_cast<nng_tls_auth_mode>(mode))) != 0) {
+        nng_tls_config_free(cfg);
+        HKU_THROW("nng_tls_config_auth_mode falied! err: {}", nng_strerror(rv));
     }
 
     if ((rv = nng_http_server_set_tls(ms_server, cfg)) != 0) {
