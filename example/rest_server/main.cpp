@@ -7,6 +7,7 @@
 
 #include <locale>
 #include <csignal>
+#include <nng/nng.h>
 #include "hikyuu/httpd/HttpServer.h"
 #include "hikyuu/httpd/pod/all.h"
 #include "HelloService.h"
@@ -28,7 +29,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGABRT, signal_handle);
     std::signal(SIGSEGV, signal_handle);
 
-    HttpServer server("http://*", 8080);
+    HttpServer server("https://*", 8080);
     HttpHandle::enableTrace(true, false);
 
     try {

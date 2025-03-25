@@ -6,6 +6,8 @@
  */
 
 #include <csignal>
+#include <nng/nng.h>
+#include <nng/supplemental/tls/tls.h>
 #include "HttpServer.h"
 
 #if defined(_WIN32)
@@ -87,6 +89,27 @@ void HttpServer::stop() {
 void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
     HTTP_FATAL_CHECK(nng_http_server_set_error_page(ms_server, http_status, body.c_str()),
                      "Failed nng_http_server_set_error_page");
+}
+
+void HttpServer::set_tls(const char* ca_file, const char* key_file) {
+    nng_tls_config* cfg;
+    int rv;
+
+    // 创建一个新的 TLS 配置
+    HTTP_FATAL_CHECK(nng_tls_config_alloc(&cfg, NNG_TLS_MODE_SERVER),
+                     "nng_tls_config_alloc failed!");
+
+    // 设置证书和私钥文件
+    if ((rv = nng_tls_config_cert_key_file(cfg, ca_file, key_file)) != 0) {
+        nng_tls_config_free(cfg);
+        HKU_THROW("nng_tls_config_cert_key_file falied!");
+    }
+
+    if ((rv = nng_http_server_set_tls(ms_server, cfg)) != 0) {
+        nng_tls_config_free(cfg);
+        HKU_THROW("nng_http_server_set_tls falied!");
+    }
+    nng_tls_config_free(cfg);
 }
 
 void HttpServer::regHandle(const char* method, const char* path, void (*rest_handle)(nng_aio*)) {

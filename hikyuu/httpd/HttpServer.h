@@ -37,6 +37,11 @@ public:
      */
     static void set_error_msg(int16_t http_status, const std::string &body);
 
+    /**
+     * 设置 tls 配置，启动前设置
+     */
+    static void set_tls(const char *ca_file, const char *key_file);
+
     template <typename Handle>
     void GET(const char *path) {
         regHandle("GET", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
