@@ -47,33 +47,35 @@ public:
 
     template <typename Handle>
     void GET(const char *path) {
-        regHandle("GET", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle("GET", path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
 
     template <typename Handle>
     void POST(const char *path) {
-        regHandle("POST", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle("POST", path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
 
     template <typename Handle>
     void PUT(const char *path) {
-        regHandle("PUT", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle("PUT", path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
 
     template <typename Handle>
     void DEL(const char *path) {
-        regHandle("DELETE", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle("DELETE", path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
 
     template <typename Handle>
     void PATCH(const char *path) {
-        regHandle("PATCH", path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle("PATCH", path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
 
     template <typename Handle>
     void regHandle(const char *method, const char *path) {
-        regHandle(method, path, [](nng_aio *aio) { ms_tg.submit(Handle(aio)); });
+        regHandle(method, path, [](nng_aio *aio) { getTG()->submit(Handle(aio)); });
     }
+
+    static ThreadPool *getTG();
 
 private:
     void regHandle(const char *method, const char *path, void (*rest_handle)(nng_aio *));
