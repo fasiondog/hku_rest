@@ -54,10 +54,6 @@ HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(p
 
 HttpServer::~HttpServer() {}
 
-ThreadPool* HttpServer::getTG() {
-    return &ms_tg;
-}
-
 void HttpServer::start() {
     // std::signal(SIGINT, &HttpServer::signal_handler);
     // std::signal(SIGTERM, &HttpServer::signal_handler);
