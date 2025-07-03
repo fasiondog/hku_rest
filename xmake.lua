@@ -1,5 +1,6 @@
+set_xmakever("3.0.0")
 set_project("hku_rest")
-set_version("1.0.5", {build="%Y%m%d%H%M"})
+set_version("1.0.6", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 set_languages("cxx17", "c99")
@@ -48,8 +49,8 @@ else
     }})
 end
 
-set_objectdir("$(buildir)/$(mode)/$(plat)/$(arch)/.objs")
-set_targetdir("$(buildir)/$(mode)/$(plat)/$(arch)/lib")
+set_objectdir("$(builddir)/$(mode)/$(plat)/$(arch)/.objs")
+set_targetdir("$(builddir)/$(mode)/$(plat)/$(arch)/lib")
 
 -- is release now
 if is_mode("release") then
@@ -164,7 +165,7 @@ target("hku_httpd")
             lib_suffix = ".dylib"
         end
 
-        local libdir = get_config("buildir") .. "/" .. get_config("mode") .. "/" .. get_config("plat") .. "/" ..
+        local libdir = get_config("builddir") .. "/" .. get_config("mode") .. "/" .. get_config("plat") .. "/" ..
                         get_config("arch") .. "/lib"
         -- 将依赖的库拷贝至build的输出目录
         for libname, pkg in pairs(target:pkgs()) do
