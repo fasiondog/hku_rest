@@ -136,7 +136,7 @@ public:
      * @param msgid 待翻译的字符串
      */
     std::string _tr(const char *msgid) const {
-        return MOHelper::translate(getLanguage(), msgid);
+        return mo::translate(getLanguage(), msgid);
     }
 
     /**
@@ -145,7 +145,7 @@ public:
      * @param msgid 待翻译的字符串
      */
     std::string _ctr(const char *ctx, const char *msgid) {
-        return MOHelper::translate(getLanguage(), ctx, msgid);
+        return mo::translate(getLanguage(), ctx, msgid);
     }
 
     void operator()();
