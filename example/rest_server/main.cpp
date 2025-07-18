@@ -29,7 +29,7 @@ int main(int argc, char* argv[]) {
     std::signal(SIGABRT, signal_handle);
     std::signal(SIGSEGV, signal_handle);
 
-    HttpServer server("https://*", 8080);
+    HttpServer server("http://*", 8080);
     HttpHandle::enableTrace(true, false);
 
     // HttpServer server("https://*", 8443);

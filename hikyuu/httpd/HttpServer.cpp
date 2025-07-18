@@ -26,7 +26,6 @@ namespace hku {
     }
 
 nng_http_server* HttpServer::ms_server = nullptr;
-ThreadPool HttpServer::ms_tg(std::thread::hardware_concurrency(), false);
 
 #if defined(_WIN32)
 static UINT g_old_cp;
@@ -77,7 +76,6 @@ void HttpServer::stop() {
 #if defined(_WIN32)
     SetConsoleOutputCP(g_old_cp);
 #endif
-    ms_tg.stop();
     if (ms_server) {
         CLS_INFO("Quit Http server");
         nng_http_server_stop(ms_server);
