@@ -63,26 +63,32 @@ public:
     }
 
     /** 获取请求的 url */
-    std::string getReqUrl() const;
+    std::string getReqUrl() const noexcept;
 
     /**
      * 获取请求头部信息
      * @param name 头部信息名称
      * @return 如果获取不到将返回""
      */
-    std::string getReqHeader(const char *name) const;
+    std::string getReqHeader(const char *name) const noexcept;
 
     /**
      * 获取请求头部信息
      * @param name 头部信息名称
      * @return 如果获取不到将返回""
      */
-    std::string getReqHeader(const std::string &name) const {
+    std::string getReqHeader(const std::string &name) const noexcept {
         return getReqHeader(name.c_str());
     }
 
     /** 根据 Content-Encoding 进行解码，返回解码后的请求数据 */
     std::string getReqData();
+
+    /**
+     * 尝试获取请求数据，如果无法获取到数据，则返回空字符串
+     * @return 请求数据
+     */
+    std::string tryGetReqData() noexcept;
 
     /** 返回请求的 json 数据，如无法解析为json，将抛出异常*/
     json getReqJson();
@@ -178,7 +184,7 @@ protected:
      * @return ClientAddress
      * @note port 始终为直连对端的port（即可能是代理的port)。
      */
-    ClientAddress getClientAddress(bool tryFromHeader = true);
+    ClientAddress getClientAddress(bool tryFromHeader = true) noexcept;
 
 private:
     void processException(int http_status, int errcode, std::string_view err_msg);
@@ -196,7 +202,7 @@ public:
     }
 
 protected:
-    void printTraceInfo();
+    void printTraceInfo() noexcept;
 
 private:
     // 是否跟踪请求打印

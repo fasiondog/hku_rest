@@ -62,22 +62,27 @@ void HttpHandle::operator()() {
         nng_aio_set_output(m_http_aio, 0, m_nng_res);
 
     } catch (nlohmann::json::exception& e) {
-        CLS_WARN("HttpBadRequestError({}): {}", int(INVALID_JSON_REQUEST), e.what());
         processException(NNG_HTTP_STATUS_BAD_REQUEST, INVALID_JSON_REQUEST, e.what());
+        auto addr = getClientAddress();
+        CLS_WARN("HttpBadRequestError({}): {}, client: {}:{}, url: {}, req: {}",
+                 int(INVALID_JSON_REQUEST), e.what(), addr.ip, addr.port, getReqUrl(),
+                 tryGetReqData());
 
     } catch (HttpError& e) {
-        CLS_WARN("{}({}): {}", e.name(), e.errcode(), e.what());
         processException(e.status(), e.errcode(), e.what());
+        auto addr = getClientAddress();
+        CLS_WARN("{}({}): {}, client: {}:{}, url: {}, req: {}", e.name(), e.errcode(), e.what(),
+                 addr.ip, addr.port, getReqUrl(), tryGetReqData());
 
     } catch (std::exception& e) {
-        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), e.what());
         processException(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR,
                          NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR, e.what());
+        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), e.what());
 
     } catch (...) {
-        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), "Unknown error");
         processException(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR,
                          NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR, "Unknown error");
+        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), "Unknown error");
     }
 
     if (ms_enable_trace) {
@@ -87,7 +92,7 @@ void HttpHandle::operator()() {
     nng_aio_finish(m_http_aio, 0);
 }
 
-HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) {
+HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) noexcept {
     ClientAddress ret;
     nng_http_conn* http_conn = (nng_http_conn*)nng_aio_get_input(m_http_aio, 2);
     CLS_IF_RETURN(http_conn == nullptr, ret);
@@ -150,7 +155,7 @@ HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) {
     return ret;
 }
 
-void HttpHandle::printTraceInfo() {
+void HttpHandle::printTraceInfo() noexcept {
     std::string url = getReqUrl();
     std::string traceid = getReqHeader("traceid");
     if (ms_enable_only_traceid && traceid.empty()) {
@@ -159,38 +164,44 @@ void HttpHandle::printTraceInfo() {
     Datetime now = Datetime::now();
 #if FMT_VERSION >= 90000
     std::string str = fmt::format(
-      "{:>4d}-{:0>2d}-{:0>2d} {:0>2d}:{:0>2d}:{:0>2d}.{:0<3d} [HttpHandle-T] - ", now.year(),
-      now.month(), now.day(), now.hour(), now.minute(), now.second(), now.millisecond());
+      "{:>4d}-{:0>2d}-{:0>2d} {:0>2d}:{:0>2d}:{:0>2d}.{:0<3d} [trace] - ", now.year(), now.month(),
+      now.day(), now.hour(), now.minute(), now.second(), now.millisecond());
 #else
     std::string str = fmt::format(
-      "{:>4d}-{:>02d}-{:>02d} {:>02d}:{:>02d}:{:>02d}.{:<03d} [HttpHandle-T] - ", now.year(),
-      now.month(), now.day(), now.hour(), now.minute(), now.second(), now.millisecond());
+      "{:>4d}-{:>02d}-{:>02d} {:>02d}:{:>02d}:{:>02d}.{:<03d} [trace] - ", now.year(), now.month(),
+      now.day(), now.hour(), now.minute(), now.second(), now.millisecond());
 #endif
 
-    auto client_addr = getClientAddress();
-    if (traceid.empty()) {
-        HKU_TRACE(
-          "\n{}╔════════════════════════════════════════════════════════════\n"
-          "{}║  url: {}\n"
-          "{}║  client: {}:{}\n"
-          "{}║  method: {}\n"
-          "{}║  request: {}\n"
-          "{}║  response: {}\n"
-          "{}╚════════════════════════════════════════",
-          str, str, url, str, client_addr.ip, client_addr.port, str,
-          nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
-    } else {
-        HKU_TRACE(
-          "\n{}╔════════════════════════════════════════════════════════════\n"
-          "{}║  url:{}\n"
-          "{}║  client: {}:{}\n"
-          "{}║  method: {}\n"
-          "{}║  traceid: {}\n"
-          "{}║  request: {}\n"
-          "{}║  response: {}\n{}╚════════════════════════════════════════",
-          str, str, url, str, client_addr.ip, client_addr.port, str,
-          nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(), str, getResData(),
-          str);
+    try {
+        auto client_addr = getClientAddress();
+        if (traceid.empty()) {
+            HKU_INFO(
+              "\n{}╔════════════════════════════════════════════════════════════\n"
+              "{}║  url: {}\n"
+              "{}║  client: {}:{}\n"
+              "{}║  method: {}\n"
+              "{}║  request: {}\n"
+              "{}║  response: {}\n"
+              "{}╚════════════════════════════════════════",
+              str, str, url, str, client_addr.ip, client_addr.port, str,
+              nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
+        } else {
+            HKU_INFO(
+              "\n{}╔════════════════════════════════════════════════════════════\n"
+              "{}║  url:{}\n"
+              "{}║  client: {}:{}\n"
+              "{}║  method: {}\n"
+              "{}║  traceid: {}\n"
+              "{}║  request: {}\n"
+              "{}║  response: {}\n{}╚════════════════════════════════════════",
+              str, str, url, str, client_addr.ip, client_addr.port, str,
+              nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(), str,
+              getResData(), str);
+        }
+    } catch (std::exception& e) {
+        HKU_ERROR("printTraceInfo error: {}", e.what());
+    } catch (...) {
+        HKU_ERROR("printTraceInfo error!");
     }
 }
 
@@ -209,7 +220,7 @@ void HttpHandle::processException(int http_status, int errcode, std::string_view
     }
 }
 
-std::string HttpHandle::getReqUrl() const {
+std::string HttpHandle::getReqUrl() const noexcept {
     std::string result;
     const char* url = nng_http_req_get_uri(m_nng_req);
     if (url) {
@@ -218,7 +229,7 @@ std::string HttpHandle::getReqUrl() const {
     return result;
 }
 
-std::string HttpHandle::getReqHeader(const char* name) const {
+std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     std::string result;
     const char* head = nng_http_req_get_header(m_nng_req, name);
     if (head) {
@@ -251,6 +262,14 @@ std::string HttpHandle::getReqData() {
     }
 
     return result;
+}
+
+std::string HttpHandle::tryGetReqData() noexcept {
+    try {
+        return getReqData();
+    } catch (...) {
+        return std::string();
+    }
 }
 
 std::string HttpHandle::getResData() const {
