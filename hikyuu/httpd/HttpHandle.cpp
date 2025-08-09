@@ -258,7 +258,7 @@ std::string HttpHandle::getReqData() {
     } else {
         throw HttpNotAcceptableError(
           HttpNotAcceptableError::UNSUPPORT_CONTENT_ENCODING,
-          fmt::format(_ctr("HttpHandle", "Unsupported Content-Encoding format: {}"), encoding));
+          fmt::format("Unsupported Content-Encoding format: {}", encoding));
     }
 
     return result;

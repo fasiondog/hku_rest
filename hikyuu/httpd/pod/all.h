@@ -9,7 +9,7 @@
 
 #include <string>
 #include "hikyuu/httpd/config.h"
-#include "hikyuu/utilities/mo/mo.h"
+#include "MOHelper.h"
 #include "PodConfig.h"
 #include "CommonPod.h"
 

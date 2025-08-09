@@ -11,9 +11,6 @@ namespace hku {
 namespace pod {
 
 void init() {
-    // 初始化多语言支持
-    mo::init();
-
     CommonPod::init();
 
 #if HKU_HTTPD_POD_USE_SQLITE

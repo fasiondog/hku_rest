@@ -1,7 +1,7 @@
 set_xmakever("3.0.0")
 set_project("hku_rest")
 
-set_version("1.0.9", {build="%Y%m%d%H%M"})
+set_version("1.1.0", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 set_languages("cxx17", "c99")
@@ -25,7 +25,6 @@ if get_config("use_hikyuu") then
     {configs = {
         shared = is_kind("shared"), 
         log_level = log_level,
-        mo = true,
         http_client = true,
         http_client_ssl = true,
         http_client_zip = true,
@@ -39,7 +38,6 @@ else
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,
-            mo = true,
             http_client = true,
             http_client_ssl = true,
             http_client_zip = true,
