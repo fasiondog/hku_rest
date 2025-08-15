@@ -26,24 +26,19 @@ namespace pod {
 class HKU_HTTPD_API MOHelper {
 public:
     /**
-     * 加载多语言文件，对应语言文件名 {path}/{lang}/{textdomain}.mo
-     * @note 非线程安全，请在初始化时调用
+     * 加载多语言文件
      * @param textdomain 多语言文件名，通常为程序名
      * @param lang 语言
      * @param path 多语言文件路径
      */
-    static void loadLanguage(const std::string &textdomain, const std::string &lang,
-                             const std::string &path = "i18n");
+    static void loadLanguage(const std::string &lang, const std::string &filename);
 
-    static std::string translate(const std::string &textdomain, const std::string &lang,
-                                 const char *id);
+    static std::string translate(const std::string &lang, const char *id);
 
-    static std::string translate(const std::string &textdomain, const std::string &lang,
-                                 const char *ctx, const char *id);
+    static std::string translate(const std::string &lang, const char *ctx, const char *id);
 
 private:
-    static std::unordered_map<std::string, std::unordered_map<std::string, moFileLib::moFileReader>>
-      ms_mo;  // textdomain -> lang -> moFileReader
+    static std::unordered_map<std::string, moFileLib::moFileReader> ms_mo;  // lang->moFileReader
 };
 
 }  // namespace pod

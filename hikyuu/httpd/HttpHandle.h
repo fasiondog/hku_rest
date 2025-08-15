@@ -141,8 +141,8 @@ public:
      * 多语言翻译
      * @param msgid 待翻译的字符串
      */
-    std::string _tr(const std::string &textdomain, const char *msgid) const {
-        return pod::MOHelper::translate(textdomain, getLanguage(), msgid);
+    std::string _tr(const char *msgid) const {
+        return pod::MOHelper::translate(getLanguage(), msgid);
     }
 
     /**
@@ -150,8 +150,8 @@ public:
      * @param ctx 翻译上下文
      * @param msgid 待翻译的字符串
      */
-    std::string _ctr(const std::string &textdomain, const char *ctx, const char *msgid) {
-        return pod::MOHelper::translate(textdomain, getLanguage(), ctx, msgid);
+    std::string _ctr(const char *ctx, const char *msgid) {
+        return pod::MOHelper::translate(getLanguage(), ctx, msgid);
     }
 
     void operator()();
