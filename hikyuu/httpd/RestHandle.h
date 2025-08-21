@@ -48,7 +48,7 @@ protected:
     void check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             throw HttpBadRequestError(BadRequestErrorCode::MISS_PARAMETER,
-                                      fmt::format(R"(Missing param "{}")", param));
+                                      fmt::format("Missing param: {}", param));
         }
     }
 
