@@ -71,10 +71,55 @@ if is_plat("windows") then
     end
 end
 
+local boost_config
+if is_plat("windows") then
+    boost_config = {
+        system = false,
+        debug = is_mode("debug"),
+        configs = {
+            shared = true,
+            runtimes = get_config("runtimes"),
+            multi = true,
+            date_time = true,
+            filesystem = false,
+            serialization = get_config("serialize"),
+            system = true,
+            python = false,
+            cmake = false,
+    }}
+else
+    boost_config = {
+        system = false,
+        configs = {
+            shared = true, -- is_plat("windows"),
+            runtimes = get_config("runtimes"),
+            multi = true,
+            date_time = true,
+            filesystem = false,
+            serialization = true, --get_config("serialize"),
+            system = true,
+            python = false,
+            -- 以下为兼容 arrow 等其他组件
+            thread = true,   -- parquet need
+            chrono = true,   -- parquet need
+            charconv = true, -- parquet need
+            atomic = true,
+            container = true,
+            math = true,
+            locale = true,
+            icu = true,
+            regex = true,
+            random = true,
+            thread = true,
+            cmake = true,
+    }}
+end
 if get_config("use_hikyuu") then
     add_packages("hikyuu")
+    add_requireconfs("hikyuu.boost", {override=true, system = false, configs = boost_config.configs})
 else
-    add_packages("hku_utils") 
+    add_packages("hku_utils")
+    add_requireconfs("hku_utils.boost", {override=true, system = false, configs = boost_config.configs})
 end
 
 if get_config("leak_check") then
