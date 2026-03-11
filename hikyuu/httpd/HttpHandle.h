@@ -65,17 +65,13 @@ public:
         }
     };
 
-    struct RouteKeyHash {
-        std::size_t operator()(const RouteKey& key) const {
-            return std::hash<std::string>()(key.method) ^ (std::hash<std::string>()(key.path) << 1);
-        }
-    };
-
     void registerHandler(const std::string& method, const std::string& path, HandlerFunc handler);
     HandlerFunc findHandler(const std::string& method, const std::string& path);
 
 private:
-    std::unordered_map<RouteKey, HandlerFunc, RouteKeyHash> m_routes;
+    // 使用 vector 存储路由表，避免 map 的哈希开销和动态分配
+    // 路由数量有限（通常 < 100），线性搜索性能足够且缓存友好
+    std::vector<std::pair<RouteKey, HandlerFunc>> m_routes;
 };
 
 /**
@@ -210,34 +206,19 @@ public:
     net::awaitable<void> operator()();
 
 protected:
-    struct ClientAddress {
-        std::string ip;
-        uint16_t port = 0;
-
-        ClientAddress() = default;
-        ClientAddress(const ClientAddress&) = default;
-        ClientAddress(ClientAddress&& rhs) : ip(std::move(rhs.ip)), port(rhs.port) {
-            rhs.port = 0;
-        }
-
-        ClientAddress& operator=(const ClientAddress&) = default;
-        ClientAddress& operator=(ClientAddress&& rhs) {
-            if (this != &rhs) {
-                ip = std::move(rhs.ip);
-                port = rhs.port;
-                rhs.port = 0;
-            }
-            return *this;
-        }
-    };
+    /**
+     * 获取客户端 IP 地址
+     * @param tryFromHeader 优先尝试从请求头中获取真实客户 ip，否则为直连对端 ip
+     * @return 客户端 IP 地址
+     * @note 如果 tryFromHeader 为 true，会依次检查 X-Real-IP、X-Forwarded-For 等头部
+     */
+    std::string getClientIp(bool tryFromHeader = true) const noexcept;
 
     /**
-     * 获取客户端地址
-     * @param tryFromHeader 优先尝试从请求头中获取真实客户 ip，否则为直连对端 ip
-     * @return ClientAddress
-     * @note port 始终为直连对端的 port（即可能是代理的 port)。
+     * 获取客户端端口
+     * @return 客户端端口（直连对端的 port，可能是代理的 port）
      */
-    ClientAddress getClientAddress(bool tryFromHeader = true) noexcept;
+    uint16_t getClientPort() const noexcept;
 
 private:
     void processException(int http_status, int errcode, std::string_view err_msg);
@@ -255,8 +236,6 @@ protected:
     std::string m_req_method;
     std::string m_req_uri;
     std::string m_req_body;
-    std::string m_client_ip;
-    uint16_t m_client_port{0};
 
 public:
     static void enableTrace(bool enable, bool only_traceid = false) {

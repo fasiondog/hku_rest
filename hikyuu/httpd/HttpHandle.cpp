@@ -43,8 +43,6 @@ HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {
         m_req_method = std::string(ctx->req.method_string());
         m_req_uri = std::string(ctx->req.target());
         m_req_body = ctx->req.body();
-        m_client_ip = ctx->client_ip;
-        m_client_port = ctx->client_port;
     }
 }
 
@@ -89,16 +87,14 @@ net::awaitable<void> HttpHandle::operator()() {
 
     } catch (nlohmann::json::exception& e) {
         processException(400, INVALID_JSON_REQUEST, e.what());
-        auto addr = getClientAddress();
         CLS_WARN("HttpBadRequestError({}): {}, client: {}:{}, url: {}, req: {}",
-                 int(INVALID_JSON_REQUEST), e.what(), addr.ip, addr.port, getReqUrl(),
+                 int(INVALID_JSON_REQUEST), e.what(), getClientIp(), getClientPort(), getReqUrl(),
                  tryGetReqData());
 
     } catch (HttpError& e) {
         processException(e.status(), e.errcode(), e.what());
-        auto addr = getClientAddress();
         CLS_WARN("{}({}): {}, client: {}:{}, url: {}, req: {}", e.name(), e.errcode(), e.what(),
-                 addr.ip, addr.port, getReqUrl(), tryGetReqData());
+                 getClientIp(), getClientPort(), getReqUrl(), tryGetReqData());
 
     } catch (std::exception& e) {
         processException(500, 500, e.what());
@@ -114,47 +110,6 @@ net::awaitable<void> HttpHandle::operator()() {
     }
     
     co_return;
-}
-
-HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) noexcept {
-    ClientAddress ret;
-    
-    // 从上下文中获取客户端地址
-    if (!m_client_ip.empty()) {
-        ret.ip = m_client_ip;
-        ret.port = m_client_port;
-    }
-
-    if (tryFromHeader) {
-        std::string ip_hdr;
-        std::string unknown("unknown");
-        ip_hdr = getReqHeader("X-Real-IP");
-        to_lower(ip_hdr);
-        if (ip_hdr.empty() || ip_hdr == unknown) {
-            ip_hdr = getReqHeader("X-Forwarded-For");
-            to_lower(ip_hdr);
-        }
-        if (ip_hdr.empty() || ip_hdr == unknown) {
-            ip_hdr = getReqHeader("Proxy-Client-IP");
-            to_lower(ip_hdr);
-        }
-        if (ip_hdr.empty() || ip_hdr == unknown) {
-            ip_hdr = getReqHeader("WL-Proxy-Client-IP");
-            to_lower(ip_hdr);
-        }
-
-        if (!ip_hdr.empty()) {
-            auto ips = split(ip_hdr, ",");
-            for (auto&& x : ips) {
-                if (!x.empty() && x != unknown) {
-                    ret.ip = std::move(x);
-                    break;
-                }
-            }
-        }
-    }
-
-    return ret;
 }
 
 void HttpHandle::printTraceInfo() noexcept {
@@ -175,7 +130,8 @@ void HttpHandle::printTraceInfo() noexcept {
 #endif
 
     try {
-        auto client_addr = getClientAddress();
+        std::string client_ip = getClientIp();
+        uint16_t client_port = getClientPort();
         if (traceid.empty()) {
             HKU_INFO(
               "\n{}╔════════════════════════════════════════════════════════════\n"
@@ -185,7 +141,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  request: {}\n"
               "{}║  response: {}\n"
               "{}╚════════════════════════════════════════",
-              str, str, url, str, client_addr.ip, client_addr.port, str,
+              str, str, url, str, client_ip, client_port, str,
               m_req_method, str, getReqData(), str, getResData(), str);
         } else {
             HKU_INFO(
@@ -196,7 +152,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  traceid: {}\n"
               "{}║  request: {}\n"
               "{}║  response: {}\n{}╚════════════════════════════════════════",
-              str, str, url, str, client_addr.ip, client_addr.port, str,
+              str, str, url, str, client_ip, client_port, str,
               m_req_method, str, traceid, str, getReqData(), str,
               getResData(), str);
         }
@@ -382,4 +338,52 @@ std::string HttpHandle::getLanguage() const {
     return lang;
 }
 
+std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
+    if (!m_beast_context) {
+        return "";
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    std::string result = ctx->client_ip;
+
+    if (tryFromHeader) {
+        std::string ip_hdr;
+        std::string unknown("unknown");
+        ip_hdr = getReqHeader("X-Real-IP");
+        to_lower(ip_hdr);
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("X-Forwarded-For");
+            to_lower(ip_hdr);
+        }
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("Proxy-Client-IP");
+            to_lower(ip_hdr);
+        }
+        if (ip_hdr.empty() || ip_hdr == unknown) {
+            ip_hdr = getReqHeader("WL-Proxy-Client-IP");
+            to_lower(ip_hdr);
+        }
+
+        if (!ip_hdr.empty()) {
+            auto ips = split(ip_hdr, ",");
+            for (auto&& x : ips) {
+                if (!x.empty() && x != unknown) {
+                    result = std::move(x);
+                    break;
+                }
+            }
+        }
+    }
+
+    return result;
+}
+
+uint16_t HttpHandle::getClientPort() const noexcept {
+    if (!m_beast_context) {
+        return 0;
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    return ctx->client_port;
+}
 }  // namespace hku

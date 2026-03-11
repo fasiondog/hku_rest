@@ -62,22 +62,24 @@ static UINT g_old_cp;
 
 void Router::registerHandler(const std::string& method, const std::string& path,
                              HandlerFunc handler) {
-    RouteKey key{method, path};
-    m_routes[key] = handler;
+    m_routes.emplace_back(RouteKey{method, path}, std::move(handler));
 }
 
 Router::HandlerFunc Router::findHandler(const std::string& method, const std::string& path) {
-    RouteKey key{method, path};
-    auto it = m_routes.find(key);
-    if (it != m_routes.end()) {
-        return it->second;
+    // 精确匹配优先（线性搜索，路由数量有限时性能优于哈希表）
+    for (const auto& [key, handler] : m_routes) {
+        if (key.method == method && key.path == path) {
+            return handler;
+        }
     }
 
-    // 尝试查找通配符路由（简单实现，可以扩展为更复杂的路由匹配）
-    for (const auto& [route_key, handler] : m_routes) {
-        if (route_key.method == method) {
-            // 支持简单的路径前缀匹配
-            if (path.find(route_key.path) == 0) {
+    // 通配符路由匹配（简单的前缀匹配）
+    // 注意：通配符路由应该在注册时放在 vector 后部，避免每次都要遍历
+    for (const auto& [key, handler] : m_routes) {
+        if (key.method == method && !key.path.empty() && key.path.back() == '*') {
+            // 前缀匹配：/api/* 匹配 /api/users
+            std::string_view prefix(key.path.data(), key.path.size() - 1);
+            if (path.find(prefix) == 0) {
                 return handler;
             }
         }
