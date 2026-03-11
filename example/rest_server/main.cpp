@@ -7,7 +7,6 @@
 
 #include <locale>
 #include <csignal>
-#include <nng/nng.h>
 #include "hikyuu/httpd/HttpServer.h"
 #include "hikyuu/httpd/pod/all.h"
 #include "HelloService.h"
@@ -29,32 +28,32 @@ int main(int argc, char* argv[]) {
     std::signal(SIGABRT, signal_handle);
     std::signal(SIGSEGV, signal_handle);
 
-    HttpServer server("http://*", 8080);
+    // HTTP 服务器
+    HttpServer server("0.0.0.0", 8080);
     HttpHandle::enableTrace(true, false);
 
-    // HttpServer server("https://*", 8443);
+    // HTTPS 服务器示例
+    // HttpServer server("0.0.0.0", 8443);
     // HttpHandle::enableTrace(true, false);
-    // HttpServer::set_tls("ca_merge.crt", nullptr);
+    // server.set_tls("server.pem", "", 0);
 
     try {
         pod::init("rest_server.ini");
 
-        // 设置 404 返回信息
-        server.set_error_msg(NNG_HTTP_STATUS_NOT_FOUND,
-                             fmt::format(R"({{"ret": {}, "errmsg":"Content not Found"}})",
-                                         int(NNG_HTTP_STATUS_NOT_FOUND)));
-
-        HelloService hello_service("/");
+        HelloService hello_service("/api");
         hello_service.bind(&server);
 
         HKU_INFO("start server ... You can press Ctrl-C stop");
+        HKU_INFO("HTTP Server started on http://0.0.0.0:8080");
+        HKU_INFO("Test with: curl http://localhost:8080/api/hello");
+        
         server.start();
         server.loop();
 
     } catch (std::exception& e) {
         HKU_FATAL(e.what());
     } catch (...) {
-        HKU_FATAL("Unknow error!");
+        HKU_FATAL("Unknown error!");
     }
 
     hku::pod::quit();

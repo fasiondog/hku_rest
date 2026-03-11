@@ -4,7 +4,7 @@ set_project("hku_rest")
 set_version("1.1.1", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
-set_languages("cxx17", "c99")
+set_languages("cxx20")
 
 option("mysql", {description = "Enable sqlite driver.", default = true})
 option("sqlite", {description = "Enable sqlite.", default = false})
@@ -86,6 +86,8 @@ if is_plat("windows") then
             system = true,
             python = false,
             cmake = false,
+            beast = true,
+            asio = true,
     }}
 else
     boost_config = {
@@ -112,6 +114,8 @@ else
             random = true,
             thread = true,
             cmake = true,
+            beast = true,
+            asio = true,            
     }}
 end
 if get_config("use_hikyuu") then
@@ -130,6 +134,12 @@ if get_config("leak_check") then
     -- set_policy("build.sanitizer.thread", true)
 end
 
+if is_plat("linux") then
+  add_requires("apt::libssl-dev", {alias="openssl3"})
+else
+  add_requires("openssl3")
+end
+
 target("hku_httpd")
     set_kind("$(kind)")
 
@@ -139,6 +149,8 @@ target("hku_httpd")
 
     set_configvar("HKU_HTTPD_POD_USE_SQLITE", has_config("sqlite") and 1 or 0)
     set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
+
+    add_packages("openssl3")
     
     add_includedirs(".")
 

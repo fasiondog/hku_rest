@@ -13,8 +13,9 @@ namespace hku {
 
 class HelloHandle : public RestHandle {
     REST_HANDLE_IMP(HelloHandle)
-    virtual void run() override {
+    virtual net::awaitable<void> run() override {
         res["msg"] = "hello word!";
+        co_return;
     }
 };
 

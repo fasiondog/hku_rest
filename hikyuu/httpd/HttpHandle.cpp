@@ -19,31 +19,47 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <WS2tcpip.h>
+#include <WS2tcpnip.h>
 #include <Ws2ipdef.h>
 #else
 #include <arpa/inet.h>
 #endif
+
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
 
 namespace hku {
 
 bool HttpHandle::ms_enable_trace = false;
 bool HttpHandle::ms_enable_only_traceid = false;
 
-HttpHandle::HttpHandle(nng_aio* aio) : m_http_aio(aio) {}
+HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {
+    if (beast_context) {
+        auto* ctx = static_cast<BeastContext*>(beast_context);
+        
+        // 提取请求信息
+        m_req_method = std::string(ctx->req.method_string());
+        m_req_uri = std::string(ctx->req.target());
+        m_req_body = ctx->req.body();
+        m_client_ip = ctx->client_ip;
+        m_client_port = ctx->client_port;
+        
+        // 提取请求头
+        for (auto& field : ctx->req) {
+            m_req_headers[std::string(field.name_string())] = std::string(field.value());
+        }
+    }
+}
 
-void HttpHandle::operator()() {
-    CLS_FATAL_IF_RETURN(!m_http_aio, void(), "http aio is null!");
-    int rv = nng_http_res_alloc(&m_nng_res);
-    if (rv != 0) {
-        CLS_FATAL("Failed nng_http_res_alloc! {}", nng_strerror(rv));
-        nng_aio_finish(m_http_aio, 0);
-        return;
+net::awaitable<void> HttpHandle::operator()() {
+    if (!m_beast_context) {
+        CLS_FATAL("beast context is null!");
+        co_return;
     }
 
     try {
-        m_nng_req = (nng_http_req*)nng_aio_get_input(m_http_aio, 0);
-
         for (const auto& filter : m_filters) {
             filter(this);
         }
@@ -55,14 +71,29 @@ void HttpHandle::operator()() {
         }
 
         before_run();
-        run();
+        
+        // 协程方式调用 run 方法
+        co_await run();
+        
         after_run();
-
-        // nng_http_res_set_status(m_nng_res, NNG_HTTP_STATUS_OK);
-        nng_aio_set_output(m_http_aio, 0, m_nng_res);
+        
+        // 将响应写入 BeastContext
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->res.result(m_res_status);
+            
+            // 设置响应头
+            for (const auto& [key, val] : m_res_headers) {
+                ctx->res.set(key, val);
+            }
+            
+            // 设置响应体
+            ctx->res.body() = m_res_body;
+            ctx->res.prepare_payload();
+        }
 
     } catch (nlohmann::json::exception& e) {
-        processException(NNG_HTTP_STATUS_BAD_REQUEST, INVALID_JSON_REQUEST, e.what());
+        processException(400, INVALID_JSON_REQUEST, e.what());
         auto addr = getClientAddress();
         CLS_WARN("HttpBadRequestError({}): {}, client: {}:{}, url: {}, req: {}",
                  int(INVALID_JSON_REQUEST), e.what(), addr.ip, addr.port, getReqUrl(),
@@ -75,44 +106,28 @@ void HttpHandle::operator()() {
                  addr.ip, addr.port, getReqUrl(), tryGetReqData());
 
     } catch (std::exception& e) {
-        processException(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                         NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR, e.what());
-        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), e.what());
+        processException(500, 500, e.what());
+        CLS_ERROR("HttpError({}): {}", int(500), e.what());
 
     } catch (...) {
-        processException(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR,
-                         NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR, "Unknown error");
-        CLS_ERROR("HttpError({}): {}", int(NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR), "Unknown error");
+        processException(500, 500, "Unknown error");
+        CLS_ERROR("HttpError({}): {}", int(500), "Unknown error");
     }
 
     if (ms_enable_trace) {
         printTraceInfo();
     }
-
-    nng_aio_finish(m_http_aio, 0);
+    
+    co_return;
 }
 
 HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) noexcept {
     ClientAddress ret;
-    nng_http_conn* http_conn = (nng_http_conn*)nng_aio_get_input(m_http_aio, 2);
-    CLS_IF_RETURN(http_conn == nullptr, ret);
-
-    struct ConvertConn {
-        nng_stream* sock;
-    };
-    ConvertConn* tmp_conn = (ConvertConn*)http_conn;
-    nng_sockaddr ra;
-    int rv = nng_stream_get_addr(tmp_conn->sock, NNG_OPT_REMADDR, &ra);
-    CLS_IF_RETURN(rv != 0, ret);
-
-    if (ra.s_family == NNG_AF_INET) {
-        ret.ip.resize(INET_ADDRSTRLEN);
-        inet_ntop(AF_INET, (void*)&ra.s_in.sa_addr, ret.ip.data(), INET_ADDRSTRLEN);
-        ret.port = ntohs(ra.s_in.sa_port);
-    } else if (ra.s_family == NNG_AF_INET6) {
-        ret.ip.resize(INET6_ADDRSTRLEN);
-        inet_ntop(AF_INET6, (void*)&ra.s_in.sa_addr, ret.ip.data(), INET6_ADDRSTRLEN);
-        ret.port = ntohs(ra.s_in6.sa_port);
+    
+    // 从上下文中获取客户端地址
+    if (!m_client_ip.empty()) {
+        ret.ip = m_client_ip;
+        ret.port = m_client_port;
     }
 
     if (tryFromHeader) {
@@ -132,14 +147,6 @@ HttpHandle::ClientAddress HttpHandle::getClientAddress(bool tryFromHeader) noexc
             ip_hdr = getReqHeader("WL-Proxy-Client-IP");
             to_lower(ip_hdr);
         }
-        // if (ip_hdr.empty() || ip_hdr == unknown) {
-        //     ip_hdr = getReqHeader("HTTP_CLIENT_IP");
-        //     to_lower(ip_hdr);
-        // }
-        // if (ip_hdr.empty() || ip_hdr == unknown) {
-        //     ip_hdr = getReqHeader("HTTP_X_FORWARDED_FOR");
-        //     to_lower(ip_hdr);
-        // }
 
         if (!ip_hdr.empty()) {
             auto ips = split(ip_hdr, ",");
@@ -184,7 +191,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  response: {}\n"
               "{}╚════════════════════════════════════════",
               str, str, url, str, client_addr.ip, client_addr.port, str,
-              nng_http_req_get_method(m_nng_req), str, getReqData(), str, getResData(), str);
+              m_req_method, str, getReqData(), str, getResData(), str);
         } else {
             HKU_INFO(
               "\n{}╔════════════════════════════════════════════════════════════\n"
@@ -195,7 +202,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  request: {}\n"
               "{}║  response: {}\n{}╚════════════════════════════════════════",
               str, str, url, str, client_addr.ip, client_addr.port, str,
-              nng_http_req_get_method(m_nng_req), str, traceid, str, getReqData(), str,
+              m_req_method, str, traceid, str, getReqData(), str,
               getResData(), str);
         }
     } catch (std::exception& e) {
@@ -207,53 +214,48 @@ void HttpHandle::printTraceInfo() noexcept {
 
 void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
     try {
-        nng_http_res_reset(m_nng_res);
-        nng_http_res_set_header(m_nng_res, "Content-Type", "application/json; charset=UTF-8");
-        nng_http_res_set_status(m_nng_res, http_status);
-        nng_http_res_set_reason(m_nng_res, err_msg.data());
-        setResData(fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg));
-        nng_aio_set_output(m_http_aio, 0, m_nng_res);
+        m_res_status = http_status;
+        m_res_headers["Content-Type"] = "application/json; charset=UTF-8";
+        m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
+        
+        // 将错误响应写入 BeastContext
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->res.result(http_status);
+            ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
+            ctx->res.body() = m_res_body;
+            ctx->res.prepare_payload();
+        }
     } catch (std::exception& e) {
-        CLS_ERROR(e.what());
+        CLS_ERROR("Exception in processException: {}", e.what());
     } catch (...) {
-        CLS_FATAL("unknown error in finished!");
+        CLS_FATAL("Unknown error in processException!");
     }
 }
 
 std::string HttpHandle::getReqUrl() const noexcept {
-    std::string result;
-    const char* url = nng_http_req_get_uri(m_nng_req);
-    if (url) {
-        result = std::string(url);
-    }
-    return result;
+    return m_req_uri;
 }
 
 std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     std::string result;
-    const char* head = nng_http_req_get_header(m_nng_req, name);
-    if (head) {
-        result = std::string(head);
+    auto it = m_req_headers.find(name);
+    if (it != m_req_headers.end()) {
+        result = it->second;
     }
     return result;
 }
 
 std::string HttpHandle::getReqData() {
     std::string result;
-    void* data = nullptr;
-    size_t len = 0;
-    nng_http_req_get_data(m_nng_req, &data, &len);
-    if (!data || len == 0) {
-        return result;
-    }
-
+    
     std::string encoding = getReqHeader("Content-Encoding");
     if (encoding.empty()) {
-        result = std::string((char*)data, len);
+        result = m_req_body;
 
     } else if (encoding == "gzip") {
         gzip::Decompressor decomp;
-        decomp.decompress(result, (char*)data, len);
+        decomp.decompress(result, m_req_body.data(), m_req_body.size());
 
     } else {
         throw HttpNotAcceptableError(
@@ -274,20 +276,14 @@ std::string HttpHandle::tryGetReqData() noexcept {
 
 std::string HttpHandle::getResData() const {
     std::string result;
-    char* data = nullptr;
-    size_t len = 0;
-    nng_http_res_get_data(m_nng_res, (void**)&data, &len);
-    if (!data || len == 0) {
-        return result;
-    }
-
-    if (!gzip::is_compressed(data, len)) {
-        result = std::string(data, len);
+    
+    if (!gzip::is_compressed(m_res_body.data(), m_res_body.size())) {
+        result = m_res_body;
         return result;
     }
 
     gzip::Decompressor decomp;
-    decomp.decompress(result, data, len);
+    decomp.decompress(result, m_res_body.data(), m_res_body.size());
     return result;
 }
 
@@ -306,12 +302,11 @@ json HttpHandle::getReqJson() {
 }
 
 bool HttpHandle::haveQueryParams() {
-    const char* url = nng_http_req_get_uri(m_nng_req);
-    return !url ? false : strchr(url, '?') != nullptr;
+    return strchr(m_req_uri.c_str(), '?') != nullptr;
 }
 
 bool HttpHandle::getQueryParams(QueryParams& query_params) {
-    const char* url = nng_http_req_get_uri(m_nng_req);
+    const char* url = m_req_uri.c_str();
     CLS_IF_RETURN(!url, false);
 
     const char* p = strchr(url, '?');
@@ -357,14 +352,17 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) {
 }
 
 void HttpHandle::setResData(const char* content) {
-    const char* encoding = nng_http_res_get_header(m_nng_res, "Content-Encoding");
+    const char* encoding = nullptr;
+    auto it = m_res_headers.find("Content-Encoding");
+    if (it != m_res_headers.end()) {
+        encoding = it->second.c_str();
+    }
+    
     if (!encoding) {
-        NNG_CHECK(nng_http_res_copy_data(m_nng_res, content, strlen(content)));
+        m_res_body = content;
     } else {
         gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
-        std::string output;
-        comp.compress(output, content, strlen(content));
-        NNG_CHECK(nng_http_res_copy_data(m_nng_res, output.c_str(), output.size()));
+        comp.compress(m_res_body, content, strlen(content));
     }
 }
 

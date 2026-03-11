@@ -8,105 +8,198 @@
 #pragma once
 
 #include <string>
-#include <unordered_set>
-#include <hikyuu/utilities/thread/thread.h>
-#include <hikyuu/utilities/thread/FuncWrapper.h>
+#include <memory>
+#include <unordered_map>
+#include <functional>
+#include <mutex>
+#include <coroutine>
+
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/beast/ssl.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/steady_timer.hpp>
+#include <boost/asio/ssl.hpp>
+
 #include "HttpHandle.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
 
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+namespace ssl = net::ssl;
+using tcp = net::ip::tcp;
+
 namespace hku {
 
+// 前向声明
+class HttpHandle;
+
+/**
+ * SSL 上下文配置
+ */
+struct SslConfig {
+    std::string ca_key_file;  // CA 证书和私钥文件（PEM 格式）
+    std::string password;     // 私钥密码（可为空）
+    int verify_mode = 0;      // 0: 无需客户端认证 | 1: 客户端认证可选 | 2: 需客户端认证
+    bool enabled = false;     // 是否启用 SSL
+
+    SslConfig() = default;
+
+    SslConfig(const std::string& ca_file, const std::string& pwd = "", int mode = 0)
+        : ca_key_file(ca_file), password(pwd), verify_mode(mode), enabled(true) {}
+};
+
+/**
+ * SSL 连接处理器 - 管理单个 HTTPS 客户端连接
+ */
+class SslConnection : public std::enable_shared_from_this<SslConnection> {
+public:
+    static std::shared_ptr<SslConnection> create(tcp::socket&& socket, Router& router,
+                                                 ssl::context& ssl_ctx, net::io_context& io_ctx);
+    ~SslConnection();
+
+    void start();
+
+private:
+    SslConnection(tcp::socket&& socket, Router& router, ssl::context& ssl_ctx,
+                  net::io_context& io_ctx);
+
+    // SSL 握手
+    net::awaitable<void> sslHandshake();
+
+    // 使用协程读取请求（SSL）
+    net::awaitable<void> readRequest();
+
+    // 使用协程写入响应（SSL）
+    net::awaitable<void> writeResponse();
+
+    // 处理请求（协程方式调用 Handle）
+    net::awaitable<void> handleRequest();
+
+    // 关闭连接
+    void close();
+
+    std::shared_ptr<BeastContext> m_context;
+    Router& m_router;
+    ssl::stream<tcp::socket&> m_ssl_stream;
+    beast::flat_buffer m_buffer{8192};
+};
+
+/**
+ * HTTP 服务器 - 支持协程和 TLS/SSL
+ */
 class HKU_HTTPD_API HttpServer {
     CLASS_LOGGER_IMP(HttpServer)
 
 public:
-    HttpServer(const char *host, uint16_t port);
+    HttpServer(const char* host, uint16_t port);
     virtual ~HttpServer();
 
-    static void start();
+    void start();
     static void loop();
     static void stop();
+    static void http_exit();
+    static void signal_handler(int signal);
 
     /**
      * 设置 handle 无法捕获的错误返回信息，如 404
-     * @param http_status http状态码
+     * @param http_status http 状态码
      * @param body 返回消息
      */
-    static void set_error_msg(int16_t http_status, const std::string &body);
+    static void set_error_msg(int16_t http_status, const std::string& body);
 
     /**
      * 设置 tls 配置，启动前设置
-     * @param ca_key_file ca文件路径(同时包含PEM格式的cert和key的文件)
-     * @param password ca文件密码,无密码时指定空指针
+     * @param ca_key_file ca 文件路径 (同时包含 PEM 格式的 cert 和 key 的文件)
+     * @param password ca 文件密码，无密码时指定空指针
      * @param mode 0 无需客户端认证 | 1 客户端认证可选 | 2 需客户端认证
      */
-    static void set_tls(const char *ca_key_file, const char *password, int mode = 0);
+    static void set_tls(const char* ca_key_file, const char* password, int mode = 0);
 
     template <typename Handle>
-    void GET(const char *path) {
-        regHandle("GET", path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void GET(const char* path) {
+        regHandle("GET", path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
 
     template <typename Handle>
-    void POST(const char *path) {
-        regHandle("POST", path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void POST(const char* path) {
+        regHandle("POST", path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
 
     template <typename Handle>
-    void PUT(const char *path) {
-        regHandle("PUT", path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void PUT(const char* path) {
+        regHandle("PUT", path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
 
     template <typename Handle>
-    void DEL(const char *path) {
-        regHandle("DELETE", path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void DEL(const char* path) {
+        regHandle("DELETE", path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
 
     template <typename Handle>
-    void PATCH(const char *path) {
-        regHandle("PATCH", path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void PATCH(const char* path) {
+        regHandle("PATCH", path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
 
     template <typename Handle>
-    void regHandle(const char *method, const char *path) {
-        regHandle(method, path, [](nng_aio *aio) {
-            Handle x(aio);
-            x();
+    void regHandle(const char* method, const char* path) {
+        regHandle(method, path, [](void* ctx) -> net::awaitable<void> {
+            Handle x(ctx);
+            co_await x();
         });
     }
+
+    net::io_context* get_io_context() const { return ms_io_context; }
 
 private:
-    void regHandle(const char *method, const char *path, void (*rest_handle)(nng_aio *));
+    using HandlerFunc = std::function<net::awaitable<void>(void*)>;
+    void regHandle(const char* method, const char* path, HandlerFunc rest_handle);
+    void configureSsl();
+    net::awaitable<void> doAccept();
+    net::awaitable<void> doAcceptSsl();
 
 private:
     std::string m_root_url;
     std::string m_host;
-    uint16_t m_port;
+    uint16_t m_port{80};
 
-private:
-    static void http_exit();
-    static void signal_handler(int signal);
-
-private:
-    static nng_http_server *ms_server;
+    // 静态成员变量在 HttpServer.cpp 中定义
+    static HttpServer* ms_server;
+    static Router ms_router;
+    static net::io_context* ms_io_context;
+    static tcp::acceptor* ms_acceptor;
+    static std::atomic<bool> ms_running;
+    static SslConfig ms_ssl_config;
+    static ssl::context* ms_ssl_context;
 };
+
+#define HTTP_HANDLE_IMP(cls) \
+public:                      \
+    explicit cls(void* beast_context) : HttpHandle(beast_context) {}
 
 }  // namespace hku

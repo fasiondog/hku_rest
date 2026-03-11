@@ -7,58 +7,141 @@
 
 #pragma once
 
-#include <string_view>
-#include <vector>
-#include <functional>
-
 #include <nlohmann/json.hpp>
+#include "config.h"
 #include "HttpError.h"
 #include "hikyuu/utilities/Log.h"
 #include "hikyuu/httpd/pod/MOHelper.h"
 
+#include <string>
+#include <memory>
+#include <unordered_map>
+#include <functional>
+#include <mutex>
+#include <coroutine>
+
+#include <boost/beast/core.hpp>
+#include <boost/beast/http.hpp>
+#include <boost/asio/ip/tcp.hpp>
+#include <boost/asio/strand.hpp>
+#include <boost/asio/signal_set.hpp>
+#include <boost/asio/use_awaitable.hpp>
+#include <boost/asio/co_spawn.hpp>
+#include <boost/asio/detached.hpp>
+#include <boost/asio/awaitable.hpp>
+#include <boost/asio/steady_timer.hpp>
+
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
+
+namespace beast = boost::beast;
+namespace http = beast::http;
+namespace net = boost::asio;
+using tcp = net::ip::tcp;
 
 using json = nlohmann::json;                  // 不保持插入排序
 using ordered_json = nlohmann::ordered_json;  // 保持插入排序
 
 namespace hku {
 
-// 仅内部使用
-#define NNG_CHECK(rv)                                      \
-    {                                                      \
-        if (rv != 0) {                                     \
-            HKU_THROW("[NNG_ERROR] {}", nng_strerror(rv)); \
-        }                                                  \
-    }
+// 前向声明
+class HttpHandle;
 
-// 仅内部使用
-#define NNG_CHECK_M(rv, msg)                                             \
-    {                                                                    \
-        if (rv != 0) {                                                   \
-            HKU_THROW("[HTTP_ERROR] {} err: {}", msg, nng_strerror(rv)); \
-        }                                                                \
-    }
+/**
+ * HTTP 路由器 - 负责注册和分发请求到对应的 Handle
+ */
+class Router {
+public:
+    using HandlerFunc = std::function<net::awaitable<void>(void*)>;
+
+    struct RouteKey {
+        std::string method;
+        std::string path;
+
+        bool operator==(const RouteKey& other) const {
+            return method == other.method && path == other.path;
+        }
+    };
+
+    struct RouteKeyHash {
+        std::size_t operator()(const RouteKey& key) const {
+            return std::hash<std::string>()(key.method) ^ (std::hash<std::string>()(key.path) << 1);
+        }
+    };
+
+    void registerHandler(const std::string& method, const std::string& path, HandlerFunc handler);
+    HandlerFunc findHandler(const std::string& method, const std::string& path);
+
+private:
+    std::unordered_map<RouteKey, HandlerFunc, RouteKeyHash> m_routes;
+    std::mutex m_mutex;
+};
+
+/**
+ * Beast 上下文 - 封装 beast 的请求和响应对象
+ */
+struct BeastContext {
+    http::request<http::string_body> req;
+    http::response<http::string_body> res;
+    tcp::socket socket;
+    net::steady_timer timer;
+    std::string client_ip;
+    uint16_t client_port = 0;
+
+    BeastContext(tcp::socket&& sock, net::io_context& io_ctx)
+    : socket(std::move(sock)), timer(io_ctx) {}
+};
+
+/**
+ * HTTP 连接处理器 - 管理单个客户端连接（使用协程）
+ */
+class Connection : public std::enable_shared_from_this<Connection> {
+public:
+    static std::shared_ptr<Connection> create(tcp::socket&& socket, Router& router,
+                                              net::io_context& io_ctx);
+    ~Connection();
+
+    void start();
+
+private:
+    Connection(tcp::socket&& socket, Router& router, net::io_context& io_ctx);
+
+    // 使用协程读取请求
+    net::awaitable<void> readRequest();
+
+    // 使用协程写入响应
+    net::awaitable<void> writeResponse();
+
+    // 处理请求（协程方式调用 Handle）
+    net::awaitable<void> handleRequest();
+
+    // 关闭连接
+    void close();
+
+    std::shared_ptr<BeastContext> m_context;
+    Router& m_router;
+    beast::flat_buffer m_buffer{8192};
+};
 
 class HKU_HTTPD_API HttpHandle {
     CLASS_LOGGER_IMP(HttpHandle)
 
 public:
     HttpHandle() = delete;
-    HttpHandle(nng_aio *aio);
+    explicit HttpHandle(void* beast_context);
     virtual ~HttpHandle() {}
 
     /** 前处理 */
     virtual void before_run() {}
 
-    /** 响应处理 */
-    virtual void run() = 0;
+    /** 响应处理（支持协程）*/
+    virtual net::awaitable<void> run() = 0;
 
     /** 后处理 */
     virtual void after_run() {}
 
-    void addFilter(std::function<void(HttpHandle *)> filter) {
+    void addFilter(std::function<void(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -70,14 +153,14 @@ public:
      * @param name 头部信息名称
      * @return 如果获取不到将返回""
      */
-    std::string getReqHeader(const char *name) const noexcept;
+    std::string getReqHeader(const char* name) const noexcept;
 
     /**
      * 获取请求头部信息
      * @param name 头部信息名称
      * @return 如果获取不到将返回""
      */
-    std::string getReqHeader(const std::string &name) const noexcept {
+    std::string getReqHeader(const std::string& name) const noexcept {
         return getReqHeader(name.c_str());
     }
 
@@ -90,7 +173,7 @@ public:
      */
     std::string tryGetReqData() noexcept;
 
-    /** 返回请求的 json 数据，如无法解析为json，将抛出异常*/
+    /** 返回请求的 json 数据，如无法解析为 json，将抛出异常*/
     json getReqJson();
 
     /** 判断请求的 ulr 中是否包含 query 参数 */
@@ -103,28 +186,28 @@ public:
      * @param query_params [out] 输出 query 参数
      * @return true | false 获取或解析失败
      */
-    bool getQueryParams(QueryParams &query_params);
+    bool getQueryParams(QueryParams& query_params);
 
     void setResStatus(uint16_t status) {
-        NNG_CHECK(nng_http_res_set_status(m_nng_res, status));
+        m_res_status = status;
     }
 
-    void setResHeader(const char *key, const char *val) {
-        NNG_CHECK(nng_http_res_set_header(m_nng_res, key, val));
+    void setResHeader(const char* key, const char* val) {
+        m_res_headers[key] = val;
     }
 
     /** 设置响应数据，并根据 Content-encoding 进行 gzip 压缩 */
-    void setResData(const char *content);
+    void setResData(const char* content);
 
-    void setResData(const std::string &content) {
+    void setResData(const std::string& content) {
         setResData(content.c_str());
     }
 
-    void setResData(const json &data) {
+    void setResData(const json& data) {
         setResData(data.dump());
     }
 
-    void setResData(const ordered_json &data) {
+    void setResData(const ordered_json& data) {
         setResData(data.dump());
     }
 
@@ -141,7 +224,7 @@ public:
      * 多语言翻译
      * @param msgid 待翻译的字符串
      */
-    std::string _tr(const char *msgid) const {
+    std::string _tr(const char* msgid) const {
         return pod::MOHelper::translate(getLanguage(), msgid);
     }
 
@@ -150,11 +233,12 @@ public:
      * @param ctx 翻译上下文
      * @param msgid 待翻译的字符串
      */
-    std::string _ctr(const char *ctx, const char *msgid) {
+    std::string _ctr(const char* ctx, const char* msgid) {
         return pod::MOHelper::translate(getLanguage(), ctx, msgid);
     }
 
-    void operator()();
+    /** 协程方式的调用入口 */
+    net::awaitable<void> operator()();
 
 protected:
     struct ClientAddress {
@@ -162,13 +246,13 @@ protected:
         uint16_t port = 0;
 
         ClientAddress() = default;
-        ClientAddress(const ClientAddress &) = default;
-        ClientAddress(ClientAddress &&rhs) : ip(std::move(rhs.ip)), port(rhs.port) {
+        ClientAddress(const ClientAddress&) = default;
+        ClientAddress(ClientAddress&& rhs) : ip(std::move(rhs.ip)), port(rhs.port) {
             rhs.port = 0;
         }
 
-        ClientAddress &operator=(const ClientAddress &) = default;
-        ClientAddress &operator=(ClientAddress &&rhs) {
+        ClientAddress& operator=(const ClientAddress&) = default;
+        ClientAddress& operator=(ClientAddress&& rhs) {
             if (this != &rhs) {
                 ip = std::move(rhs.ip);
                 port = rhs.port;
@@ -180,9 +264,9 @@ protected:
 
     /**
      * 获取客户端地址
-     * @param tryFromHeader 优先尝试从请求头中获取真实客户ip，否则为直连对端ip
+     * @param tryFromHeader 优先尝试从请求头中获取真实客户 ip，否则为直连对端 ip
      * @return ClientAddress
-     * @note port 始终为直连对端的port（即可能是代理的port)。
+     * @note port 始终为直连对端的 port（即可能是代理的 port)。
      */
     ClientAddress getClientAddress(bool tryFromHeader = true) noexcept;
 
@@ -190,10 +274,21 @@ private:
     void processException(int http_status, int errcode, std::string_view err_msg);
 
 protected:
-    nng_aio *m_http_aio{nullptr};
-    nng_http_res *m_nng_res{nullptr};
-    nng_http_req *m_nng_req{nullptr};
-    std::vector<std::function<void(HttpHandle *)>> m_filters;
+    void* m_beast_context{nullptr};  // boost::beast 上下文
+    std::vector<std::function<void(HttpHandle*)>> m_filters;
+
+    // 响应数据
+    uint16_t m_res_status{200};
+    std::map<std::string, std::string> m_res_headers;
+    std::string m_res_body;
+
+    // 请求数据 (由 BeastAdapter 填充)
+    std::string m_req_method;
+    std::string m_req_uri;
+    std::map<std::string, std::string> m_req_headers;
+    std::string m_req_body;
+    std::string m_client_ip;
+    uint16_t m_client_port{0};
 
 public:
     static void enableTrace(bool enable, bool only_traceid = false) {
@@ -212,6 +307,6 @@ private:
 
 #define HTTP_HANDLE_IMP(cls) \
 public:                      \
-    cls(nng_aio *aio) : HttpHandle(aio) {}
+    explicit cls(void* beast_context) : HttpHandle(beast_context) {}
 
 }  // namespace hku

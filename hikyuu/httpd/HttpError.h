@@ -10,8 +10,6 @@
 #include <string>
 #include <exception>
 #include <fmt/format.h>
-#include <nng/nng.h>
-#include <nng/supplemental/http/http.h>
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
@@ -59,8 +57,8 @@ public:
 
 protected:
     std::string m_name;
-    int m_http_status{NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR};
-    int m_errcode{NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR};
+    int m_http_status{500};
+    int m_errcode{500};
 };
 
 #else
@@ -102,8 +100,8 @@ public:
 protected:
     std::string m_name;
     std::string m_msg;
-    int m_http_status{NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR};
-    int m_errcode{NNG_HTTP_STATUS_INTERNAL_SERVER_ERROR};
+    int m_http_status{500};
+    int m_errcode{500};
 };
 #endif /* #ifdef __clang__ */
 
@@ -114,9 +112,9 @@ class HttpBadRequestError : public HttpError {
 public:
     HttpBadRequestError() : HttpError("HttpBadRequestError") {}
     HttpBadRequestError(int errcode, const char* msg)
-    : HttpError("HttpBadRequestError", NNG_HTTP_STATUS_BAD_REQUEST, errcode, msg) {}
+    : HttpError("HttpBadRequestError", 400, errcode, msg) {}
     HttpBadRequestError(int errcode, const std::string& msg)
-    : HttpError("HttpBadRequestError", NNG_HTTP_STATUS_BAD_REQUEST, errcode, msg) {}
+    : HttpError("HttpBadRequestError", 400, errcode, msg) {}
 };
 
 /**
@@ -126,9 +124,9 @@ class HttpUnauthorizedError : public HttpError {
 public:
     HttpUnauthorizedError() : HttpError("HttpUnauthorizedError") {}
     HttpUnauthorizedError(int errcode, const char* msg)
-    : HttpError("HttpUnauthorizedError", NNG_HTTP_STATUS_UNAUTHORIZED, errcode, msg) {}
+    : HttpError("HttpUnauthorizedError", 401, errcode, msg) {}
     HttpUnauthorizedError(int errcode, const std::string& msg)
-    : HttpError("HttpUnauthorizedError", NNG_HTTP_STATUS_UNAUTHORIZED, errcode, msg) {}
+    : HttpError("HttpUnauthorizedError", 401, errcode, msg) {}
 };
 
 class HttpNotAcceptableError : public HttpError {
@@ -139,9 +137,9 @@ public:
 
     HttpNotAcceptableError() : HttpError("HttpNotAcceptableError") {}
     HttpNotAcceptableError(int errcode, const char* msg)
-    : HttpError("HttpNotAcceptableError", NNG_HTTP_STATUS_NOT_ACCEPTABLE, errcode, msg) {}
+    : HttpError("HttpNotAcceptableError", 406, errcode, msg) {}
     HttpNotAcceptableError(int errcode, const std::string& msg)
-    : HttpError("HttpNotAcceptableError", NNG_HTTP_STATUS_NOT_ACCEPTABLE, errcode, msg) {}
+    : HttpError("HttpNotAcceptableError", 406, errcode, msg) {}
 };
 
 /**
@@ -154,7 +152,7 @@ enum AuthorizeErrorCode {
 };
 
 enum BadRequestErrorCode {
-    INVALID_JSON_REQUEST = 20001,  // 请求数据无法解析为JSON
+    INVALID_JSON_REQUEST = 20001,  // 请求数据无法解析为 JSON
     MISS_PARAMETER,  // 缺失参数，参数不能为空 必填参数不能为空（各个业务接口返回各个接口的参数）
     WRONG_PARAMETER,  // 参数值填写错误（各个业务接口返回各个接口的参数）
     WRONG_PARAMETER_TYPE  // 参数类型错误（各个业务接口返回各个接口的参数）
