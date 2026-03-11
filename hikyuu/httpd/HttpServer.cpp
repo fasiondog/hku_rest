@@ -50,6 +50,7 @@ tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::atomic<bool> HttpServer::ms_running{false};
 SslConfig HttpServer::ms_ssl_config;
 ssl::context* HttpServer::ms_ssl_context = nullptr;
+size_t HttpServer::ms_io_thread_count = 0;  // 默认使用硬件并发数
 
 #if defined(_WIN32)
 static UINT g_old_cp;
@@ -61,13 +62,13 @@ static UINT g_old_cp;
 
 void Router::registerHandler(const std::string& method, const std::string& path,
                              HandlerFunc handler) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::unique_lock<std::shared_mutex> lock(m_mutex);
     RouteKey key{method, path};
     m_routes[key] = handler;
 }
 
 Router::HandlerFunc Router::findHandler(const std::string& method, const std::string& path) {
-    std::lock_guard<std::mutex> lock(m_mutex);
+    std::shared_lock<std::shared_mutex> lock(m_mutex);
     RouteKey key{method, path};
     auto it = m_routes.find(key);
     if (it != m_routes.end()) {
@@ -420,6 +421,10 @@ HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(p
 
 HttpServer::~HttpServer() {}
 
+void HttpServer::set_io_thread_count(size_t thread_count) {
+    ms_io_thread_count = thread_count;  // 修改为静态成员变量
+}
+
 void HttpServer::configureSsl() {
     HKU_CHECK(!ms_ssl_config.ca_key_file.empty(), "SSL CA file not specified");
     HKU_CHECK(existFile(ms_ssl_config.ca_key_file), "Not exist ca file: {}",
@@ -541,7 +546,7 @@ void HttpServer::start() {
 
             CLS_INFO("HTTPS Server started on {}:{}", m_host, m_port);
 
-            // 使用协程开始接受 SSL 连接
+            // 使用协程开始接受 SSL连接
             net::co_spawn(*ms_io_context, doAcceptSsl(), net::detached);
         } else {
             CLS_INFO("HTTP Server started on {}:{}", m_host, m_port);
@@ -591,7 +596,43 @@ net::awaitable<void> HttpServer::doAccept() {
 
 void HttpServer::loop() {
     if (ms_io_context && ms_running.load()) {
-        ms_io_context->run();
+        // 确定线程数：如果未设置或设置为 0，使用硬件并发数
+        size_t thread_count = ms_io_thread_count;
+        if (thread_count == 0) {
+            thread_count = std::thread::hardware_concurrency();
+        }
+        
+        // 如果只有 1 个线程，直接运行
+        if (thread_count <= 1) {
+            CLS_INFO("Running io_context with single thread");
+            ms_io_context->run();
+            return;
+        }
+        
+        // 创建线程池运行 io_context
+        CLS_INFO("Running io_context with {} threads", thread_count);
+        std::vector<std::thread> threads;
+        threads.reserve(thread_count);
+        
+        // 启动工作线程
+        for (size_t i = 0; i < thread_count; ++i) {
+            threads.emplace_back([]() {
+                try {
+                    ms_io_context->run();
+                } catch (const std::exception& e) {
+                    CLS_ERROR("Thread exception: {}", e.what());
+                } catch (...) {
+                    CLS_ERROR("Unknown thread exception");
+                }
+            });
+        }
+        
+        // 等待所有线程完成
+        for (auto& t : threads) {
+            if (t.joinable()) {
+                t.join();
+            }
+        }
     }
 }
 

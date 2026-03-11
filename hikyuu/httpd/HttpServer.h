@@ -105,6 +105,13 @@ public:
     virtual ~HttpServer();
 
     void start();
+    
+    /**
+     * 设置 IO 工作线程数（可选）
+     * @param thread_count 线程数量，0 表示使用硬件并发数（默认值）
+     */
+    void set_io_thread_count(size_t thread_count);
+    
     static void loop();
     static void stop();
     static void http_exit();
@@ -186,6 +193,7 @@ private:
     std::string m_root_url;
     std::string m_host;
     uint16_t m_port{80};
+    static size_t ms_io_thread_count;  // 改为静态成员变量
 
     // 静态成员变量在 HttpServer.cpp 中定义
     static HttpServer* ms_server;

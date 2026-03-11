@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <functional>
 #include <mutex>
+#include <shared_mutex>
 #include <coroutine>
 
 #include <boost/beast/core.hpp>
@@ -75,7 +76,7 @@ public:
 
 private:
     std::unordered_map<RouteKey, HandlerFunc, RouteKeyHash> m_routes;
-    std::mutex m_mutex;
+    std::shared_mutex m_mutex;
 };
 
 /**

@@ -43,6 +43,25 @@ int main(int argc, char* argv[]) {
         HelloService hello_service("/api");
         hello_service.bind(&server);
 
+        // =====================================================================
+        // 设置协程 IO 执行线程数（可选）
+        // =====================================================================
+        // 方法 1: 不设置，默认使用 CPU 核心数（推荐）
+        // server.set_io_thread_count(0);  // 0 = hardware_concurrency()
+        
+        // 方法 2: 指定固定线程数
+        // server.set_io_thread_count(4);  // 使用 4 个 IO 线程
+        
+        // 方法 3: 单线程模式（适合调试或低负载）
+        // server.set_io_thread_count(1);  // 单线程运行
+        
+        // 获取推荐的线程数
+        size_t recommended_threads = std::thread::hardware_concurrency();
+        HKU_INFO("Recommended IO threads: {}", recommended_threads);
+        
+        // 实际设置（如果不设置，loop() 会自动使用 hardware_concurrency())
+        server.set_io_thread_count(0);  // 使用默认值（硬件并发数）
+
         HKU_INFO("start server ... You can press Ctrl-C stop");
         HKU_INFO("HTTP Server started on http://0.0.0.0:8080");
         HKU_INFO("Test with: curl http://localhost:8080/api/hello");
