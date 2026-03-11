@@ -46,6 +46,8 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
+        // 默认响应状态码为 200，无需显式设置
+        
         for (const auto& filter : m_filters) {
             filter(this);
         }
@@ -63,10 +65,10 @@ net::awaitable<void> HttpHandle::operator()() {
         
         after_run();
         
-        // 将响应写入 BeastContext
+        // 将响应头和响应体写入 BeastContext
+        // 注意：状态码已在 setResStatus 或 processException 中直接写入 context
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
-            ctx->res.result(m_res_status);
             
             // 设置响应头
             for (const auto& [key, val] : m_res_headers) {
@@ -158,18 +160,17 @@ void HttpHandle::printTraceInfo() noexcept {
 
 void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
     try {
-        m_res_status = http_status;
-        m_res_headers["Content-Type"] = "application/json; charset=UTF-8";
-        m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
-        
-        // 将错误响应写入 BeastContext
+        // 直接设置错误响应的状态码和数据
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
             ctx->res.result(http_status);
             ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-            ctx->res.body() = m_res_body;
+            ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
             ctx->res.prepare_payload();
         }
+        
+        m_res_headers["Content-Type"] = "application/json; charset=UTF-8";
+        m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());
     } catch (...) {

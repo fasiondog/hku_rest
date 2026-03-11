@@ -156,10 +156,6 @@ public:
      */
     bool getQueryParams(QueryParams& query_params) const noexcept;
 
-    void setResStatus(uint16_t status) {
-        m_res_status = status;
-    }
-
     void setResHeader(const char* key, const char* val) {
         m_res_headers[key] = val;
     }
@@ -230,8 +226,7 @@ protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
     std::vector<std::function<void(HttpHandle*)>> m_filters;
 
-    // 响应数据
-    uint16_t m_res_status{200};
+    // 响应数据（临时存储，在 run() 完成后统一写入 BeastContext）
     std::map<std::string, std::string> m_res_headers;
     std::string m_res_body;
 
