@@ -84,44 +84,47 @@ private:
 struct BeastContext {
     http::request<http::string_body> req;
     http::response<http::string_body> res;
-    tcp::socket socket;
+    tcp::socket& socket;
     net::steady_timer timer;
     std::string client_ip;
     uint16_t client_port = 0;
+    beast::flat_buffer buffer;  // 用于读取请求的缓冲区
 
-    BeastContext(tcp::socket&& sock, net::io_context& io_ctx)
-    : socket(std::move(sock)), timer(io_ctx) {}
+    BeastContext(tcp::socket& sock, net::io_context& io_ctx)
+    : socket(sock), timer(io_ctx) {}
 };
 
 /**
- * HTTP 连接处理器 - 管理单个客户端连接（使用协程）
+ * HTTP 连接处理器 - 管理 TCP 连接（使用协程）
  */
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
-    static std::shared_ptr<Connection> create(tcp::socket&& socket, Router& router,
+    static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
                                               net::io_context& io_ctx);
     ~Connection();
 
     void start();
 
 private:
-    Connection(tcp::socket&& socket, Router& router, net::io_context& io_ctx);
+    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx);
 
-    // 使用协程读取请求
-    net::awaitable<void> readRequest();
-
-    // 使用协程写入响应
-    net::awaitable<void> writeResponse();
+    // TCP 连接读取循环
+    net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
 
     // 处理请求（协程方式调用 Handle）
-    net::awaitable<void> handleRequest();
+    net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
+
+    // 写入响应
+    net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
 
     // 关闭连接
     void close();
 
-    std::shared_ptr<BeastContext> m_context;
-    Router& m_router;
-    beast::flat_buffer m_buffer{8192};
+    tcp::socket m_socket;
+    Router* m_router;
+    net::io_context& m_io_ctx;
+    std::string m_client_ip;
+    uint16_t m_client_port = 0;
 };
 
 class HKU_HTTPD_API HttpHandle {

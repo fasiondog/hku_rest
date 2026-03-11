@@ -60,39 +60,38 @@ struct SslConfig {
 };
 
 /**
- * SSL 连接处理器 - 管理单个 HTTPS 客户端连接
+ * SSL 连接处理器 - 管理 HTTPS TCP 连接
  */
 class SslConnection : public std::enable_shared_from_this<SslConnection> {
 public:
-    static std::shared_ptr<SslConnection> create(tcp::socket&& socket, Router& router,
+    static std::shared_ptr<SslConnection> create(tcp::socket&& socket, Router* router,
                                                  ssl::context& ssl_ctx, net::io_context& io_ctx);
     ~SslConnection();
 
     void start();
 
 private:
-    SslConnection(tcp::socket&& socket, Router& router, ssl::context& ssl_ctx,
+    SslConnection(tcp::socket&& socket, Router* router, ssl::context& ssl_ctx,
                   net::io_context& io_ctx);
 
-    // SSL 握手
-    net::awaitable<void> sslHandshake();
-
-    // 使用协程读取请求（SSL）
-    net::awaitable<void> readRequest();
-
-    // 使用协程写入响应（SSL）
-    net::awaitable<void> writeResponse();
+    // SSL 握手并进入会话循环
+    net::awaitable<void> readLoop(std::shared_ptr<SslConnection> self);
 
     // 处理请求（协程方式调用 Handle）
-    net::awaitable<void> handleRequest();
+    net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
+
+    // 写入响应（通过 SSL 流）
+    net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
 
     // 关闭连接
     void close();
 
-    std::shared_ptr<BeastContext> m_context;
-    Router& m_router;
+    tcp::socket m_socket;
+    Router* m_router;
     ssl::stream<tcp::socket&> m_ssl_stream;
-    beast::flat_buffer m_buffer{8192};
+    net::io_context& m_io_ctx;
+    std::string m_client_ip;
+    uint16_t m_client_port = 0;
 };
 
 /**
