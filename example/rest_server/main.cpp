@@ -7,17 +7,24 @@
 
 #include <locale>
 #include <csignal>
+#include <atomic>
 #include "hikyuu/httpd/HttpServer.h"
 #include "hikyuu/httpd/pod/all.h"
 #include "HelloService.h"
 
 using namespace hku;
 
+static std::atomic<bool> g_shutdown_flag{false};  // 防止重复退出
+
 void signal_handle(int signal) {
+    if (g_shutdown_flag.exchange(true)) {
+        return;  // 已经处理过退出信号，忽略后续信号
+    }
+
     HKU_INFO("Shutdown now ...");
     hku::pod::quit();
     HttpServer::stop();
-    exit(0);
+    exit(0);  // 直接退出，不再返回 main 函数
 }
 
 int main(int argc, char* argv[]) {
