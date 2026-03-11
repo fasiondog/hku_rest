@@ -65,15 +65,10 @@ net::awaitable<void> HttpHandle::operator()() {
         
         after_run();
         
-        // 将响应头和响应体写入 BeastContext
+        // 将响应体写入 BeastContext（响应头已通过 setResHeader 直接设置）
         // 注意：状态码已在 setResStatus 或 processException 中直接写入 context
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
-            
-            // 设置响应头
-            for (const auto& [key, val] : m_res_headers) {
-                ctx->res.set(key, val);
-            }
             
             // 设置响应体
             ctx->res.body() = m_res_body;
@@ -169,7 +164,7 @@ void HttpHandle::processException(int http_status, int errcode, std::string_view
             ctx->res.prepare_payload();
         }
         
-        m_res_headers["Content-Type"] = "application/json; charset=UTF-8";
+        setResHeader("Content-Type", "application/json; charset=UTF-8");
         m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());
@@ -337,11 +332,15 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
 
 void HttpHandle::setResData(const char* content) {
     const char* encoding = nullptr;
-    auto it = m_res_headers.find("Content-Encoding");
-    if (it != m_res_headers.end()) {
-        encoding = it->second.c_str();
+    // 直接从 BeastContext 读取 Content-Encoding
+    if (m_beast_context) {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        auto it = ctx->res.find("Content-Encoding");
+        if (it != ctx->res.end()) {
+            encoding = it->value().data();
+        }
     }
-    
+
     if (!encoding) {
         m_res_body = content;
     } else {

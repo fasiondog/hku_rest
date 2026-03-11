@@ -157,7 +157,11 @@ public:
     bool getQueryParams(QueryParams& query_params) const noexcept;
 
     void setResHeader(const char* key, const char* val) {
-        m_res_headers[key] = val;
+        // 直接写入 BeastContext，避免中间存储
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->res.set(key, val);
+        }
     }
 
     /** 设置响应数据，并根据 Content-encoding 进行 gzip 压缩 */
@@ -227,7 +231,6 @@ protected:
     std::vector<std::function<void(HttpHandle*)>> m_filters;
 
     // 响应数据（临时存储，在 run() 完成后统一写入 BeastContext）
-    std::map<std::string, std::string> m_res_headers;
     std::string m_res_body;
 
 public:
