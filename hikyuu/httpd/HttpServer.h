@@ -45,6 +45,39 @@ namespace hku {
 class HttpHandle;
 
 /**
+ * HTTP 连接处理器 - 管理 TCP 连接（使用协程）
+ */
+class Connection : public std::enable_shared_from_this<Connection> {
+public:
+    static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
+                                              net::io_context& io_ctx);
+    ~Connection();
+
+    void start();
+
+private:
+    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx);
+
+    // TCP 连接读取循环
+    net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
+
+    // 处理请求（协程方式调用 Handle）
+    net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
+
+    // 写入响应
+    net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
+
+    // 关闭连接
+    void close();
+
+    tcp::socket m_socket;
+    Router* m_router;
+    net::io_context& m_io_ctx;
+    std::string m_client_ip;
+    uint16_t m_client_port = 0;
+};
+
+/**
  * SSL 上下文配置
  */
 struct SslConfig {
@@ -56,7 +89,7 @@ struct SslConfig {
     SslConfig() = default;
 
     SslConfig(const std::string& ca_file, const std::string& pwd = "", int mode = 0)
-        : ca_key_file(ca_file), password(pwd), verify_mode(mode), enabled(true) {}
+    : ca_key_file(ca_file), password(pwd), verify_mode(mode), enabled(true) {}
 };
 
 /**
@@ -105,13 +138,13 @@ public:
     virtual ~HttpServer();
 
     void start();
-    
+
     /**
      * 设置 IO 工作线程数（可选）
      * @param thread_count 线程数量，0 表示使用硬件并发数（默认值）
      */
     void set_io_thread_count(size_t thread_count);
-    
+
     static void loop();
     static void stop();
     static void http_exit();
@@ -180,7 +213,9 @@ public:
         });
     }
 
-    net::io_context* get_io_context() const { return ms_io_context; }
+    net::io_context* get_io_context() const {
+        return ms_io_context;
+    }
 
 private:
     using HandlerFunc = std::function<net::awaitable<void>(void*)>;

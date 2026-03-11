@@ -45,11 +45,6 @@ HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {
         m_req_body = ctx->req.body();
         m_client_ip = ctx->client_ip;
         m_client_port = ctx->client_port;
-        
-        // 提取请求头
-        for (auto& field : ctx->req) {
-            m_req_headers[std::string(field.name_string())] = std::string(field.value());
-        }
     }
 }
 
@@ -238,12 +233,21 @@ std::string HttpHandle::getReqUrl() const noexcept {
 }
 
 std::string HttpHandle::getReqHeader(const char* name) const noexcept {
-    std::string result;
-    auto it = m_req_headers.find(name);
-    if (it != m_req_headers.end()) {
-        result = it->second;
+    if (!m_beast_context) {
+        return "";
     }
-    return result;
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    auto& req = ctx->req;
+    
+    // 直接遍历请求头查找
+    for (auto& field : req) {
+        if (field.name_string() == name) {
+            return std::string(field.value());
+        }
+    }
+    
+    return "";
 }
 
 std::string HttpHandle::getReqData() {

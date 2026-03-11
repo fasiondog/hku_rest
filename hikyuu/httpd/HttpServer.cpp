@@ -62,13 +62,11 @@ static UINT g_old_cp;
 
 void Router::registerHandler(const std::string& method, const std::string& path,
                              HandlerFunc handler) {
-    std::unique_lock<std::shared_mutex> lock(m_mutex);
     RouteKey key{method, path};
     m_routes[key] = handler;
 }
 
 Router::HandlerFunc Router::findHandler(const std::string& method, const std::string& path) {
-    std::shared_lock<std::shared_mutex> lock(m_mutex);
     RouteKey key{method, path};
     auto it = m_routes.find(key);
     if (it != m_routes.end()) {
@@ -99,8 +97,8 @@ std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* rou
 
 Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx)
 : m_socket(std::move(socket)), m_router(router), m_io_ctx(io_ctx) {
-    HKU_INFO("Connection constructor: m_router={}, &ms_router should be same", (void*)m_router);
-    HKU_ASSERT(m_router);
+    // HKU_INFO("Connection constructor: m_router={}, &ms_router should be same", (void*)m_router);
+    // HKU_ASSERT(m_router);
     // 获取客户端地址
     auto endpoint = m_socket.remote_endpoint();
     m_client_ip = endpoint.address().to_string();
@@ -110,7 +108,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 Connection::~Connection() {}
 
 void Connection::start() {
-    HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
+    // HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
     // 使用 shared_from_this 确保 Connection 对象在协程执行期间不会被销毁
     auto self = shared_from_this();
     net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
@@ -124,10 +122,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             auto session = std::make_shared<BeastContext>(m_socket, m_io_ctx);
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
-            
+
             // 读取一个完整的 HTTP 请求
-            co_await http::async_read(session->socket, session->buffer, session->req, net::use_awaitable);
-            
+            co_await http::async_read(session->socket, session->buffer, session->req,
+                                      net::use_awaitable);
+
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             // HTTP/2 客户端会先发送 "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
             if (session->req.method_string() == "PRI") {
@@ -140,7 +139,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 co_await writeResponse(session);
                 break;
             }
-            
+
             // 请求读取完成后，处理该请求（调用 Handle）
             co_await processHandle(session);
 
@@ -149,16 +148,18 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 检查是否需要保持连接
             bool keep_alive = session->req.keep_alive();
-            
+
             if (!keep_alive) {
                 HKU_DEBUG("Closing connection (not keep-alive)");
                 break;
             }
-            
+
             HKU_DEBUG("Keeping connection alive for next request");
         }
     } catch (const beast::system_error& e) {
-        if (e.code() == http::error::end_of_stream || e.code() == net::error::eof) {
+        if (e.code() == http::error::end_of_stream || 
+            e.code() == net::error::eof ||
+            e.code() == beast::errc::connection_reset) {
             HKU_DEBUG("Client disconnected: {}", e.code().message());
         } else {
             HKU_ERROR("Connection error: {}", e.what());
@@ -166,34 +167,30 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
     } catch (const std::exception& e) {
         HKU_ERROR("Exception in readLoop: {}", e.what());
     }
-    
+
     close();
 }
-
 
 net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> context) {
     // 查找对应的处理器
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
-    HKU_INFO("processHandle: {} {}, m_router={}", method, target, (void*)m_router);
-    
     // 安全检查 router 是否为空
     if (!m_router) {
         HKU_ERROR("Router is null, cannot process request");
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
-        context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
+        context->res.body() =
+          R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
         context->res.prepare_payload();
         co_return;
     }
-    
+
     auto handler = m_router->findHandler(method, target);
-    HKU_INFO("handler: {}", handler ? "found" : "not found");
 
     if (!handler) {
         // 未找到路由，返回 404
-        HKU_INFO("not found: {}", target);
         context->res.result(http::status::not_found);
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":404,"errmsg":"Not Found"})";
@@ -245,10 +242,7 @@ std::shared_ptr<SslConnection> SslConnection::create(tcp::socket&& socket, Route
 
 SslConnection::SslConnection(tcp::socket&& socket, Router* router, ssl::context& ssl_ctx,
                              net::io_context& io_ctx)
-: m_socket(std::move(socket)),
-  m_router(router),
-  m_ssl_stream(m_socket, ssl_ctx),
-  m_io_ctx(io_ctx) {
+: m_socket(std::move(socket)), m_router(router), m_ssl_stream(m_socket, ssl_ctx), m_io_ctx(io_ctx) {
     HKU_ASSERT(m_router);
     // 获取客户端地址
     auto endpoint = m_ssl_stream.next_layer().remote_endpoint();
@@ -286,10 +280,11 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             auto session = std::make_shared<BeastContext>(m_ssl_stream.next_layer(), m_io_ctx);
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
-            
+
             // 读取一个完整的 HTTP 请求（通过 SSL 流）
-            co_await http::async_read(m_ssl_stream, session->buffer, session->req, net::use_awaitable);
-            
+            co_await http::async_read(m_ssl_stream, session->buffer, session->req,
+                                      net::use_awaitable);
+
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             if (session->req.method_string() == "PRI") {
                 HKU_DEBUG("HTTP/2 connection attempt detected on HTTP/1.1 server");
@@ -301,7 +296,7 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
                 co_await writeResponse(session);
                 break;
             }
-            
+
             // 请求读取完成后，处理该请求（调用 Handle）
             co_await processHandle(session);
 
@@ -310,12 +305,12 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
 
             // 检查是否需要保持连接
             bool keep_alive = session->req.keep_alive();
-            
+
             if (!keep_alive) {
                 HKU_DEBUG("Closing SSL connection (not keep-alive)");
                 break;
             }
-            
+
             HKU_DEBUG("Keeping SSL connection alive for next request");
         }
     } catch (const beast::system_error& e) {
@@ -327,10 +322,9 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
     } catch (const std::exception& e) {
         HKU_ERROR("Exception in SslConnection::readLoop: {}", e.what());
     }
-    
+
     close();
 }
-
 
 net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> context) {
     // 查找对应的处理器
@@ -338,17 +332,18 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
     auto target = std::string(context->req.target());
 
     HKU_INFO("SslConnection::processHandle: {} {}, m_router={}", method, target, (void*)m_router);
-    
+
     // 安全检查 router 是否为空
     if (!m_router) {
         HKU_ERROR("Router is null, cannot process request");
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
-        context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
+        context->res.body() =
+          R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
         context->res.prepare_payload();
         co_return;
     }
-    
+
     auto handler = m_router->findHandler(method, target);
 
     if (!handler) {
@@ -467,40 +462,40 @@ void HttpServer::configureSsl() {
       ms_ssl_context->native_handle(),
       [](SSL* /*ssl*/, const unsigned char** out, unsigned char* outlen, const unsigned char* in,
          unsigned int inlen, void* /*arg*/) -> int {
-        // 遍历客户端提供的协议列表
-        unsigned int i = 0;
-        while (i < inlen) {
-          unsigned char protocol_len = in[i];
-          if (i + protocol_len >= inlen) {
-            return SSL_TLSEXT_ERR_NOACK;
+          // 遍历客户端提供的协议列表
+          unsigned int i = 0;
+          while (i < inlen) {
+              unsigned char protocol_len = in[i];
+              if (i + protocol_len >= inlen) {
+                  return SSL_TLSEXT_ERR_NOACK;
+              }
+
+              // 检查是否为 http/1.1
+              if (protocol_len == 8 && memcmp(&in[i + 1], "http/1.1", 8) == 0) {
+                  *out = &in[i + 1];
+                  *outlen = protocol_len;
+                  return SSL_TLSEXT_ERR_OK;
+              }
+
+              // 如果是 h2 或 h2c，拒绝
+              if ((protocol_len == 2 && memcmp(&in[i + 1], "h2", 2) == 0) ||
+                  (protocol_len == 3 && memcmp(&in[i + 1], "h2c", 3) == 0)) {
+                  HKU_DEBUG("Rejected HTTP/2 negotiation attempt");
+              }
+
+              i += protocol_len + 1;
           }
-          
-          // 检查是否为 http/1.1
-          if (protocol_len == 8 && 
-              memcmp(&in[i + 1], "http/1.1", 8) == 0) {
-            *out = &in[i + 1];
-            *outlen = protocol_len;
-            return SSL_TLSEXT_ERR_OK;
-          }
-          
-          // 如果是 h2 或 h2c，拒绝
-          if ((protocol_len == 2 && memcmp(&in[i + 1], "h2", 2) == 0) ||
-              (protocol_len == 3 && memcmp(&in[i + 1], "h2c", 3) == 0)) {
-            HKU_DEBUG("Rejected HTTP/2 negotiation attempt");
-          }
-          
-          i += protocol_len + 1;
-        }
-        
-        // 没有找到支持的协议，默认返回 http/1.1
-        static const unsigned char default_http11[] = { 0x08, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        *out = default_http11;
-        *outlen = sizeof(default_http11);
-        return SSL_TLSEXT_ERR_OK;
+
+          // 没有找到支持的协议，默认返回 http/1.1
+          static const unsigned char default_http11[] = {0x08, 'h', 't', 't', 'p',
+                                                         '/',  '1', '.', '1'};
+          *out = default_http11;
+          *outlen = sizeof(default_http11);
+          return SSL_TLSEXT_ERR_OK;
       },
       nullptr);
 
-    CLS_INFO("SSL configured with CA file: {} (HTTP/2 disabled, using HTTP/1.1)", 
+    CLS_INFO("SSL configured with CA file: {} (HTTP/2 disabled, using HTTP/1.1)",
              ms_ssl_config.ca_key_file);
 }
 
@@ -585,8 +580,6 @@ net::awaitable<void> HttpServer::doAccept() {
         }
 
         // 为新连接创建处理器并启动协程
-        CLS_INFO("New connection from {}", socket.remote_endpoint().address().to_string());
-        CLS_INFO("DEBUG: &ms_router={}, ms_io_context={}", (void*)&ms_router, (void*)ms_io_context);
         auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context);
         connection->start();
     }
@@ -601,19 +594,19 @@ void HttpServer::loop() {
         if (thread_count == 0) {
             thread_count = std::thread::hardware_concurrency();
         }
-        
+
         // 如果只有 1 个线程，直接运行
         if (thread_count <= 1) {
             CLS_INFO("Running io_context with single thread");
             ms_io_context->run();
             return;
         }
-        
+
         // 创建线程池运行 io_context
         CLS_INFO("Running io_context with {} threads", thread_count);
         std::vector<std::thread> threads;
         threads.reserve(thread_count);
-        
+
         // 启动工作线程
         for (size_t i = 0; i < thread_count; ++i) {
             threads.emplace_back([]() {
@@ -626,7 +619,7 @@ void HttpServer::loop() {
                 }
             });
         }
-        
+
         // 等待所有线程完成
         for (auto& t : threads) {
             if (t.joinable()) {

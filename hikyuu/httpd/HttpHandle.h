@@ -76,7 +76,6 @@ public:
 
 private:
     std::unordered_map<RouteKey, HandlerFunc, RouteKeyHash> m_routes;
-    std::shared_mutex m_mutex;
 };
 
 /**
@@ -91,41 +90,7 @@ struct BeastContext {
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
 
-    BeastContext(tcp::socket& sock, net::io_context& io_ctx)
-    : socket(sock), timer(io_ctx) {}
-};
-
-/**
- * HTTP 连接处理器 - 管理 TCP 连接（使用协程）
- */
-class Connection : public std::enable_shared_from_this<Connection> {
-public:
-    static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
-                                              net::io_context& io_ctx);
-    ~Connection();
-
-    void start();
-
-private:
-    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx);
-
-    // TCP 连接读取循环
-    net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
-
-    // 处理请求（协程方式调用 Handle）
-    net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
-
-    // 写入响应
-    net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
-
-    // 关闭连接
-    void close();
-
-    tcp::socket m_socket;
-    Router* m_router;
-    net::io_context& m_io_ctx;
-    std::string m_client_ip;
-    uint16_t m_client_port = 0;
+    BeastContext(tcp::socket& sock, net::io_context& io_ctx) : socket(sock), timer(io_ctx) {}
 };
 
 class HKU_HTTPD_API HttpHandle {
@@ -289,7 +254,6 @@ protected:
     // 请求数据 (由 BeastAdapter 填充)
     std::string m_req_method;
     std::string m_req_uri;
-    std::map<std::string, std::string> m_req_headers;
     std::string m_req_body;
     std::string m_client_ip;
     uint16_t m_client_port{0};
