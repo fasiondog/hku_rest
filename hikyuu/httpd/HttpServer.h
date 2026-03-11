@@ -41,8 +41,30 @@ using tcp = net::ip::tcp;
 
 namespace hku {
 
-// 前向声明
-class HttpHandle;
+/**
+ * HTTP 路由器 - 负责注册和分发请求到对应的 Handle
+ */
+class Router {
+public:
+    using HandlerFunc = std::function<net::awaitable<void>(void*)>;
+
+    struct RouteKey {
+        std::string method;
+        std::string path;
+
+        bool operator==(const RouteKey& other) const {
+            return method == other.method && path == other.path;
+        }
+    };
+
+    void registerHandler(const std::string& method, const std::string& path, HandlerFunc handler);
+    HandlerFunc findHandler(const std::string& method, const std::string& path);
+
+private:
+    // 使用 vector 存储路由表，避免 map 的哈希开销和动态分配
+    // 路由数量有限（通常 < 100），线性搜索性能足够且缓存友好
+    std::vector<std::pair<RouteKey, HandlerFunc>> m_routes;
+};
 
 /**
  * HTTP 连接处理器 - 管理 TCP 连接（使用协程）
