@@ -47,7 +47,7 @@ int main(int argc, char* argv[]) {
     try {
         pod::init("rest_server.ini");
 
-        HelloService hello_service("hku");
+        HelloService hello_service("");
         hello_service.bind(&server);
 
         // =====================================================================

@@ -28,31 +28,36 @@ public:
 
     template <typename Handle>
     void GET(const char* path) {
-        std::string url(fmt::format("/{}/{}", m_url, path));
+        std::string url(m_url.empty() ? fmt::format("/{}", path)
+                                      : fmt::format("/{}/{}", m_url, path));
         m_server->GET<Handle>(url.c_str());
     }
 
     template <typename Handle>
     void POST(const char* path) {
-        std::string url(fmt::format("/{}/{}", m_url, path));
+        std::string url(m_url.empty() ? fmt::format("/{}", path)
+                                      : fmt::format("/{}/{}", m_url, path));
         m_server->POST<Handle>(url.c_str());
     }
 
     template <typename Handle>
     void PUT(const char* path) {
-        std::string url(fmt::format("/{}/{}", m_url, path));
+        std::string url(m_url.empty() ? fmt::format("/{}", path)
+                                      : fmt::format("/{}/{}", m_url, path));
         m_server->PUT<Handle>(url.c_str());
     }
 
     template <typename Handle>
     void DEL(const char* path) {
-        std::string url(fmt::format("/{}/{}", m_url, path));
+        std::string url(m_url.empty() ? fmt::format("/{}", path)
+                                      : fmt::format("/{}/{}", m_url, path));
         m_server->DEL<Handle>(url.c_str());
     }
 
     template <typename Handle>
     void PATCH(const char* path) {
-        std::string url(fmt::format("/{}/{}", m_url, path));
+        std::string url(m_url.empty() ? fmt::format("/{}", path)
+                                      : fmt::format("/{}/{}", m_url, path));
         m_server->PATCH<Handle>(url.c_str());
     }
 
