@@ -113,6 +113,9 @@ public:
     /** 获取请求的 url */
     std::string getReqUrl() const noexcept;
 
+    /** 获取请求方法 */
+    std::string getReqMethod() const noexcept;
+
     /**
      * 获取请求头部信息
      * @param name 头部信息名称
@@ -142,7 +145,7 @@ public:
     json getReqJson();
 
     /** 判断请求的 ulr 中是否包含 query 参数 */
-    bool haveQueryParams();
+    bool haveQueryParams() const noexcept;
 
     typedef std::unordered_map<std::string, std::string> QueryParams;
 
@@ -151,7 +154,7 @@ public:
      * @param query_params [out] 输出 query 参数
      * @return true | false 获取或解析失败
      */
-    bool getQueryParams(QueryParams& query_params);
+    bool getQueryParams(QueryParams& query_params) const noexcept;
 
     void setResStatus(uint16_t status) {
         m_res_status = status;
@@ -231,11 +234,6 @@ protected:
     uint16_t m_res_status{200};
     std::map<std::string, std::string> m_res_headers;
     std::string m_res_body;
-
-    // 请求数据 (由 BeastAdapter 填充)
-    std::string m_req_method;
-    std::string m_req_uri;
-    std::string m_req_body;
 
 public:
     static void enableTrace(bool enable, bool only_traceid = false) {

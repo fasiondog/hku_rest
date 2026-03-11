@@ -36,14 +36,7 @@ bool HttpHandle::ms_enable_trace = false;
 bool HttpHandle::ms_enable_only_traceid = false;
 
 HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {
-    if (beast_context) {
-        auto* ctx = static_cast<BeastContext*>(beast_context);
-        
-        // 提取请求信息
-        m_req_method = std::string(ctx->req.method_string());
-        m_req_uri = std::string(ctx->req.target());
-        m_req_body = ctx->req.body();
-    }
+    // 所有请求信息均延迟到实际调用相应 getter 时从 BeastContext 中提取
 }
 
 net::awaitable<void> HttpHandle::operator()() {
@@ -142,7 +135,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  response: {}\n"
               "{}╚════════════════════════════════════════",
               str, str, url, str, client_ip, client_port, str,
-              m_req_method, str, getReqData(), str, getResData(), str);
+              getReqMethod(), str, getReqData(), str, getResData(), str);
         } else {
             HKU_INFO(
               "\n{}╔════════════════════════════════════════════════════════════\n"
@@ -153,7 +146,7 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  request: {}\n"
               "{}║  response: {}\n{}╚════════════════════════════════════════",
               str, str, url, str, client_ip, client_port, str,
-              m_req_method, str, traceid, str, getReqData(), str,
+              getReqMethod(), str, traceid, str, getReqData(), str,
               getResData(), str);
         }
     } catch (std::exception& e) {
@@ -184,8 +177,22 @@ void HttpHandle::processException(int http_status, int errcode, std::string_view
     }
 }
 
+std::string HttpHandle::getReqMethod() const noexcept {
+    if (!m_beast_context) {
+        return "";
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    return std::string(ctx->req.method_string());
+}
+
 std::string HttpHandle::getReqUrl() const noexcept {
-    return m_req_uri;
+    if (!m_beast_context) {
+        return "";
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    return std::string(ctx->req.target());
 }
 
 std::string HttpHandle::getReqHeader(const char* name) const noexcept {
@@ -207,15 +214,20 @@ std::string HttpHandle::getReqHeader(const char* name) const noexcept {
 }
 
 std::string HttpHandle::getReqData() {
+    if (!m_beast_context) {
+        return "";
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string result;
     
     std::string encoding = getReqHeader("Content-Encoding");
     if (encoding.empty()) {
-        result = m_req_body;
+        result = ctx->req.body();
 
     } else if (encoding == "gzip") {
         gzip::Decompressor decomp;
-        decomp.decompress(result, m_req_body.data(), m_req_body.size());
+        decomp.decompress(result, ctx->req.body().data(), ctx->req.body().size());
 
     } else {
         throw HttpNotAcceptableError(
@@ -261,12 +273,23 @@ json HttpHandle::getReqJson() {
     return result;
 }
 
-bool HttpHandle::haveQueryParams() {
-    return strchr(m_req_uri.c_str(), '?') != nullptr;
+bool HttpHandle::haveQueryParams() const noexcept {
+    if (!m_beast_context) {
+        return false;
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    std::string_view target = ctx->req.target();
+    return target.find('?') != std::string_view::npos;
 }
 
-bool HttpHandle::getQueryParams(QueryParams& query_params) {
-    const char* url = m_req_uri.c_str();
+bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
+    if (!m_beast_context) {
+        return false;
+    }
+    
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    const char* url = ctx->req.target().data();
     CLS_IF_RETURN(!url, false);
 
     const char* p = strchr(url, '?');
