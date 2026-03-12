@@ -30,17 +30,19 @@ public:
 
     virtual ~RestHandle() {}
 
-    virtual void before_run() override {
+    virtual net::awaitable<void> before_run() override {
         setResHeader("Content-Type", "application/json; charset=UTF-8");
         req = getReqJson();
+        co_return;
     }
 
-    virtual void after_run() override {
+    virtual net::awaitable<void> after_run() override {
         // 强制关闭连接，即仅有短连接
         json new_res;
         new_res["ret"] = 0;
         new_res["data"] = std::move(res);
         setResData(new_res);
+        co_return;
     }
 
 protected:

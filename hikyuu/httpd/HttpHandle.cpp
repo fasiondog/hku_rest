@@ -49,7 +49,7 @@ net::awaitable<void> HttpHandle::operator()() {
         // 默认响应状态码为 200，无需显式设置
 
         for (const auto& filter : m_filters) {
-            filter(this);
+            co_await filter(this);
         }
 
         std::string encodings = getReqHeader("Accept-Encoding");
@@ -58,12 +58,12 @@ net::awaitable<void> HttpHandle::operator()() {
             setResHeader("Content-Encoding", "gzip");
         }
 
-        before_run();
+        co_await before_run();
 
         // 协程方式调用 run 方法
         co_await run();
 
-        after_run();
+        co_await after_run();
 
         // 将响应体写入 BeastContext（响应头已通过 setResHeader 直接设置）
         // 注意：状态码已在 setResStatus 或 processException 中直接写入 context

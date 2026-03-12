@@ -70,15 +70,19 @@ public:
     virtual ~HttpHandle() {}
 
     /** 前处理 */
-    virtual void before_run() {}
+    virtual net::awaitable<void> before_run() {
+        co_return;
+    }
 
     /** 响应处理（支持协程）*/
     virtual net::awaitable<void> run() = 0;
 
     /** 后处理 */
-    virtual void after_run() {}
+    virtual net::awaitable<void> after_run() {
+        co_return;
+    }
 
-    void addFilter(std::function<void(HttpHandle*)> filter) {
+    void addFilter(std::function<net::awaitable<void>(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -200,7 +204,7 @@ private:
 
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
-    std::vector<std::function<void(HttpHandle*)>> m_filters;
+    std::vector<std::function<net::awaitable<void>(HttpHandle*)>> m_filters;
 
     // 响应数据（临时存储，在 run() 完成后统一写入 BeastContext）
     std::string m_res_body;
