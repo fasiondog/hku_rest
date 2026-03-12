@@ -125,9 +125,16 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
 
+            // 配置 HTTP 解析器选项，防止超大请求
+            http::request_parser<http::string_body> parser;
+            parser.body_limit(BeastContext::MAX_BODY_SIZE);   // 限制请求体最大为 10MB
+            parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
+            
             // 读取一个完整的 HTTP 请求
-            co_await http::async_read(session->socket, session->buffer, session->req,
-                                      net::use_awaitable);
+            co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
+            
+            // 将解析后的请求移动到 session 中
+            session->req = parser.release();
 
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             // HTTP/2 客户端会先发送 "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -283,9 +290,16 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
 
+            // 配置 HTTP 解析器选项，防止超大请求
+            http::request_parser<http::string_body> parser;
+            parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
+            parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
+            
             // 读取一个完整的 HTTP 请求（通过 SSL 流）
-            co_await http::async_read(m_ssl_stream, session->buffer, session->req,
-                                      net::use_awaitable);
+            co_await http::async_read(m_ssl_stream, session->buffer, parser, net::use_awaitable);
+            
+            // 将解析后的请求移动到 session 中
+            session->req = parser.release();
 
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             if (session->req.method_string() == "PRI") {

@@ -58,7 +58,13 @@ struct BeastContext {
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
 
-    BeastContext(tcp::socket& sock, net::io_context& io_ctx) : socket(sock), timer(io_ctx) {}
+    // HTTP 请求大小限制（安全配置）
+    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;        // 1MB - 缓冲区最大大小
+    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;     // 10MB - 请求体最大大小
+    static constexpr std::size_t MAX_HEADER_SIZE = 8192;               // 8KB - 请求头最大大小
+
+    BeastContext(tcp::socket& sock, net::io_context& io_ctx) 
+        : socket(sock), timer(io_ctx), buffer(MAX_BUFFER_SIZE) {}
 };
 
 class HKU_HTTPD_API HttpHandle {
