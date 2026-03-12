@@ -4,7 +4,7 @@ set_project("hku_rest")
 set_version("1.1.3", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
-set_languages("cxx20")
+set_languages("c++20")
 
 option("mysql", {description = "Enable sqlite driver.", default = true})
 option("sqlite", {description = "Enable sqlite.", default = false})
@@ -34,7 +34,7 @@ if get_config("use_hikyuu") then
         stacktrace = has_config("stacktrace")
     }})
 else
-    add_requires("hku_utils", 
+    add_requires("hku_utils main", 
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,
@@ -85,9 +85,9 @@ if is_plat("windows") then
             serialization = get_config("serialize"),
             system = true,
             python = false,
-            cmake = false,
-            beast = true,
             asio = true,
+            beast = true,
+            cmake = false,
     }}
 else
     boost_config = {
@@ -113,9 +113,9 @@ else
             regex = true,
             random = true,
             thread = true,
-            cmake = true,
+            asio = true,  
             beast = true,
-            asio = true,            
+            cmake = true,
     }}
 end
 if get_config("use_hikyuu") then
