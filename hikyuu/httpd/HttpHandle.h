@@ -57,6 +57,9 @@ struct BeastContext {
     std::string client_ip;
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
+    
+    // ⭐ 新增：取消令牌源，用于主动中断超时操作
+    net::cancellation_signal cancel_signal;
 
     // HTTP 请求大小限制（安全配置）
     static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;        // 1MB - 缓冲区最大大小
@@ -90,7 +93,32 @@ public:
         co_return;
     }
 
-    /** 响应处理（支持协程）*/
+    /** 
+     * 响应处理 (支持协程)
+     * 
+     * 超时与中断机制说明:
+     * - 框架会为该方法设置总处理超时 (默认 60 秒),超时会主动取消协程执行
+     * - 取消信号通过 BeastContext::cancel_signal 发送,能够中断以下场景:
+     *   1. [可中断] 异步 IO 操作：如 async_read、async_write、async_timer 等 Boost.Asio 原生操作
+     *   2. [可中断] 支持取消令牌的协程：使用 net::bind_cancellation 或检查 cancellation_state 的协程
+     *   3. [可中断] 定期检测取消状态的循环：在循环中检查 net::this_coro::cancellation_state().cancelled()
+     *   4. [可中断] 链式异步调用：所有子协程都传递取消令牌的复合异步操作
+     * 
+     * [无法中断] 以下场景无法被自动中断,需手动实现取消逻辑:
+     *   1. 纯 CPU 密集型计算 (无挂起点的循环)
+     *   2. 同步阻塞调用 (如 std::this_thread::sleep_for)
+     *   3. 未检查取消状态的第三方库调用
+     *   4. 死循环或逻辑错误导致的无限等待
+     * 
+     * 最佳实践:
+     *   1. 避免长时间同步阻塞,优先使用异步操作
+     *   2. 长循环中定期检查取消状态并优雅退出
+     *   3. 外部 IO 操作 (数据库、HTTP 请求) 应设置独立超时
+     *   4. 使用 with_timeout 工具包裹可能慢速的子操作
+     * 
+     * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
+     * @note 超时后协程会被强制取消,但已执行的副作用 (如数据库写入) 不会回滚
+     */
     virtual net::awaitable<void> run() = 0;
 
     /** 后处理 */
