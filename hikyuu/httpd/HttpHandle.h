@@ -57,27 +57,27 @@ struct BeastContext {
     std::string client_ip;
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
-    
+
     // ⭐ 新增：取消令牌源，用于主动中断超时操作
     net::cancellation_signal cancel_signal;
 
     // HTTP 请求大小限制（安全配置）
-    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;        // 1MB - 缓冲区最大大小
-    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;     // 10MB - 请求体最大大小
-    static constexpr std::size_t MAX_HEADER_SIZE = 8192;               // 8KB - 请求头最大大小
-    
-    // HTTP 请求超时限制（安全配置）
-    static constexpr std::chrono::seconds READ_TIMEOUT{30};   // 读取请求超时：30 秒
-    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};  // 写入响应超时：30 秒
-    static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};  // 总处理超时：60 秒
-    static constexpr std::chrono::seconds HEADER_TIMEOUT{10}; // 请求头首字节超时：10 秒 ⭐ 新增
-    
-    // Keep-Alive 连接限制（防滥用）
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 100;         // 单个连接最大请求数
-    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5}; // 连接最大存活时间：5 分钟
+    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;     // 1MB - 缓冲区最大大小
+    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB - 请求体最大大小
+    static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB - 请求头最大大小
 
-    BeastContext(tcp::socket& sock, net::io_context& io_ctx) 
-        : socket(sock), timer(io_ctx), buffer(MAX_BUFFER_SIZE) {}
+    // HTTP 请求超时限制（安全配置）
+    static constexpr std::chrono::seconds READ_TIMEOUT{30};    // 读取请求超时：30 秒
+    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
+    static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
+    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒 ⭐ 新增
+
+    // Keep-Alive 连接限制（防滥用）
+    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;          // 单个连接最大请求数（压测场景）
+    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
+
+    BeastContext(tcp::socket& sock, net::io_context& io_ctx)
+    : socket(sock), timer(io_ctx), buffer(MAX_BUFFER_SIZE) {}
 };
 
 class HKU_HTTPD_API HttpHandle {
@@ -93,31 +93,36 @@ public:
         co_return;
     }
 
-    /** 
+    /**
      * 响应处理 (支持协程)
-     * 
+     *
+     * @note 此方法会被 Connection::processHandle 统一包裹在超时保护中
+     * @note 框架会在 processHandle 中为整个 Handle 执行设置总处理超时 (默认 60 秒)
+     * @note 超时会通过 BeastContext::cancel_signal 主动取消协程执行
+     *
      * 超时与中断机制说明:
-     * - 框架会为该方法设置总处理超时 (默认 60 秒),超时会主动取消协程执行
-     * - 取消信号通过 BeastContext::cancel_signal 发送,能够中断以下场景:
+     * - 取消信号通过 BeastContext::cancel_signal 发送，能够中断以下场景:
      *   1. [可中断] 异步 IO 操作：如 async_read、async_write、async_timer 等 Boost.Asio 原生操作
-     *   2. [可中断] 支持取消令牌的协程：使用 net::bind_cancellation 或检查 cancellation_state 的协程
-     *   3. [可中断] 定期检测取消状态的循环：在循环中检查 net::this_coro::cancellation_state().cancelled()
+     *   2. [可中断] 支持取消令牌的协程：使用 net::bind_cancellation 或检查 cancellation_state
+     * 的协程
+     *   3. [可中断] 定期检测取消状态的循环：在循环中检查
+     * net::this_coro::cancellation_state().cancelled()
      *   4. [可中断] 链式异步调用：所有子协程都传递取消令牌的复合异步操作
-     * 
-     * [无法中断] 以下场景无法被自动中断,需手动实现取消逻辑:
+     *
+     * [无法中断] 以下场景无法被自动中断，需手动实现取消逻辑:
      *   1. 纯 CPU 密集型计算 (无挂起点的循环)
      *   2. 同步阻塞调用 (如 std::this_thread::sleep_for)
      *   3. 未检查取消状态的第三方库调用
      *   4. 死循环或逻辑错误导致的无限等待
-     * 
+     *
      * 最佳实践:
-     *   1. 避免长时间同步阻塞,优先使用异步操作
+     *   1. 避免长时间同步阻塞，优先使用异步操作
      *   2. 长循环中定期检查取消状态并优雅退出
      *   3. 外部 IO 操作 (数据库、HTTP 请求) 应设置独立超时
      *   4. 使用 with_timeout 工具包裹可能慢速的子操作
-     * 
+     *
      * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
-     * @note 超时后协程会被强制取消,但已执行的副作用 (如数据库写入) 不会回滚
+     * @note 超时后协程会被强制取消，但已执行的副作用 (如数据库写入) 不会回滚
      */
     virtual net::awaitable<void> run() = 0;
 

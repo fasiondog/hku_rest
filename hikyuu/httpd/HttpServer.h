@@ -97,10 +97,10 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
-    
+
     // Keep-Alive 连接安全限制
-    int m_request_count = 0;                                    // 当前连接已处理请求数
-    std::chrono::steady_clock::time_point m_connection_start;   // 连接建立时间
+    int m_request_count = 0;                                   // 当前连接已处理请求数
+    std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
 };
 
 /**
@@ -151,10 +151,10 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
-    
+
     // Keep-Alive 连接安全限制
-    int m_request_count = 0;                                    // 当前连接已处理请求数
-    std::chrono::steady_clock::time_point m_connection_start;   // 连接建立时间
+    int m_request_count = 0;                                   // 当前连接已处理请求数
+    std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
 };
 
 /**
@@ -194,14 +194,18 @@ public:
      * @param mode 0 无需客户端认证 | 1 客户端认证可选 | 2 需客户端认证
      */
     static void set_tls(const char* ca_key_file, const char* password, int mode = 0);
-    
+
     // ⭐ 全局连接池管理接口（public）
-    static int get_active_connections() { return ms_active_connections.load(std::memory_order_relaxed); }
-    static constexpr int get_max_connections() { return MAX_CONNECTIONS; }
-    
+    static int get_active_connections() {
+        return ms_active_connections.load(std::memory_order_relaxed);
+    }
+    static constexpr int get_max_connections() {
+        return MAX_CONNECTIONS;
+    }
+
     // ⭐ 全局连接池管理字段（public static）
-    static std::atomic<int> ms_active_connections;      // 当前活跃连接数
-    static constexpr int MAX_CONNECTIONS = 10000;       // 最大并发连接数限制
+    static std::atomic<int> ms_active_connections;  // 当前活跃连接数
+    static constexpr int MAX_CONNECTIONS = 1000;    // 最大并发连接数限制
 
     template <typename Handle>
     void GET(const char* path) {
