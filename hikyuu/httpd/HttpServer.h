@@ -66,9 +66,7 @@ private:
     std::vector<std::pair<RouteKey, HandlerFunc>> m_routes;
 };
 
-/**
- * HTTP 连接处理器 - 管理 TCP 连接（使用协程）
- */
+// HTTP 连接处理器 - 管理 TCP 连接（使用协程）
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
@@ -103,9 +101,7 @@ private:
     std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
 };
 
-/**
- * SSL 上下文配置
- */
+// SSL 上下文配置
 struct SslConfig {
     std::string ca_key_file;  // CA 证书和私钥文件（PEM 格式）
     std::string password;     // 私钥密码（可为空）
@@ -195,7 +191,7 @@ public:
      */
     static void set_tls(const char* ca_key_file, const char* password, int mode = 0);
 
-    // ⭐ 全局连接池管理接口（public）
+    // 全局连接池管理接口（public）
     static int get_active_connections() {
         return ms_active_connections.load(std::memory_order_relaxed);
     }
@@ -203,7 +199,7 @@ public:
         return MAX_CONNECTIONS;
     }
 
-    // ⭐ 全局连接池管理字段（public static）
+    // 全局连接池管理字段（public static）
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
     static constexpr int MAX_CONNECTIONS = 1000;    // 最大并发连接数限制
 

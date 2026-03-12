@@ -53,7 +53,7 @@ SslConfig HttpServer::ms_ssl_config;
 ssl::context* HttpServer::ms_ssl_context = nullptr;
 size_t HttpServer::ms_io_thread_count = 0;  // 默认使用硬件并发数
 
-// ⭐ 全局连接池管理初始化
+// 全局连接池管理初始化
 std::atomic<int> HttpServer::ms_active_connections{0};
 
 #if defined(_WIN32)
@@ -108,7 +108,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
   m_connection_start(std::chrono::steady_clock::now()) {
     // HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
 
-    // ⭐ 全局连接池管理：检查并增加连接计数
+    // 全局连接池管理：检查并增加连接计数
     int expected = HttpServer::ms_active_connections.load(std::memory_order_relaxed);
     while (expected < HttpServer::MAX_CONNECTIONS) {
         if (HttpServer::ms_active_connections.compare_exchange_weak(expected, expected + 1,
@@ -130,7 +130,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 }
 
 Connection::~Connection() {
-    // ⭐ 全局连接池管理：减少连接计数
+    // 全局连接池管理：减少连接计数
     HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -186,13 +186,13 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
             parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
 
-            // ⭐ 设置读取超时保护（简化版本）
+            // 设置读取超时保护（带主动中断机制）
             session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
             session->timer.async_wait([session](beast::error_code ec) {
-                if (!ec) {
-                    // 超时时主动取消正在进行的异步操作
+                if (!ec || ec == boost::asio::error::operation_aborted) {
+                    // 主动取消正在进行的异步操作
                     session->cancel_signal.emit(net::cancellation_type::all);
                 }
             });
@@ -277,7 +277,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     }
 
     try {
-        // ⭐ 设置业务处理超时保护（简化版本）
+        // 设置业务处理超时保护（简化版本）
         // 注意：先取消可能存在的旧定时器，再启动新定时器
         context->timer.cancel();
         context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
@@ -364,7 +364,7 @@ SslConnection::SslConnection(tcp::socket&& socket, Router* router, ssl::context&
   m_connection_start(std::chrono::steady_clock::now()) {
     HKU_ASSERT(m_router);
 
-    // ⭐ 全局连接池管理：检查并增加连接计数
+    // 全局连接池管理：检查并增加连接计数
     int expected = HttpServer::ms_active_connections.load(std::memory_order_relaxed);
     while (expected < HttpServer::MAX_CONNECTIONS) {
         if (HttpServer::ms_active_connections.compare_exchange_weak(expected, expected + 1,
@@ -386,7 +386,7 @@ SslConnection::SslConnection(tcp::socket&& socket, Router* router, ssl::context&
 }
 
 SslConnection::~SslConnection() {
-    // ⭐ 全局连接池管理：减少连接计数
+    // 全局连接池管理：减少连接计数
     HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -440,7 +440,7 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
             parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
 
-            // ⭐ 设置读取超时保护（带主动中断机制）
+            // 设置读取超时保护（带主动中断机制）
             session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
@@ -448,7 +448,7 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             session->timer.async_wait([&timeout_occurred, &session](beast::error_code ec) {
                 if (!ec || ec == boost::asio::error::operation_aborted) {
                     timeout_occurred = true;
-                    // ⭐ 主动取消正在进行的异步操作
+                    // 主动取消正在进行的异步操作
                     session->cancel_signal.emit(net::cancellation_type::all);
                 }
             });
@@ -534,7 +534,7 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
     }
 
     try {
-        // ⭐ 设置业务处理超时保护（简化版本）
+        // 设置业务处理超时保护（简化版本）
         // 注意：先取消可能存在的旧定时器，再启动新定时器
         context->timer.cancel();
         context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);

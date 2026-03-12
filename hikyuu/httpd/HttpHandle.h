@@ -58,7 +58,7 @@ struct BeastContext {
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
 
-    // ⭐ 新增：取消令牌源，用于主动中断超时操作
+    // 新增：取消令牌源，用于主动中断超时操作
     net::cancellation_signal cancel_signal;
 
     // HTTP 请求大小限制（安全配置）
@@ -70,7 +70,7 @@ struct BeastContext {
     static constexpr std::chrono::seconds READ_TIMEOUT{30};    // 读取请求超时：30 秒
     static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
     static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
-    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒 ⭐ 新增
+    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒（新增）
 
     // Keep-Alive 连接限制（防滥用）
     static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;          // 单个连接最大请求数（压测场景）
