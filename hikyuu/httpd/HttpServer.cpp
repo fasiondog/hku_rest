@@ -25,6 +25,7 @@
 #include <boost/asio/use_awaitable.hpp>
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ssl.hpp>
+#include <boost/asio/awaitable.hpp>
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -130,7 +131,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             parser.body_limit(BeastContext::MAX_BODY_SIZE);   // 限制请求体最大为 10MB
             parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
             
-            // 读取一个完整的 HTTP 请求
+            // 异步读取 HTTP 请求
             co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
             
             // 将解析后的请求移动到 session 中
@@ -295,7 +296,10 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
             parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
             
-            // 读取一个完整的 HTTP 请求（通过 SSL 流）
+            // 设置读取超时保护
+            session->timer.expires_after(BeastContext::READ_TIMEOUT);
+            
+            // 读取一个完整的 HTTP 请求（带超时保护）
             co_await http::async_read(m_ssl_stream, session->buffer, parser, net::use_awaitable);
             
             // 将解析后的请求移动到 session 中
