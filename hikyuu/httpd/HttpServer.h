@@ -97,6 +97,10 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
+    
+    // Keep-Alive 连接安全限制
+    int m_request_count = 0;                                    // 当前连接已处理请求数
+    std::chrono::steady_clock::time_point m_connection_start;   // 连接建立时间
 };
 
 /**
@@ -147,6 +151,10 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
+    
+    // Keep-Alive 连接安全限制
+    int m_request_count = 0;                                    // 当前连接已处理请求数
+    std::chrono::steady_clock::time_point m_connection_start;   // 连接建立时间
 };
 
 /**

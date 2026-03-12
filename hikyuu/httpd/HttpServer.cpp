@@ -99,9 +99,9 @@ std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* rou
 }
 
 Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx)
-: m_socket(std::move(socket)), m_router(router), m_io_ctx(io_ctx) {
-    // HKU_INFO("Connection constructor: m_router={}, &ms_router should be same", (void*)m_router);
-    // HKU_ASSERT(m_router);
+: m_socket(std::move(socket)), m_router(router), m_io_ctx(io_ctx),
+  m_connection_start(std::chrono::steady_clock::now()) {
+    // HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
     // 获取客户端地址
     auto endpoint = m_socket.remote_endpoint();
     m_client_ip = endpoint.address().to_string();
@@ -121,18 +121,39 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
     // TCP 连接级别的循环，管理多个 HTTP Session
     try {
         while (true) {
+            // 检查 Keep-Alive 限制
+            if (++m_request_count > BeastContext::MAX_KEEPALIVE_REQUESTS) {
+                HKU_WARN("Keep-Alive limit reached ({} requests), closing connection from {}:{}", 
+                        m_request_count, m_client_ip, m_client_port);
+                break;
+            }
+            
+            // 检查连接最大存活时间
+            auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
+            if (elapsed > BeastContext::MAX_CONNECTION_AGE) {
+                HKU_WARN("Connection age limit reached, closing from {}:{}", 
+                        m_client_ip, m_client_port);
+                break;
+            }
+            
             // 为每个 HTTP 请求创建独立的 Session
             auto session = std::make_shared<BeastContext>(m_socket, m_io_ctx);
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
 
-            // 配置 HTTP 解析器选项，防止超大请求
+            // 配置 HTTP 解析器选项，防止超大请求和慢速攻击
             http::request_parser<http::string_body> parser;
             parser.body_limit(BeastContext::MAX_BODY_SIZE);   // 限制请求体最大为 10MB
             parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
             
-            // 异步读取 HTTP 请求
+            // 设置读取超时保护（包含首字节超时）
+            session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
+            
+            // 异步读取 HTTP 请求（带超时保护）
             co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
+            
+            // 取消定时器（读取成功）
+            session->timer.cancel();
             
             // 将解析后的请求移动到 session 中
             session->req = parser.release();
@@ -209,13 +230,32 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     }
 
     try {
-        // 协程方式调用 Handle 处理请求
+        // 设置业务处理超时保护
+        context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
+        
+        // 执行业务处理（如果超时，上层框架会检测到）
         co_await handler(context.get());
+        
+        // 取消定时器（处理完成）
+        context->timer.cancel();
 
         // 设置响应
         context->res.version(context->req.version());
         context->res.keep_alive(true);  // 默认保持连接
 
+    } catch (beast::system_error const& e) {
+        if (e.code() == net::error::timed_out) {
+            HKU_WARN("Request processing timeout from {}:{}", context->client_ip, context->client_port);
+            context->res.result(http::status::gateway_timeout);
+            context->res.set(http::field::content_type, "application/json");
+            context->res.body() = R"({"ret":504,"errmsg":"Request Timeout"})";
+            context->res.prepare_payload();
+            co_return;
+        }
+        context->res.result(http::status::internal_server_error);
+        context->res.set(http::field::content_type, "application/json");
+        context->res.body() = fmt::format(R"({{"ret":500,"errmsg":"{}"}})", e.what());
+        context->res.prepare_payload();
     } catch (std::exception& e) {
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
@@ -226,8 +266,14 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
+        // 设置写入超时保护
+        context->timer.expires_after(BeastContext::WRITE_TIMEOUT);
+        
         // 异步写入 HTTP 响应
         co_await http::async_write(context->socket, context->res, net::use_awaitable);
+        
+        // 取消定时器（写入成功）
+        context->timer.cancel();
     } catch (const beast::system_error& e) {
         HKU_ERROR("Write response error: {}", e.what());
         throw;
@@ -252,7 +298,8 @@ std::shared_ptr<SslConnection> SslConnection::create(tcp::socket&& socket, Route
 
 SslConnection::SslConnection(tcp::socket&& socket, Router* router, ssl::context& ssl_ctx,
                              net::io_context& io_ctx)
-: m_socket(std::move(socket)), m_router(router), m_ssl_stream(m_socket, ssl_ctx), m_io_ctx(io_ctx) {
+: m_socket(std::move(socket)), m_router(router), m_ssl_stream(m_socket, ssl_ctx), m_io_ctx(io_ctx),
+  m_connection_start(std::chrono::steady_clock::now()) {
     HKU_ASSERT(m_router);
     // 获取客户端地址
     auto endpoint = m_ssl_stream.next_layer().remote_endpoint();
@@ -286,6 +333,21 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
     // SSL 握手成功后，进入 HTTP 会话循环
     try {
         while (true) {
+            // 检查 Keep-Alive 限制
+            if (++m_request_count > BeastContext::MAX_KEEPALIVE_REQUESTS) {
+                HKU_WARN("SSL Keep-Alive limit reached ({} requests), closing connection from {}:{}", 
+                        m_request_count, m_client_ip, m_client_port);
+                break;
+            }
+            
+            // 检查连接最大存活时间
+            auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
+            if (elapsed > BeastContext::MAX_CONNECTION_AGE) {
+                HKU_WARN("SSL Connection age limit reached, closing from {}:{}", 
+                        m_client_ip, m_client_port);
+                break;
+            }
+            
             // 为每个 HTTP 请求创建独立的 Session
             auto session = std::make_shared<BeastContext>(m_ssl_stream.next_layer(), m_io_ctx);
             session->client_ip = m_client_ip;
@@ -299,8 +361,11 @@ net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self
             // 设置读取超时保护
             session->timer.expires_after(BeastContext::READ_TIMEOUT);
             
-            // 读取一个完整的 HTTP 请求（带超时保护）
+            // 读取一个完整的 HTTP 请求（通过 SSL 流）
             co_await http::async_read(m_ssl_stream, session->buffer, parser, net::use_awaitable);
+            
+            // 取消定时器（读取成功）
+            session->timer.cancel();
             
             // 将解析后的请求移动到 session 中
             session->req = parser.release();
@@ -377,8 +442,14 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
     }
 
     try {
-        // 协程方式调用 Handle 处理请求
+        // 设置业务处理超时保护
+        context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
+        
+        // 执行业务处理
         co_await handler(context.get());
+        
+        // 取消定时器（处理完成）
+        context->timer.cancel();
 
         // 设置响应
         context->res.version(context->req.version());
@@ -394,8 +465,14 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
 
 net::awaitable<void> SslConnection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
+        // 设置写入超时保护
+        context->timer.expires_after(BeastContext::WRITE_TIMEOUT);
+        
         // 异步写入 HTTP 响应（通过 SSL 流）
         co_await http::async_write(m_ssl_stream, context->res, net::use_awaitable);
+        
+        // 取消定时器（写入成功）
+        context->timer.cancel();
     } catch (const beast::system_error& e) {
         HKU_ERROR("Write response error: {}", e.what());
         throw;
