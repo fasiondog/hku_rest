@@ -47,7 +47,7 @@ net::awaitable<void> HttpHandle::operator()() {
 
     try {
         // 默认响应状态码为 200，无需显式设置
-        
+
         for (const auto& filter : m_filters) {
             filter(this);
         }
@@ -59,17 +59,17 @@ net::awaitable<void> HttpHandle::operator()() {
         }
 
         before_run();
-        
+
         // 协程方式调用 run 方法
         co_await run();
-        
+
         after_run();
-        
+
         // 将响应体写入 BeastContext（响应头已通过 setResHeader 直接设置）
         // 注意：状态码已在 setResStatus 或 processException 中直接写入 context
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
-            
+
             // 设置响应体
             ctx->res.body() = m_res_body;
             ctx->res.prepare_payload();
@@ -98,16 +98,17 @@ net::awaitable<void> HttpHandle::operator()() {
     if (ms_enable_trace) {
         printTraceInfo();
     }
-    
+
     co_return;
 }
 
 void HttpHandle::printTraceInfo() noexcept {
-    std::string url = getReqUrl();
     std::string traceid = getReqHeader("traceid");
     if (ms_enable_only_traceid && traceid.empty()) {
         return;
     }
+
+    std::string url = getReqUrl();
     Datetime now = Datetime::now();
 #if FMT_VERSION >= 90000
     std::string str = fmt::format(
@@ -131,8 +132,8 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  request: {}\n"
               "{}║  response: {}\n"
               "{}╚════════════════════════════════════════",
-              str, str, url, str, client_ip, client_port, str,
-              getReqMethod(), str, getReqData(), str, getResData(), str);
+              str, str, url, str, client_ip, client_port, str, getReqMethod(), str, getReqData(),
+              str, getResData(), str);
         } else {
             HKU_INFO(
               "\n{}╔════════════════════════════════════════════════════════════\n"
@@ -142,9 +143,8 @@ void HttpHandle::printTraceInfo() noexcept {
               "{}║  traceid: {}\n"
               "{}║  request: {}\n"
               "{}║  response: {}\n{}╚════════════════════════════════════════",
-              str, str, url, str, client_ip, client_port, str,
-              getReqMethod(), str, traceid, str, getReqData(), str,
-              getResData(), str);
+              str, str, url, str, client_ip, client_port, str, getReqMethod(), str, traceid, str,
+              getReqData(), str, getResData(), str);
         }
     } catch (std::exception& e) {
         HKU_ERROR("printTraceInfo error: {}", e.what());
@@ -163,7 +163,7 @@ void HttpHandle::processException(int http_status, int errcode, std::string_view
             ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
             ctx->res.prepare_payload();
         }
-        
+
         setResHeader("Content-Type", "application/json; charset=UTF-8");
         m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
     } catch (std::exception& e) {
@@ -177,7 +177,7 @@ std::string HttpHandle::getReqMethod() const noexcept {
     if (!m_beast_context) {
         return "";
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return std::string(ctx->req.method_string());
 }
@@ -186,7 +186,7 @@ std::string HttpHandle::getReqUrl() const noexcept {
     if (!m_beast_context) {
         return "";
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return std::string(ctx->req.target());
 }
@@ -195,17 +195,17 @@ std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     if (!m_beast_context) {
         return "";
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     auto& req = ctx->req;
-    
+
     // 直接遍历请求头查找
     for (auto& field : req) {
         if (field.name_string() == name) {
             return std::string(field.value());
         }
     }
-    
+
     return "";
 }
 
@@ -213,10 +213,10 @@ std::string HttpHandle::getReqData() {
     if (!m_beast_context) {
         return "";
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string result;
-    
+
     std::string encoding = getReqHeader("Content-Encoding");
     if (encoding.empty()) {
         result = ctx->req.body();
@@ -244,7 +244,7 @@ std::string HttpHandle::tryGetReqData() noexcept {
 
 std::string HttpHandle::getResData() const {
     std::string result;
-    
+
     if (!gzip::is_compressed(m_res_body.data(), m_res_body.size())) {
         result = m_res_body;
         return result;
@@ -273,7 +273,7 @@ bool HttpHandle::haveQueryParams() const noexcept {
     if (!m_beast_context) {
         return false;
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string_view target = ctx->req.target();
     return target.find('?') != std::string_view::npos;
@@ -283,7 +283,7 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
     if (!m_beast_context) {
         return false;
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     const char* url = ctx->req.target().data();
     CLS_IF_RETURN(!url, false);
@@ -365,7 +365,7 @@ std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
     if (!m_beast_context) {
         return "";
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string result = ctx->client_ip;
 
@@ -405,7 +405,7 @@ uint16_t HttpHandle::getClientPort() const noexcept {
     if (!m_beast_context) {
         return 0;
     }
-    
+
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return ctx->client_port;
 }
