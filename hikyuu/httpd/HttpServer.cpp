@@ -47,21 +47,27 @@ struct SslConfig {
 
 namespace hku {
 
+// ============================================================================
 // 静态成员初始化
+// ============================================================================
+
+HttpServer* g_http_server = nullptr;
 HttpServer* HttpServer::ms_server = nullptr;
-Router HttpServer::ms_router;
+SslConfig HttpServer::ms_ssl_config;
+ssl::context* HttpServer::ms_ssl_context = nullptr;
 net::io_context* HttpServer::ms_io_context = nullptr;
 tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::atomic<bool> HttpServer::ms_running{false};
-SslConfig HttpServer::ms_ssl_config;
-ssl::context* HttpServer::ms_ssl_context = nullptr;
-size_t HttpServer::ms_io_thread_count = 0;  // 默认使用硬件并发数
-
-// 全局连接池管理初始化
+size_t HttpServer::ms_io_thread_count = 0;
 std::atomic<int> HttpServer::ms_active_connections{0};
+Router HttpServer::ms_router;
+Router HttpServer::ms_ws_router;  // WebSocket 路由器
+
+// HTTP 错误消息映射
+static std::unordered_map<int16_t, std::string> g_error_messages;
 
 // 信号处理防重入标志
-static std::atomic<bool> g_signal_handling{false};
+std::atomic<bool> g_signal_handling{false};
 
 #if defined(_WIN32)
 static UINT g_old_cp;
@@ -732,9 +738,17 @@ net::awaitable<void> HttpServer::doAccept() {
             continue;
         }
 
-        // 为新连接创建处理器并启动协程（非SSL模式）
-        auto connection =
-          Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
+        // 检查连接数限制
+        if (ms_active_connections.load(std::memory_order_relaxed) >= MAX_CONNECTIONS) {
+            CLS_WARN("Maximum connections ({}) reached, rejecting", MAX_CONNECTIONS);
+            continue;
+        }
+
+        // 增加活跃连接计数
+        ms_active_connections.fetch_add(1, std::memory_order_relaxed);
+
+        // 为新连接创建处理器并启动协程（非 SSL 模式）
+        auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
         connection->start();
     }
 
@@ -841,30 +855,33 @@ void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
     CLS_WARN("set_error_msg not implemented yet: status={}, body={}", http_status, body);
 }
 
-void HttpServer::set_tls(const char* ca_key_file, const char* password, int mode) {
-    HKU_CHECK(ca_key_file != nullptr, "CA file cannot be null");
-    HKU_CHECK(existFile(ca_key_file), "Not exist ca file: {}", ca_key_file);
+void HttpServer::regHandle(const char* method, const char* path, HandlerFunc rest_handle) {
+    ms_router.registerHandler(method, path, rest_handle);
+}
 
+void HttpServer::registerHttpHandle(const std::string& method, const std::string& path,
+                                    HttpHandleFactory handler) {
+    ms_router.registerHandler(method, path, handler);
+}
+
+void HttpServer::registerHttpHandle(const char* method, const char* path, 
+                                    HttpHandleFactory handler) {
+    registerHttpHandle(std::string(method), std::string(path), std::move(handler));
+}
+
+void HttpServer::registerWsHandle(const std::string& path, 
+                                  WsHandleFactory handler) {
+    ms_ws_router.registerHandler("WS", path, std::move(handler));
+}
+
+void HttpServer::registerWsHandle(const char* path, WsHandleFactory handler) {
+    registerWsHandle(std::string(path), std::move(handler));
+}
+
+void HttpServer::setTls(const char* ca_key_file, const char* password, int mode) {
     ms_ssl_config.ca_key_file = ca_key_file;
     ms_ssl_config.password = password ? password : "";
     ms_ssl_config.verify_mode = mode;
     ms_ssl_config.enabled = true;
-
-    CLS_INFO("TLS configured successfully");
 }
-
-void HttpServer::regHandle(const char* method, const char* path, HandlerFunc rest_handle) {
-    try {
-        HKU_CHECK(strlen(path) > 1, "Invalid api path!");
-        HKU_CHECK(path[0] == '/', "The api path must start with '/', but current is '{}'", path[0]);
-    } catch (std::exception& e) {
-        CLS_FATAL("Failed to register handler: {}", e.what());
-        http_exit();
-    }
-
-    // 直接使用传入的 handler（已经是协程方式）
-    ms_router.registerHandler(method, path, rest_handle);
-    CLS_DEBUG("Registered handler: {} {}", method, path);
-}
-
 }  // namespace hku

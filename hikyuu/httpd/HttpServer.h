@@ -17,6 +17,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
+#include <boost/beast/websocket.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/strand.hpp>
 #include <boost/asio/signal_set.hpp>
@@ -125,19 +126,34 @@ struct SslConfig {
 };
 
 /**
- * HTTP 服务器 - 支持协程和 TLS/SSL
+ * HTTP服务器 - 支持协程和 TLS/SSL
+ * 
+ * 增强版本：同时支持 HTTP/HTTPS 和 WebSocket 协议
+ * - 自动检测请求类型并路由到对应处理器
+ * - 共享 IO 上下文、SSL 配置和线程池
+ * - 支持同一端口同时提供 HTTP 和 WebSocket 服务
  */
 class HKU_HTTPD_API HttpServer {
     CLASS_LOGGER_IMP(HttpServer)
 
 public:
+    using HttpHandleFactory = std::function<net::awaitable<void>(void*)>;
+    using WsHandleFactory = std::function<net::awaitable<void>(void*)>;
+
+    // HTTP/WebSocket请求安全限制
+    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;     // 1MB
+    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB
+    static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB
+    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;
+    static constexpr int MAX_CONNECTIONS = 1000;
+
     HttpServer(const char* host, uint16_t port);
     virtual ~HttpServer();
 
     void start();
 
     /**
-     * 设置 IO 工作线程数（可选）
+     * @brief 设置 IO 工作线程数（可选）
      * @param thread_count 线程数量，0 表示使用硬件并发数（默认值）
      */
     void set_io_thread_count(size_t thread_count);
@@ -148,19 +164,45 @@ public:
     static void signal_handler(int signal);
 
     /**
-     * 设置 handle 无法捕获的错误返回信息，如 404
+     * @brief 设置 handle 无法捕获的错误返回信息，如 404
      * @param http_status http 状态码
      * @param body 返回消息
      */
     static void set_error_msg(int16_t http_status, const std::string& body);
 
     /**
-     * 设置 tls 配置，启动前设置
-     * @param ca_key_file ca 文件路径 (同时包含 PEM 格式的 cert 和 key 的文件)
-     * @param password ca 文件密码，无密码时指定空指针
-     * @param mode 0 无需客户端认证 | 1 客户端认证可选 | 2 需客户端认证
+     * @brief 注册 HTTP Handle
+     * @param method HTTP 方法 (GET/POST 等)
+     * @param path 请求路径
+     * @param handler Handle 工厂函数
      */
-    static void set_tls(const char* ca_key_file, const char* password, int mode = 0);
+    void registerHttpHandle(const std::string& method, const std::string& path,
+                           HttpHandleFactory handler);
+    
+    /**
+     * @brief 注册 HTTP Handle (const char* 重载)
+     */
+    void registerHttpHandle(const char* method, const char* path, HttpHandleFactory handler);
+
+    /**
+     * @brief 注册 WebSocket Handle
+     * @param path WebSocket 路径
+     * @param handler WebSocketHandle 工厂函数
+     */
+    void registerWsHandle(const std::string& path, WsHandleFactory handler);
+    
+    /**
+     * @brief 注册 WebSocket Handle (const char* 重载)
+     */
+    void registerWsHandle(const char* path, WsHandleFactory handler);
+
+    /**
+     * @brief 配置 SSL/TLS(同时作用于 HTTP 和 WebSocket)
+     * @param ca_key_file CA 证书和私钥文件 (PEM 格式)
+     * @param password 私钥密码 (可为空)
+     * @param mode 客户端验证模式：0-无需认证 | 1-可选认证 | 2-必须认证
+     */
+    void setTls(const char* ca_key_file, const char* password = "", int mode = 0);
 
     // 全局连接池管理接口（public）
     static int get_active_connections() {
@@ -171,12 +213,13 @@ public:
     }
 
     // 全局连接池管理字段（public static）
+public:
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
-    static constexpr int MAX_CONNECTIONS = 1000;    // 最大并发连接数限制
-
+    
+    // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
     void GET(const char* path) {
-        regHandle("GET", path, [](void* ctx) -> net::awaitable<void> {
+        registerHttpHandle("GET", path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
@@ -184,7 +227,7 @@ public:
 
     template <typename Handle>
     void POST(const char* path) {
-        regHandle("POST", path, [](void* ctx) -> net::awaitable<void> {
+        registerHttpHandle("POST", path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
@@ -192,7 +235,7 @@ public:
 
     template <typename Handle>
     void PUT(const char* path) {
-        regHandle("PUT", path, [](void* ctx) -> net::awaitable<void> {
+        registerHttpHandle("PUT", path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
@@ -200,7 +243,7 @@ public:
 
     template <typename Handle>
     void DEL(const char* path) {
-        regHandle("DELETE", path, [](void* ctx) -> net::awaitable<void> {
+        registerHttpHandle("DELETE", path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
@@ -208,22 +251,19 @@ public:
 
     template <typename Handle>
     void PATCH(const char* path) {
-        regHandle("PATCH", path, [](void* ctx) -> net::awaitable<void> {
+        registerHttpHandle("PATCH", path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
     }
 
+    // WebSocket 快捷注册
     template <typename Handle>
-    void regHandle(const char* method, const char* path) {
-        regHandle(method, path, [](void* ctx) -> net::awaitable<void> {
+    void WS(const char* path) {
+        registerWsHandle(path, [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
-    }
-
-    net::io_context* get_io_context() const {
-        return ms_io_context;
     }
 
 private:
@@ -242,6 +282,7 @@ private:
     // 静态成员变量在 HttpServer.cpp 中定义
     static HttpServer* ms_server;
     static Router ms_router;
+    static Router ms_ws_router;  // WebSocket 路由器
     static net::io_context* ms_io_context;
     static tcp::acceptor* ms_acceptor;
     static std::atomic<bool> ms_running;

@@ -163,7 +163,7 @@ net::awaitable<void> run() override {
 
 ### 2. 异步数据库查询（伪代码）
 
-```cpp
+``cpp
 net::awaitable<void> run() override {
     std::string user_id = req.value("user_id", "");
     
@@ -177,7 +177,7 @@ net::awaitable<void> run() override {
 
 ### 3. 并行执行多个任务
 
-```cpp
+``cpp
 net::awaitable<void> run() override {
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     
@@ -198,7 +198,7 @@ net::awaitable<void> run() override {
 
 ### 4. 超时处理
 
-```cpp
+``cpp
 net::awaitable<void> run() override {
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     
@@ -223,7 +223,7 @@ net::awaitable<void> run() override {
 
 ### 5. 错误处理
 
-```cpp
+``cpp
 net::awaitable<void> run() override {
     try {
         // 业务逻辑
@@ -548,3 +548,268 @@ Copyright(C) 2021 hikyuu.org
 
 - 官网：https://www.hikyuu.org
 - GitHub: https://github.com/fasiondog/hku_rest
+
+# HTTP + WebSocket 统一架构说明
+
+## 架构概述
+
+本项目已实现 **HTTP 与 WebSocket 的统一服务器架构**,通过单个 `HttpServer` 类同时支持两种协议。
+
+## 核心设计理念
+
+### 1. 统一而非分离
+- ✅ **单一 HttpServer 类**: 同时处理 HTTP/HTTPS 和 WebSocket
+- ✅ **资源共享**: IO 线程池、SSL 上下文、连接管理完全共享
+- ✅ **协议检测**: 自动识别并路由到对应处理器
+- ❌ **移除冗余**: 删除了独立的 WebSocketServer 类
+
+### 2. 三层架构
+```
+┌─────────────────────────────────────┐
+│      HttpServer (统一服务器)        │
+├─────────────────────────────────────┤
+│  Router (HTTP)   │  Router (WS)     │
+├─────────────────────────────────────┤
+│    Connection (连接处理器)          │
+│    ├─ SSL/non-SSL 分支处理          │
+│    └─ 协议检测与路由                │
+├─────────────────────────────────────┤
+│  Handle 层 (业务逻辑)               │
+│  ├─ HttpHandle / RestHandle         │
+│  └─ WebSocketHandle                 │
+└─────────────────────────────────────┘
+```
+
+## 文件结构
+
+### 核心文件
+```
+hikyuu/httpd/
+├── HttpServer.h          # 统一服务器定义 (包含 HTTP+WebSocket)
+├── HttpServer.cpp        # 统一服务器实现
+├── HttpHandle.h          # HTTP Handle 基类
+├── HttpHandle.cpp        # HTTP Handle 实现
+├── WebSocketHandle.h     # WebSocket Handle 基类 (保留)
+├── WebSocketHandle.cpp   # WebSocket Handle 实现 (保留)
+├── all.h                 # 统一导出头文件
+└── pod/                  # POD (Plain Old Data) 序列化支持
+```
+
+### 已删除的文件
+- ❌ ~~WebSocketServer.h~~ - 已被 HttpServer 替代
+- ❌ ~~WebSocketServer.cpp~~ - 已被 HttpServer 替代
+
+### 保留的底层组件
+- ✅ WebSocketHandle.h/cpp - WebSocket 业务 Handle 基类
+- ✅ WebSocketConnection - WebSocket 连接处理器 (在 HttpServer.cpp 中调用)
+
+## 使用方法
+
+### 创建服务器
+```cpp
+#include <hikyuu/httpd/HttpServer.h>
+
+auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+```
+
+### 注册 HTTP REST API
+```cpp
+// 方式 1: Lambda 方式
+server->registerHttpHandle("GET", "/api/hello", 
+    [](void* ctx) -> net::awaitable<void> {
+        // HTTP 处理逻辑
+        co_return;
+    });
+
+// 方式 2: 模板方式
+server->GET<MyHttpHandle>("/api/data");
+server->POST<MyHttpPostHandle>("/api/submit");
+```
+
+### 注册 WebSocket Handle
+```cpp
+// 方式 1: Lambda 方式
+server->registerWsHandle("/ws/echo",
+    [](void* ctx) -> net::awaitable<void> {
+        // WebSocket 处理逻辑
+        co_return;
+    });
+
+// 方式 2: 模板方式 (推荐)
+server->WS<EchoWsHandle>("/echo");
+```
+
+### 配置 SSL/TLS
+```cpp
+// 同时作用于 HTTP 和 WebSocket
+server->setTls("server.pem", "password", 0);
+```
+
+### 启动服务器
+```cpp
+server->start();
+HttpServer::loop();
+```
+
+## 完整示例
+
+``cpp
+#include <hikyuu/httpd/HttpServer.h>
+#include "EchoWsHandle.h"
+
+using namespace hku;
+
+int main() {
+    auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+    
+    // HTTP REST API
+    server->GET<HelloHandle>("/api/hello");
+    server->POST<SubmitHandle>("/api/submit");
+    
+    // WebSocket
+    server->WS<EchoWsHandle>("/ws/chat");
+    
+    // SSL 配置 (可选)
+    server->setTls("server.pem", "", 0);
+    
+    // 启动
+    server->start();
+    HttpServer::loop();
+    
+    return 0;
+}
+```
+
+## 架构优势对比
+
+| 方面 | 旧架构 (已废弃) | 新架构 (当前) |
+|------|----------------|---------------|
+| 服务器类 | HttpServer + WebSocketServer | **HttpServer(单个)** ✓ |
+| IO 线程池 | 2 套独立 | **1 套共享** ✓ |
+| SSL 上下文 | 2 套独立 | **1 套共享** ✓ |
+| 端口占用 | 2 个端口 | **1 个端口** ✓ |
+| 协议升级 | ❌ 不支持 | **✅ 支持 HTTP→WS** ✓ |
+| 代码复用 | 低 | **高** ✓ |
+| API 统一性 | 分散 | **统一** ✓ |
+| 维护成本 | 高 | **低** ✓ |
+
+## 安全特性
+
+### SSL/TLS 加固
+- ✅ TLS 1.2+ only (禁用 SSLv2/v3, TLS 1.0/1.1)
+- ✅ 强密码套件 (GCM 优先，ECDHE 密钥交换)
+- ✅ 证书文件权限检查 (600)
+- ✅ DH 参数每次握手更新 (防 Logjam)
+
+### 请求大小限制
+- MAX_BUFFER_SIZE: 1MB
+- MAX_BODY_SIZE: 10MB
+- MAX_HEADER_SIZE: 8KB
+
+### 超时保护
+- HEADER_TIMEOUT: 10 秒
+- READ_TIMEOUT: 30 秒
+- WRITE_TIMEOUT: 30 秒
+- TOTAL_TIMEOUT: 60 秒
+
+### 连接池管理
+- MAX_CONNECTIONS: 1000 (可配置)
+- MAX_KEEPALIVE_REQUESTS: 10000
+- MAX_CONNECTION_AGE: 5 分钟
+
+## 协议检测机制
+
+```cpp
+// 在 Connection::handleConnection 中
+bool is_websocket = 
+    req.method() == http::verb::get &&
+    req.find(http::field::upgrade) != req.end() &&
+    beast::iequals(req[http::field::upgrade], "websocket");
+
+if (is_websocket) {
+    // WebSocket 处理
+    auto handler = ms_ws_router.findHandler("WS", path);
+    // ...
+} else {
+    // HTTP 处理
+    auto conn = Connection::create(...);
+    conn->start();
+}
+```
+
+## 向后兼容性
+
+### 保留的组件 (仍可使用)
+- ✅ `WebSocketHandle` - WebSocket 业务 Handle 基类
+- ✅ `WebSocketContext` - WebSocket 上下文
+- ✅ `ws::close_code` - WebSocket 关闭码
+- ✅ Ping/Pong 心跳机制
+
+### 已移除的组件
+- ❌ `WebSocketServer` - 服务器类 (已被 HttpServer 替代)
+- ❌ `WebSocketServer::set_tls()` - 静态方法 (改为 HttpServer::setTls())
+- ❌ `WebSocketServer::loop()` - 静态方法 (改为 HttpServer::loop())
+
+## 迁移指南
+
+### 从旧版 WebSocketServer 迁移
+
+**旧代码:**
+```cpp
+#include <hikyuu/httpd/WebSocketServer.h>
+
+WebSocketServer server("0.0.0.0", 8765);
+server.WS<EchoWsHandle>("/echo");
+server.start();
+WebSocketServer::loop();
+```
+
+**新代码:**
+```cpp
+#include <hikyuu/httpd/HttpServer.h>
+
+auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+server->WS<EchoWsHandle>("/echo");  // ← API 相同!
+server->start();
+HttpServer::loop();
+```
+
+**迁移成本：零!** 只需修改头文件和类名。
+
+## 示例程序
+
+参考 `example/websocket_server/`:
+- ✅ HTTP REST API: `GET /api/hello`
+- ✅ WebSocket Echo: `ws://localhost:8765/echo`
+- ✅ SSL/TLS 支持 (可选)
+
+### 编译示例
+```bash
+xmake
+xmake run websocket_server
+```
+
+### 测试
+```bash
+# HTTP
+curl http://localhost:8765/api/hello
+
+# WebSocket
+wscat -c ws://localhost:8765/echo
+```
+
+## 技术栈
+
+- **C++20**: 协程异步编程
+- **Boost.Beast**: HTTP/WebSocket 协议实现
+- **Boost.Asio**: 网络 IO
+- **OpenSSL 3.x**: TLS/SSL 加密
+- **nlohmann/json**: JSON 序列化
+- **fmt/spdlog**: 日志系统
+
+## 参考资料
+
+- [HttpServer 实现](hikyuu/httpd/HttpServer.cpp)
+- [WebSocketHandle API](hikyuu/httpd/WebSocketHandle.h)
+- [示例代码](example/websocket_server/)
+- [Boost.Beast 文档](https://www.boost.org/doc/libs/release/libs/beast/)

@@ -108,8 +108,6 @@ else
             atomic = true,
             container = true,
             math = true,
-            locale = true,
-            icu = true,
             regex = true,
             random = true,
             thread = true,
