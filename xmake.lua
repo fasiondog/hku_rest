@@ -240,3 +240,4 @@ target_end()
 
 includes("example/rest_server")
 includes("example/node_server")
+includes("example/websocket_server")

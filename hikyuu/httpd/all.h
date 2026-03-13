@@ -14,6 +14,10 @@
 #include "HttpServer.h"
 #include "HttpService.h"
 
+// WebSocket 组件
+#include "WebSocketHandle.h"
+#include "WebSocketServer.h"
+
 // 版本信息
 #include "version.h"
 
