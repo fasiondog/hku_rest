@@ -28,10 +28,8 @@ net::awaitable<void> WebSocketHandle::onOpen() {
     co_return;
 }
 
-net::awaitable<void> WebSocketHandle::onClose(ws::close_code const& code,
-                                              std::string_view reason) {
-    HKU_DEBUG("WebSocket connection closed: code={}, reason={}", 
-              static_cast<int>(code), reason);
+net::awaitable<void> WebSocketHandle::onClose(ws::close_code const& code, std::string_view reason) {
+    HKU_DEBUG("WebSocket connection closed: code={}, reason={}", static_cast<int>(code), reason);
     co_return;
 }
 
@@ -74,8 +72,7 @@ uint16_t WebSocketHandle::getClientPort() const noexcept {
     return ctx->client_port;
 }
 
-net::awaitable<void> WebSocketHandle::close(ws::close_code code,
-                                            std::string_view reason) {
+net::awaitable<void> WebSocketHandle::close(ws::close_code code, std::string_view reason) {
     // 默认实现为空，具体实现在派生类中
     // 实际关闭由 WebSocketConnection 通过回调完成
     co_return;
@@ -90,10 +87,10 @@ net::awaitable<void> WebSocketHandle::operator()() {
     try {
         // 调用 onOpen 回调
         co_await onOpen();
-        
+
         // 主循环由 WebSocketConnection 管理
         // Handle 只负责业务逻辑
-        
+
     } catch (const beast::system_error& e) {
         // 忽略返回值以避免警告
         (void)onError(e.code(), e.what());
@@ -101,7 +98,7 @@ net::awaitable<void> WebSocketHandle::operator()() {
         // 忽略返回值以避免警告
         (void)onError(beast::errc::make_error_code(beast::errc::connection_aborted), e.what());
     }
-    
+
     co_return;
 }
 

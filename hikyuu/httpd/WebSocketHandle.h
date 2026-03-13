@@ -56,9 +56,9 @@ struct WebSocketContext {
     static constexpr std::chrono::seconds PING_TIMEOUT{10};   // Ping 响应超时
 
     WebSocketContext(net::io_context& io_ctx) : buffer(MAX_READ_BUFFER_SIZE), timer(io_ctx) {}
-    
-    WebSocketContext(const net::any_io_executor& exec) 
-        : buffer(MAX_READ_BUFFER_SIZE), timer(exec) {}
+
+    WebSocketContext(const net::any_io_executor& exec)
+    : buffer(MAX_READ_BUFFER_SIZE), timer(exec) {}
 };
 /**
  * WebSocket Handle 基类 - 用户继承此类实现业务逻辑

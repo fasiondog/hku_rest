@@ -127,7 +127,7 @@ struct SslConfig {
 
 /**
  * HTTP服务器 - 支持协程和 TLS/SSL
- * 
+ *
  * 增强版本：同时支持 HTTP/HTTPS 和 WebSocket 协议
  * - 自动检测请求类型并路由到对应处理器
  * - 共享 IO 上下文、SSL 配置和线程池
@@ -177,8 +177,8 @@ public:
      * @param handler Handle 工厂函数
      */
     void registerHttpHandle(const std::string& method, const std::string& path,
-                           HttpHandleFactory handler);
-    
+                            HttpHandleFactory handler);
+
     /**
      * @brief 注册 HTTP Handle (const char* 重载)
      */
@@ -190,7 +190,7 @@ public:
      * @param handler WebSocketHandle 工厂函数
      */
     void registerWsHandle(const std::string& path, WsHandleFactory handler);
-    
+
     /**
      * @brief 注册 WebSocket Handle (const char* 重载)
      */
@@ -215,7 +215,7 @@ public:
     // 全局连接池管理字段（public static）
 public:
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
-    
+
     // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
     void GET(const char* path) {
