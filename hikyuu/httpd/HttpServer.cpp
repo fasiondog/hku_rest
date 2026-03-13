@@ -99,30 +99,35 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
 std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* router,
                                                net::io_context& io_ctx, ssl::context* ssl_ctx) {
     if (ssl_ctx) {
-        return std::shared_ptr<Connection>(new Connection(std::move(socket), router, io_ctx, ssl_ctx));
+        return std::shared_ptr<Connection>(
+          new Connection(std::move(socket), router, io_ctx, ssl_ctx));
     } else {
-        return std::shared_ptr<Connection>(new Connection(std::move(socket), router, io_ctx, nullptr));
+        return std::shared_ptr<Connection>(
+          new Connection(std::move(socket), router, io_ctx, nullptr));
     }
 }
 
-Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx)
+Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx,
+                       ssl::context* ssl_ctx)
 : m_socket(std::move(socket)),
   m_router(router),
   m_io_ctx(io_ctx),
   m_connection_start(std::chrono::steady_clock::now()) {
-    
     // 如果提供了 SSL 上下文，初始化 SSL 流
     if (ssl_ctx) {
         m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
     }
-    
-    // HKU_INFO("Connection::start: m_router={}, this={}, is_ssl={}", (void*)m_router, (void*)this, IsSsl());
 
-    // 全局连接池管理：检查并增加连接计数
-    int expected = HttpServer::ms_active_connections.load(std::memory_order_relaxed);
+    // HKU_INFO("Connection::start: m_router={}, this={}, is_ssl={}", (void*)m_router, (void*)this,
+    // IsSsl());
+
+    // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
+    int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
     while (expected < HttpServer::MAX_CONNECTIONS) {
-        if (HttpServer::ms_active_connections.compare_exchange_weak(expected, expected + 1,
-                                                                    std::memory_order_relaxed)) {
+        if (HttpServer::ms_active_connections.compare_exchange_weak(
+              expected, expected + 1,
+              std::memory_order_acq_rel,  // 成功时使用 acquire-release
+              std::memory_order_acquire)) {  // 失败时使用 acquire
             break;
         }
     }
@@ -134,9 +139,15 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
     }
 
     // 获取客户端地址
-    auto endpoint = m_socket.remote_endpoint();
-    m_client_ip = endpoint.address().to_string();
-    m_client_port = endpoint.port();
+    try {
+        auto endpoint = m_socket.remote_endpoint();
+        m_client_ip = endpoint.address().to_string();
+        m_client_port = endpoint.port();
+    } catch (const std::exception& e) {
+        HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
+        m_client_ip = "unknown";
+        m_client_port = 0;
+    }
 }
 
 Connection::~Connection() {
@@ -155,7 +166,7 @@ net::awaitable<bool> Connection::sslHandshake() {
     if (!m_ssl_stream) {
         co_return true;  // 非SSL连接直接成功
     }
-    
+
     try {
         co_await m_ssl_stream->async_handshake(ssl::stream_base::server, net::use_awaitable);
         HKU_DEBUG("SSL handshake successful");
@@ -180,11 +191,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 co_return;
             }
         }
-        
-        // 增加连接计数
-        if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_relaxed) >=
+
+        // 增加连接计数（使用 acquire-release 语义）
+        if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_acq_rel) >=
             HttpServer::MAX_CONNECTIONS) {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
+            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_acq_rel);
             HKU_WARN("Global connection limit reached ({}), rejecting connection from {}:{}",
                      HttpServer::MAX_CONNECTIONS, m_client_ip, m_client_port);
             co_return;
@@ -192,7 +203,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
         // 确保在函数退出时减少连接计数
         auto decrement_connection = [&]() {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
+            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_release);
         };
 
         while (true) {
@@ -238,9 +249,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
             if (m_ssl_stream) {
-                co_await http::async_read(*m_ssl_stream, session->buffer, parser, net::use_awaitable);
+                co_await http::async_read(*m_ssl_stream, session->buffer, parser,
+                                          net::use_awaitable);
             } else {
-                co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
+                co_await http::async_read(session->socket, session->buffer, parser,
+                                          net::use_awaitable);
             }
 
             // 取消定时器（读取成功）
@@ -297,7 +310,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
-    HKU_INFO("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target, (void*)m_router, m_ssl_stream ? "true" : "false");
+    HKU_INFO("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target,
+             (void*)m_router, m_ssl_stream ? "true" : "false");
 
     // 安全检查 router 是否为空
     if (!m_router) {
@@ -381,7 +395,7 @@ void Connection::close() {
     if (m_ssl_stream) {
         // SSL shutdown
         m_ssl_stream->async_shutdown([&ec](beast::error_code shutdown_ec) { ec = shutdown_ec; });
-        
+
         // TCP shutdown (through SSL stream)
         m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_send, ec);
     } else {
@@ -578,7 +592,8 @@ net::awaitable<void> HttpServer::doAccept() {
         }
 
         // 为新连接创建处理器并启动协程（非SSL模式）
-        auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
+        auto connection =
+          Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
         connection->start();
     }
 
