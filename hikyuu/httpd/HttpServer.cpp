@@ -74,6 +74,32 @@ static UINT g_old_cp;
 #endif
 
 // ============================================================================
+// 工具函数实现
+// ============================================================================
+
+/**
+ * @brief 为 HTTP 响应设置安全响应头
+ *
+ * 包含以下安全头:
+ * - Strict-Transport-Security (HSTS): 强制 HTTPS
+ * - X-Content-Type-Options: 防止 MIME 类型嗅探
+ * - X-Frame-Options: 防止点击劫持攻击
+ * - X-XSS-Protection: XSS 防护
+ * - Referrer-Policy: 控制 Referer 信息泄露
+ *
+ * @tparam ResponseType 响应类型 (http::response 或其引用)
+ * @param response HTTP 响应对象
+ */
+template <typename ResponseType>
+static void setSecurityHeaders(ResponseType& response) {
+    response.set(http::field::strict_transport_security, "max-age=31536000; includeSubDomains");
+    response.set(http::field::x_content_type_options, "nosniff");
+    response.set(http::field::x_frame_options, "DENY");
+    response.set(http::field::x_xss_protection, "1; mode=block");
+    response.set(http::field::referrer_policy, "no-referrer-when-downgrade");
+}
+
+// ============================================================================
 // Router 实现
 // ============================================================================
 
@@ -352,6 +378,10 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error"})";
         context->res.prepare_payload();
+
+        // 设置安全响应头
+        setSecurityHeaders(context->res);
+
         co_return;
     }
 
@@ -364,6 +394,10 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":404,"errmsg":"Not Found"})";
         context->res.prepare_payload();
+
+        // 设置安全响应头
+        setSecurityHeaders(context->res);
+
         co_return;
     }
 
@@ -377,7 +411,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 使用 weak_ptr 防止定时器回调访问已销毁的 context
         auto weak_context = std::weak_ptr<BeastContext>(context);
         context->timer.async_wait([weak_ctx = std::move(weak_context)](beast::error_code ec) {
-            if (!ec) {
+            if (!ec || ec == boost::asio::error::operation_aborted) {
                 // 尝试锁定 shared_ptr
                 if (auto ctx = weak_ctx.lock()) {
                     // 超时时主动取消正在进行的业务处理
@@ -386,6 +420,9 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
             }
         });
 
+        // 统一添加安全响应头 (在 handler 执行前设置，确保所有响应都包含)
+        setSecurityHeaders(context->res);
+
         // 执行业务处理（绑定取消令牌到协程）
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
         co_await handler(context.get());
@@ -393,17 +430,17 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 取消定时器（处理完成）
         context->timer.cancel();
 
-        // 设置响应
+        // 设置响应版本和 Keep-Alive
         context->res.version(context->req.version());
         context->res.keep_alive(true);  // 默认保持连接
 
     } catch (std::exception& e) {
         // 异常时也要取消定时器，防止定时器回调访问已销毁的对象
         context->timer.cancel();
-        
+
         // 记录详细错误到日志（内部可见）
         HKU_ERROR("Handler exception: {}", e.what());
-        
+
         // 返回通用错误消息给客户端（不泄露内部细节）
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
@@ -626,7 +663,7 @@ void HttpServer::configureSsl() {
          unsigned int inlen, void* /*arg*/) -> int {
           // 遍历客户端提供的协议列表
           unsigned int i = 0;
-          
+
           while (i < inlen) {
               unsigned char protocol_len = in[i];
 
@@ -653,7 +690,7 @@ void HttpServer::configureSsl() {
 
               i += protocol_len + 1;
           }
-          
+
           // 始终返回 http/1.1 作为默认协议
           // 这样可以确保即使客户端提供畸形 ALPN 扩展，握手仍能完成
           static const unsigned char default_http11[] = {0x08, 'h', 't', 't', 'p',
