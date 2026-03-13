@@ -622,22 +622,26 @@ void HttpServer::configureSsl() {
          unsigned int inlen, void* /*arg*/) -> int {
           // 遍历客户端提供的协议列表
           unsigned int i = 0;
+          
           while (i < inlen) {
               unsigned char protocol_len = in[i];
 
               // 安全检查：防止越界访问
+              // 修复：跳过无效条目而不是直接拒绝，防止 DoS 攻击
               if (protocol_len == 0 || i + protocol_len > inlen) {
-                  return SSL_TLSEXT_ERR_NOACK;
+                  // 跳过当前无效条目，继续检查下一个
+                  i++;
+                  continue;
               }
 
               // 检查是否为 http/1.1
               if (protocol_len == 8 && memcmp(&in[i + 1], "http/1.1", 8) == 0) {
                   *out = &in[i + 1];
                   *outlen = protocol_len;
-                  return SSL_TLSEXT_ERR_OK;
+                  break;  // 找到目标协议，退出循环
               }
 
-              // 如果是 h2 或 h2c，拒绝
+              // 如果是 h2 或 h2c，记录但继续遍历
               if ((protocol_len == 2 && memcmp(&in[i + 1], "h2", 2) == 0) ||
                   (protocol_len == 3 && memcmp(&in[i + 1], "h2c", 3) == 0)) {
                   HKU_DEBUG("Rejected HTTP/2 negotiation attempt");
@@ -645,12 +649,13 @@ void HttpServer::configureSsl() {
 
               i += protocol_len + 1;
           }
-
-          // 没有找到支持的协议，默认返回 http/1.1
+          
+          // 始终返回 http/1.1 作为默认协议
+          // 这样可以确保即使客户端提供畸形 ALPN 扩展，握手仍能完成
           static const unsigned char default_http11[] = {0x08, 'h', 't', 't', 'p',
                                                          '/',  '1', '.', '1'};
-          *out = default_http11;
-          *outlen = sizeof(default_http11);
+          *out = default_http11 + 1;  // 跳过长度字节
+          *outlen = sizeof(default_http11) - 1;
           return SSL_TLSEXT_ERR_OK;
       },
       nullptr);
