@@ -582,8 +582,8 @@ void HttpServer::configureSsl() {
                              "TLS_AES_128_GCM_SHA256");
 #endif
 
-// 启用椭圆曲线密钥交换 (ECDH) - 自动选择最佳曲线
-// 现代 OpenSSL 版本会自动选择安全的椭圆曲线参数
+    // 启用椭圆曲线密钥交换 (ECDH) - 自动选择最佳曲线
+    // 现代 OpenSSL 版本会自动选择安全的椭圆曲线参数
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
     // ECDH auto is deprecated in newer OpenSSL versions, but we keep it for compatibility
     // Return value is intentionally ignored as it's always successful on modern systems

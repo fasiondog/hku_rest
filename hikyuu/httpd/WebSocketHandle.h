@@ -43,11 +43,13 @@ struct WebSocketContext {
     net::steady_timer timer;
     net::cancellation_signal cancel_signal;
 
-    // 安全限制配置
-    static constexpr std::size_t MAX_MESSAGE_SIZE = 1024 * 1024;      // 1MB - 消息最大大小
-    static constexpr std::size_t MAX_FRAME_SIZE = 64 * 1024;          // 64KB - 帧最大大小
-    static constexpr std::size_t MAX_READ_BUFFER_SIZE = 1024 * 1024;  // 1MB - 读取缓冲区最大
-    static constexpr std::size_t MAX_WRITE_QUEUE_SIZE = 1000;         // 最大待发送消息数
+    // 安全限制配置 - 复用 HTTP 模块的安全限制标准 (10MB)
+    static constexpr std::size_t MAX_MESSAGE_SIZE =
+      10 * 1024 * 1024;  // 10MB - 消息最大大小 (与 HTTP 请求体一致)
+    static constexpr std::size_t MAX_FRAME_SIZE =
+      10 * 1024 * 1024;  // 10MB - 帧最大大小 (允许完整消息的单帧传输)
+    static constexpr std::size_t MAX_READ_BUFFER_SIZE = 10 * 1024 * 1024;  // 10MB - 读取缓冲区最大
+    static constexpr std::size_t MAX_WRITE_QUEUE_SIZE = 1000;              // 最大待发送消息数
 
     // 超时配置
     static constexpr std::chrono::seconds READ_TIMEOUT{30};   // 读取超时
