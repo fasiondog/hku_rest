@@ -350,8 +350,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         HKU_ERROR("Router is null, cannot process request");
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
-        context->res.body() =
-          R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
+        context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error"})";
         context->res.prepare_payload();
         co_return;
     }
@@ -401,9 +400,14 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     } catch (std::exception& e) {
         // 异常时也要取消定时器，防止定时器回调访问已销毁的对象
         context->timer.cancel();
+        
+        // 记录详细错误到日志（内部可见）
+        HKU_ERROR("Handler exception: {}", e.what());
+        
+        // 返回通用错误消息给客户端（不泄露内部细节）
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
-        context->res.body() = fmt::format(R"({{"ret":500,"errmsg":"{}"}})", e.what());
+        context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error"})";
         context->res.prepare_payload();
     }
 }
