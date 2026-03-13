@@ -1,8 +1,8 @@
 /*
- *  Copyright(C) 2021 hikyuu.org
+ *  Copyright (c) 2026 hikyuu.org
  *
- *  Create on: 2021-02-28
- *     Author: fasiondog
+ *  Created on: 2026-03-13
+ *      Author: fasiondog
  */
 
 #include <csignal>
@@ -10,8 +10,12 @@
 #include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
 
-#if defined(_WIN32)
+#if HKU_OS_WINDOWS
 #include <Windows.h>
+#endif
+
+#if !HKU_OS_WINDOWS
+#include <sys/stat.h>
 #endif
 
 // Boost.beast 相关头文件
@@ -126,7 +130,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
     while (expected < HttpServer::MAX_CONNECTIONS) {
         if (HttpServer::ms_active_connections.compare_exchange_weak(
               expected, expected + 1,
-              std::memory_order_acq_rel,  // 成功时使用 acquire-release
+              std::memory_order_acq_rel,     // 成功时使用 acquire-release
               std::memory_order_acquire)) {  // 失败时使用 acquire
             break;
         }
@@ -393,11 +397,41 @@ void Connection::close() {
     beast::error_code ec;
 
     if (m_ssl_stream) {
-        // SSL shutdown
-        m_ssl_stream->async_shutdown([&ec](beast::error_code shutdown_ec) { ec = shutdown_ec; });
+        // SSL shutdown - 使用同步方式确保关闭完成
+        try {
+            // 首先尝试优雅关闭（带超时保护）
+            auto close_timeout = std::chrono::seconds(2);
+            bool shutdown_complete = false;
 
-        // TCP shutdown (through SSL stream)
-        m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_send, ec);
+            // 启动异步关闭
+            m_ssl_stream->async_shutdown([&shutdown_complete, &ec](beast::error_code shutdown_ec) {
+                ec = shutdown_ec;
+                shutdown_complete = true;
+            });
+
+            // 等待异步操作完成（带超时）
+            auto start = std::chrono::steady_clock::now();
+            while (!shutdown_complete) {
+                auto elapsed = std::chrono::steady_clock::now() - start;
+                if (elapsed > close_timeout) {
+                    HKU_WARN("SSL shutdown timeout, forcing close");
+                    break;
+                }
+                // 短暂休眠，让出 CPU 时间片
+                std::this_thread::yield();
+            }
+
+            // TCP shutdown (through SSL stream)
+            m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_send, ec);
+        } catch (const std::exception& e) {
+            HKU_ERROR("SSL shutdown exception: {}", e.what());
+            // 异常时强制关闭底层 TCP 连接
+            try {
+                m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_both, ec);
+            } catch (...) {
+                // 忽略二次异常
+            }
+        }
     } else {
         // 普通 TCP shutdown
         m_socket.shutdown(tcp::socket::shutdown_send, ec);
@@ -437,12 +471,79 @@ void HttpServer::configureSsl() {
     HKU_CHECK(existFile(ms_ssl_config.ca_key_file), "Not exist ca file: {}",
               ms_ssl_config.ca_key_file);
 
-    // 创建 SSL 上下文
+    // 检查证书文件权限（仅类 Unix 系统）
+#if !HKU_OS_WINDOWS
+    struct stat st;
+    if (stat(ms_ssl_config.ca_key_file.c_str(), &st) == 0) {
+        // 检查文件权限是否为 600（-rw-------）或更严格
+        mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+        if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+            HKU_WARN(
+              "Certificate file '{}' has insecure permissions: {:o}. "
+              "Recommended: 600 (-rw-------)",
+              ms_ssl_config.ca_key_file, perms);
+        }
+
+        // 如果是私钥文件，检查应该更严格
+        if (ms_ssl_config.ca_key_file.find(".key") != std::string::npos ||
+            ms_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
+            if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+                HKU_ERROR(
+                  "Private key file '{}' has world/group readable permissions! "
+                  "This is a security risk. Please set permissions to 600",
+                  ms_ssl_config.ca_key_file);
+                throw std::runtime_error("Insecure private key file permissions");
+            }
+        }
+    } else {
+        HKU_WARN("Failed to stat certificate file: {}", ms_ssl_config.ca_key_file);
+    }
+#else
+    // Windows 系统：检查文件是否存在即可，Windows 使用 ACL 而非 POSIX 权限
+    HKU_DEBUG("Running on Windows, skipping POSIX permission check for '{}'",
+              ms_ssl_config.ca_key_file);
+#endif
+
+    // 创建 SSL 上下文（使用 TLS 1.2）
     ms_ssl_context = new ssl::context(ssl::context::tlsv12_server);
 
-    // 设置密码套件
+    // 设置安全选项 - 禁用不安全的协议版本和特性
+    ms_ssl_context->set_options(
+      ssl::context::default_workarounds |  // OpenSSL 工作区
+      ssl::context::no_sslv2 |             // 禁用 SSLv2（已废弃）
+      ssl::context::no_sslv3 |             // 禁用 SSLv3（POODLE 漏洞）
+      ssl::context::no_tlsv1 |             // 禁用 TLS 1.0（BEAST 攻击）
+      ssl::context::no_tlsv1_1 |           // 禁用 TLS 1.1（弱加密）
+      ssl::context::single_dh_use          // 每次握手使用新的 DH 参数，防止 Logjam 攻击
+    );
+
+    // 设置密码套件（强加密算法）
+    // TLS 1.2 密码套件 - 按优先级排序
     SSL_CTX_set_cipher_list(ms_ssl_context->native_handle(),
-                            "ECDHE-RSA-AES256-GCM-SHA384:ECDHE-RSA-AES128-GCM-SHA256");
+                            // GCM 模式（认证加密，优先使用）
+                            "ECDHE-RSA-AES256-GCM-SHA384:"
+                            "ECDHE-RSA-AES128-GCM-SHA256:"
+                            // CBC 模式（兼容性备用）
+                            "ECDHE-RSA-AES256-SHA384:"
+                            "ECDHE-RSA-AES128-SHA256:"
+                            // 额外的安全套件
+                            "ECDHE-RSA-CHACHA20-POLY1305-SHA256:"
+                            "DHE-RSA-AES256-GCM-SHA384:"
+                            "DHE-RSA-AES128-GCM-SHA256");
+
+// TLS 1.3 密码套件（如果 OpenSSL 版本支持）
+#if OPENSSL_VERSION_NUMBER >= 0x10101000L
+    SSL_CTX_set_ciphersuites(ms_ssl_context->native_handle(),
+                             "TLS_AES_256_GCM_SHA384:"
+                             "TLS_CHACHA20_POLY1305_SHA256:"
+                             "TLS_AES_128_GCM_SHA256");
+#endif
+
+// 启用椭圆曲线密钥交换（ECDH）- 自动选择最佳曲线
+// 现代 OpenSSL 版本会自动选择安全的椭圆曲线参数
+#if OPENSSL_VERSION_NUMBER >= 0x10002000L
+    SSL_CTX_set_ecdh_auto(ms_ssl_context->native_handle(), 1);
+#endif
 
     // 加载证书和私钥
     ms_ssl_context->use_certificate_chain_file(ms_ssl_config.ca_key_file);

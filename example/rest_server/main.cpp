@@ -72,7 +72,7 @@ int main(int argc, char* argv[]) {
 
         HKU_INFO("start server ... You can press Ctrl-C stop");
         HKU_INFO("HTTP Server started on http://0.0.0.0:8080");
-        HKU_INFO("Test with: curl http://localhost:8080/api/hello");
+        HKU_INFO("Test with: curl http://localhost:8080/hello");
 
         server.start();
         server.loop();

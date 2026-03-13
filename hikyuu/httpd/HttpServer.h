@@ -1,8 +1,8 @@
 /*
- *  Copyright(C) 2021 hikyuu.org
+ *  Copyright (c) 2026 hikyuu.org
  *
- *  Create on: 2021-02-28
- *     Author: fasiondog
+ *  Created on: 2026-03-13
+ *      Author: fasiondog
  */
 
 #pragma once
@@ -71,13 +71,15 @@ private:
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
-                                              net::io_context& io_ctx, ssl::context* ssl_ctx = nullptr);
+                                              net::io_context& io_ctx,
+                                              ssl::context* ssl_ctx = nullptr);
     ~Connection();
 
     void start();
 
 private:
-    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx);
+    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx,
+               ssl::context* ssl_ctx);
 
     // 读取循环（根据 m_ssl_stream 是否为 nullptr 选择不同路径）
     net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
@@ -96,10 +98,10 @@ private:
 
     tcp::socket m_socket;
     Router* m_router;
-    
+
     // SSL 流（仅在 SSL 模式下初始化，通过是否为 nullptr 判断连接类型）
     std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
-    
+
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
