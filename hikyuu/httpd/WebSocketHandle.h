@@ -57,10 +57,15 @@ struct WebSocketContext {
     static constexpr std::chrono::seconds PING_INTERVAL{60};  // Ping 间隔
     static constexpr std::chrono::seconds PING_TIMEOUT{10};   // Ping 响应超时
 
-    WebSocketContext(net::io_context& io_ctx) : buffer(MAX_READ_BUFFER_SIZE), timer(io_ctx) {}
+    WebSocketContext(net::io_context& io_ctx) : buffer(MAX_READ_BUFFER_SIZE), timer(io_ctx) {
+        // 设置缓冲区大小限制，防止内存耗尽攻击
+        buffer.max_size(MAX_READ_BUFFER_SIZE);
+    }
 
-    WebSocketContext(const net::any_io_executor& exec)
-    : buffer(MAX_READ_BUFFER_SIZE), timer(exec) {}
+    WebSocketContext(const net::any_io_executor& exec) : buffer(MAX_READ_BUFFER_SIZE), timer(exec) {
+        // 设置缓冲区大小限制，防止内存耗尽攻击
+        buffer.max_size(MAX_READ_BUFFER_SIZE);
+    }
 };
 /**
  * WebSocket Handle 基类 - 用户继承此类实现业务逻辑
@@ -153,6 +158,32 @@ protected:
      */
     net::awaitable<void> close(ws::close_code code = ws::close_code::normal,
                                std::string_view reason = "");
+
+    /**
+     * @brief 配置 WebSocket 安全选项
+     *
+     * 必须在 websocket::stream 创建后立即调用，设置以下安全限制:
+     * - 消息最大大小：10MB (与 HTTP 请求体限制一致)
+     * - 帧最大大小：10MB
+     * - 自动 Fragmentation: 禁用 (强制应用层控制分片)
+     *
+     * @tparam StreamType websocket::stream 类型
+     * @param ws WebSocket stream 引用
+     */
+    template <typename StreamType>
+    static void configureWebSocketSecurity(StreamType& ws) {
+        // 设置消息最大大小 (防止攻击者通过超大消息消耗内存)
+        ws.read_message_max(WebSocketContext::MAX_MESSAGE_SIZE);
+
+        // 设置帧最大大小 (允许完整消息的单帧传输)
+        ws.write_message_max(WebSocketContext::MAX_FRAME_SIZE);
+
+        // 禁用自动 Fragmentation，由应用层控制分片策略
+        ws.auto_fragment(false);
+
+        HKU_DEBUG("WebSocket security configured: max_message_size={}, max_frame_size={}",
+                  WebSocketContext::MAX_MESSAGE_SIZE, WebSocketContext::MAX_FRAME_SIZE);
+    }
 
 protected:
     void* m_ws_context{nullptr};  // WebSocketContext 指针
