@@ -277,10 +277,9 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             } catch (const beast::system_error& e) {
                 // 读取失败时也要取消定时器，防止定时器回调访问已销毁的 session
                 session->timer.cancel();
-                
+
                 // 判断是否为正常断开
-                if (e.code() == http::error::end_of_stream || 
-                    e.code() == net::error::eof ||
+                if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
                     e.code() == beast::errc::connection_reset) {
                     HKU_DEBUG("Client disconnected during read: {}", e.code().message());
                 } else {
@@ -343,8 +342,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
-    HKU_INFO("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target,
-             (void*)m_router, m_ssl_stream ? "true" : "false");
+    HKU_TRACE("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target,
+              (void*)m_router, m_ssl_stream ? "true" : "false");
 
     // 安全检查 router 是否为空
     if (!m_router) {
@@ -583,10 +582,12 @@ void HttpServer::configureSsl() {
                              "TLS_AES_128_GCM_SHA256");
 #endif
 
-// 启用椭圆曲线密钥交换（ECDH）- 自动选择最佳曲线
+// 启用椭圆曲线密钥交换 (ECDH) - 自动选择最佳曲线
 // 现代 OpenSSL 版本会自动选择安全的椭圆曲线参数
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
-    SSL_CTX_set_ecdh_auto(ms_ssl_context->native_handle(), 1);
+    // ECDH auto is deprecated in newer OpenSSL versions, but we keep it for compatibility
+    // Return value is intentionally ignored as it's always successful on modern systems
+    (void)SSL_CTX_set_ecdh_auto(ms_ssl_context->native_handle(), 1);
 #endif
 
     // 加载证书和私钥
@@ -623,7 +624,7 @@ void HttpServer::configureSsl() {
           unsigned int i = 0;
           while (i < inlen) {
               unsigned char protocol_len = in[i];
-              
+
               // 安全检查：防止越界访问
               if (protocol_len == 0 || i + protocol_len > inlen) {
                   return SSL_TLSEXT_ERR_NOACK;
@@ -748,7 +749,8 @@ net::awaitable<void> HttpServer::doAccept() {
         ms_active_connections.fetch_add(1, std::memory_order_relaxed);
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
-        auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
+        auto connection =
+          Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
         connection->start();
     }
 
@@ -819,9 +821,9 @@ void HttpServer::stop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             wait_count++;
         }
-        
+
         if (ms_active_connections.load(std::memory_order_acquire) > 0) {
-            HKU_WARN("Stopping with {} active connections", 
+            HKU_WARN("Stopping with {} active connections",
                      ms_active_connections.load(std::memory_order_acquire));
         }
 
@@ -864,13 +866,12 @@ void HttpServer::registerHttpHandle(const std::string& method, const std::string
     ms_router.registerHandler(method, path, handler);
 }
 
-void HttpServer::registerHttpHandle(const char* method, const char* path, 
+void HttpServer::registerHttpHandle(const char* method, const char* path,
                                     HttpHandleFactory handler) {
     registerHttpHandle(std::string(method), std::string(path), std::move(handler));
 }
 
-void HttpServer::registerWsHandle(const std::string& path, 
-                                  WsHandleFactory handler) {
+void HttpServer::registerWsHandle(const std::string& path, WsHandleFactory handler) {
     ms_ws_router.registerHandler("WS", path, std::move(handler));
 }
 
