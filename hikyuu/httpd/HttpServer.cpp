@@ -78,7 +78,7 @@ static UINT g_old_cp;
 // ============================================================================
 
 /**
- * @brief 为 HTTP 响应设置安全响应头
+ * @brief 为 HTTP 响应设置安全响应头和 CORS 头
  *
  * 包含以下安全头:
  * - Strict-Transport-Security (HSTS): 强制 HTTPS
@@ -86,17 +86,67 @@ static UINT g_old_cp;
  * - X-Frame-Options: 防止点击劫持攻击
  * - X-XSS-Protection: XSS 防护
  * - Referrer-Policy: 控制 Referer 信息泄露
+ * - CORS 头 (如果启用)
  *
  * @tparam ResponseType 响应类型 (http::response 或其引用)
  * @param response HTTP 响应对象
+ * @param cors_config CORS 配置对象 (可选)
  */
 template <typename ResponseType>
-static void setSecurityHeaders(ResponseType& response) {
+static void setResponseHeaders(ResponseType& response, const CorsConfig* cors_config = nullptr) {
+    // 设置安全响应头
     response.set(http::field::strict_transport_security, "max-age=31536000; includeSubDomains");
     response.set(http::field::x_content_type_options, "nosniff");
     response.set(http::field::x_frame_options, "DENY");
     response.set(http::field::x_xss_protection, "1; mode=block");
     response.set(http::field::referrer_policy, "no-referrer-when-downgrade");
+
+    // 设置 CORS 头 (如果提供了配置且已启用)
+    if (cors_config && cors_config->enabled) {
+        setCorsHeaders(response, *cors_config);
+    }
+}
+
+/**
+ * @brief 为 HTTP 响应设置 CORS 头
+ *
+ * @tparam ResponseType 响应类型
+ * @param response HTTP 响应对象
+ * @param config CORS 配置对象
+ */
+template <typename ResponseType>
+static void setCorsHeaders(ResponseType& response, const CorsConfig& config) {
+    if (!config.enabled) {
+        return;
+    }
+
+    // Access-Control-Allow-Origin
+    response.set(http::field::access_control_allow_origin, config.allow_origin);
+
+    // Access-Control-Allow-Methods
+    if (!config.allow_methods.empty()) {
+        response.set(http::field::access_control_allow_methods, config.allow_methods);
+    }
+
+    // Access-Control-Allow-Headers
+    if (!config.allow_headers.empty()) {
+        response.set(http::field::access_control_allow_headers, config.allow_headers);
+    }
+
+    // Access-Control-Expose-Headers
+    if (!config.expose_headers.empty()) {
+        response.set(http::field::access_control_expose_headers, config.expose_headers);
+    }
+
+    // Access-Control-Max-Age (预检请求缓存时间)
+    if (!config.max_age.empty()) {
+        response.set(http::field::access_control_max_age, config.max_age);
+    }
+
+    // Access-Control-Allow-Credentials
+    if (config.allow_credentials) {
+        response.set(http::field::access_control_allow_credentials, "true");
+    }
 }
 
 // ============================================================================
@@ -379,13 +429,26 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error"})";
         context->res.prepare_payload();
 
-        // 设置安全响应头
-        setSecurityHeaders(context->res);
+        // 设置响应头 (安全头 + CORS)
+        setResponseHeaders(context->res, HttpServer::getCorsConfig());
 
         co_return;
     }
 
     auto handler = m_router->findHandler(method, target);
+
+    // 处理 CORS 预检请求 (OPTIONS)
+    if (method == "OPTIONS" && HttpServer::getCorsConfig() &&
+        HttpServer::getCorsConfig()->enabled) {
+        HKU_DEBUG("Handling CORS preflight request for: {}", target);
+        context->res.result(http::status::no_content);
+
+        // 设置 CORS 响应头
+        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+
+        context->res.prepare_payload();
+        co_return;
+    }
 
     if (!handler) {
         // 未找到路由，返回 404
@@ -395,8 +458,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.body() = R"({"ret":404,"errmsg":"Not Found"})";
         context->res.prepare_payload();
 
-        // 设置安全响应头
-        setSecurityHeaders(context->res);
+        // 设置响应头 (安全头 + CORS)
+        setResponseHeaders(context->res, HttpServer::getCorsConfig());
 
         co_return;
     }
@@ -420,8 +483,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
             }
         });
 
-        // 统一添加安全响应头 (在 handler 执行前设置，确保所有响应都包含)
-        setSecurityHeaders(context->res);
+        // 统一添加响应头 (安全头 + CORS，在 handler 执行前设置，确保所有响应都包含)
+        setResponseHeaders(context->res, HttpServer::getCorsConfig());
 
         // 执行业务处理（绑定取消令牌到协程）
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
@@ -548,6 +611,12 @@ HttpServer::~HttpServer() {}
 
 void HttpServer::set_io_thread_count(size_t thread_count) {
     ms_io_thread_count = thread_count;  // 修改为静态成员变量
+}
+
+void HttpServer::setCors(const CorsConfig& config) {
+    m_cors_config = config;
+    HKU_INFO("CORS configured: enabled={}, origin={}, methods={}", config.enabled,
+             config.allow_origin, config.allow_methods);
 }
 
 void HttpServer::configureSsl() {

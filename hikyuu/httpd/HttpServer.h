@@ -126,6 +126,64 @@ struct SslConfig {
 };
 
 /**
+ * @brief CORS (跨域资源共享) 配置结构
+ */
+struct CorsConfig {
+    bool enabled{false};                                           // 是否启用 CORS
+    std::string allow_origin{"*"};                                 // 允许的源，默认允许所有
+    std::string allow_methods{"GET, POST, PUT, DELETE, OPTIONS"};  // 允许的方法
+    std::string allow_headers{"Content-Type, Authorization, X-Requested-With"};  // 允许的头
+    std::string expose_headers{""};                                              // 暴露给客户端的头
+    std::string max_age{"86400"};   // 预检请求缓存时间 (秒)
+    bool allow_credentials{false};  // 是否允许携带凭证
+
+    CorsConfig() = default;
+
+    /**
+     * @brief 快速配置允许所有源 (开发环境使用)
+     * @param methods 允许的方法列表
+     * @param headers 允许的头列表
+     * @return CorsConfig 引用
+     */
+    static CorsConfig allowAll(
+      const std::string& methods = "GET, POST, PUT, DELETE, OPTIONS",
+      const std::string& headers = "Content-Type, Authorization, X-Requested-With") {
+        CorsConfig config;
+        config.enabled = true;
+        config.allow_origin = "*";
+        config.allow_methods = methods;
+        config.allow_headers = headers;
+        config.max_age = "86400";
+        return config;
+    }
+
+    /**
+     * @brief 配置指定源的 CORS (生产环境推荐)
+     * @param origin 允许的源 (如 https://example.com)
+     * @param methods 允许的方法列表
+     * @param headers 允许的头列表
+     * @param credentials 是否允许凭证
+     * @return CorsConfig 引用
+     */
+    static CorsConfig allowOrigin(const std::string& origin,
+                                  const std::string& methods = "GET, POST, OPTIONS",
+                                  const std::string& headers = "Content-Type",
+                                  bool credentials = false) {
+        CorsConfig config;
+        config.enabled = true;
+        config.allow_origin = origin;
+        config.allow_methods = methods;
+        config.allow_headers = headers;
+        config.allow_credentials = credentials;
+        if (credentials) {
+            config.expose_headers = "Authorization, Content-Length, X-Requested-With";
+        }
+        config.max_age = "86400";
+        return config;
+    }
+};
+
+/**
  * HTTP服务器 - 支持协程和 TLS/SSL
  *
  * 增强版本：同时支持 HTTP/HTTPS 和 WebSocket 协议
@@ -169,6 +227,27 @@ public:
      * @param body 返回消息
      */
     static void set_error_msg(int16_t http_status, const std::string& body);
+
+    /**
+     * @brief 配置 CORS (跨域资源共享)
+     * @param config CORS 配置对象
+     *
+     * 示例:
+     *   // 允许所有源 (开发环境)
+     *   server->setCors(CorsConfig::allowAll());
+     *
+     *   // 允许指定源 (生产环境)
+     *   server->setCors(CorsConfig::allowOrigin("https://example.com"));
+     */
+    void setCors(const CorsConfig& config);
+
+    /**
+     * @brief 获取当前服务器实例的 CORS 配置
+     * @return CorsConfig 指针，如果未启用则返回 nullptr
+     */
+    static CorsConfig* getCorsConfig() {
+        return ms_server ? &ms_server->m_cors_config : nullptr;
+    }
 
     /**
      * @brief 注册 HTTP Handle
@@ -278,6 +357,7 @@ private:
     std::string m_host;
     uint16_t m_port{80};
     static size_t ms_io_thread_count;  // 改为静态成员变量
+    CorsConfig m_cors_config;          // CORS 配置
 
     // 静态成员变量在 HttpServer.cpp 中定义
     static HttpServer* ms_server;

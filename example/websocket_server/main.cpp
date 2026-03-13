@@ -71,6 +71,13 @@ int main(int argc, char* argv[]) {
         // 配置 SSL/TLS (同时作用于 HTTP 和 WebSocket)
         // server->setTls("/path/to/cert.pem", "password", 0);
 
+        // 配置 CORS (跨域资源共享)
+        // 示例 1: 允许所有源 (开发环境)
+        server->setCors(CorsConfig::allowAll());
+
+        // 示例 2: 允许指定源 (生产环境，取消注释使用)
+        // server->setCors(CorsConfig::allowOrigin("https://example.com"));
+
         std::cout << std::endl;
         std::cout << "Endpoints:" << std::endl;
         std::cout << "  HTTP REST API:  http://0.0.0.0:8765/api/hello" << std::endl;
