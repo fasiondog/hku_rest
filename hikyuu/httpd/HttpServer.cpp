@@ -60,6 +60,9 @@ size_t HttpServer::ms_io_thread_count = 0;  // 默认使用硬件并发数
 // 全局连接池管理初始化
 std::atomic<int> HttpServer::ms_active_connections{0};
 
+// 信号处理防重入标志
+static std::atomic<bool> g_signal_handling{false};
+
 #if defined(_WIN32)
 static UINT g_old_cp;
 #endif
@@ -244,20 +247,40 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
-            session->timer.async_wait([session](beast::error_code ec) {
+            // 使用 weak_ptr 防止定时器回调访问已销毁的 session
+            auto weak_session = std::weak_ptr<BeastContext>(session);
+            session->timer.async_wait([weak_sess = std::move(weak_session)](beast::error_code ec) {
                 if (!ec || ec == boost::asio::error::operation_aborted) {
-                    // 主动取消正在进行的异步操作
-                    session->cancel_signal.emit(net::cancellation_type::all);
+                    // 尝试锁定 shared_ptr
+                    if (auto sess = weak_sess.lock()) {
+                        // 主动取消正在进行的异步操作
+                        sess->cancel_signal.emit(net::cancellation_type::all);
+                    }
                 }
             });
 
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
-            if (m_ssl_stream) {
-                co_await http::async_read(*m_ssl_stream, session->buffer, parser,
-                                          net::use_awaitable);
-            } else {
-                co_await http::async_read(session->socket, session->buffer, parser,
-                                          net::use_awaitable);
+            try {
+                if (m_ssl_stream) {
+                    co_await http::async_read(*m_ssl_stream, session->buffer, parser,
+                                              net::use_awaitable);
+                } else {
+                    co_await http::async_read(session->socket, session->buffer, parser,
+                                              net::use_awaitable);
+                }
+            } catch (const beast::system_error& e) {
+                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的 session
+                session->timer.cancel();
+                
+                // 判断是否为正常断开
+                if (e.code() == http::error::end_of_stream || 
+                    e.code() == net::error::eof ||
+                    e.code() == beast::errc::connection_reset) {
+                    HKU_DEBUG("Client disconnected during read: {}", e.code().message());
+                } else {
+                    HKU_ERROR("Read error: {}", e.what());
+                }
+                throw;  // 重新抛出异常，让外层处理
             }
 
             // 取消定时器（读取成功）
@@ -347,10 +370,15 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
 
         // 启动超时定时器，到期时主动取消业务处理
-        context->timer.async_wait([context](beast::error_code ec) {
+        // 使用 weak_ptr 防止定时器回调访问已销毁的 context
+        auto weak_context = std::weak_ptr<BeastContext>(context);
+        context->timer.async_wait([weak_ctx = std::move(weak_context)](beast::error_code ec) {
             if (!ec) {
-                // 超时时主动取消正在进行的业务处理
-                context->cancel_signal.emit(net::cancellation_type::all);
+                // 尝试锁定 shared_ptr
+                if (auto ctx = weak_ctx.lock()) {
+                    // 超时时主动取消正在进行的业务处理
+                    ctx->cancel_signal.emit(net::cancellation_type::all);
+                }
             }
         });
 
@@ -366,6 +394,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.keep_alive(true);  // 默认保持连接
 
     } catch (std::exception& e) {
+        // 异常时也要取消定时器，防止定时器回调访问已销毁的对象
+        context->timer.cancel();
         context->res.result(http::status::internal_server_error);
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = fmt::format(R"({{"ret":500,"errmsg":"{}"}})", e.what());
@@ -389,6 +419,8 @@ net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> con
         context->timer.cancel();
     } catch (const beast::system_error& e) {
         HKU_ERROR("Write response error: {}", e.what());
+        // 写入失败时也要取消定时器，防止定时器回调访问已销毁的对象
+        context->timer.cancel();
         throw;
     }
 }
@@ -448,6 +480,12 @@ void HttpServer::http_exit() {
 }
 
 void HttpServer::signal_handler(int signal) {
+    // 防重入保护：确保信号处理函数只执行一次
+    if (g_signal_handling.exchange(true)) {
+        // 已经在处理中，直接返回
+        return;
+    }
+
     if (signal == SIGINT || signal == SIGTERM) {
         http_exit();
     }
@@ -579,7 +617,9 @@ void HttpServer::configureSsl() {
           unsigned int i = 0;
           while (i < inlen) {
               unsigned char protocol_len = in[i];
-              if (i + protocol_len >= inlen) {
+              
+              // 安全检查：防止越界访问
+              if (protocol_len == 0 || i + protocol_len > inlen) {
                   return SSL_TLSEXT_ERR_NOACK;
               }
 
@@ -751,6 +791,7 @@ void HttpServer::stop() {
     if (ms_running.load()) {
         ms_running.store(false);
 
+        // 1. 先关闭 acceptor，停止接受新连接
         if (ms_acceptor) {
             ms_acceptor->cancel();
             ms_acceptor->close();
@@ -758,17 +799,36 @@ void HttpServer::stop() {
             ms_acceptor = nullptr;
         }
 
+        // 2. 等待所有活动连接完成（通过 ms_active_connections 判断）
+        int wait_count = 0;
+        while (ms_active_connections.load(std::memory_order_acquire) > 0 && wait_count < 100) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            wait_count++;
+        }
+        
+        if (ms_active_connections.load(std::memory_order_acquire) > 0) {
+            HKU_WARN("Stopping with {} active connections", 
+                     ms_active_connections.load(std::memory_order_acquire));
+        }
+
+        // 3. 停止 io_context，取消所有待处理操作
+        if (ms_io_context) {
+            ms_io_context->stop();
+        }
+
+        // 4. 清理 SSL 上下文
         if (ms_ssl_context) {
             delete ms_ssl_context;
             ms_ssl_context = nullptr;
         }
 
+        // 5. 最后清理 io_context 对象
         if (ms_io_context) {
-            ms_io_context->stop();
             delete ms_io_context;
             ms_io_context = nullptr;
         }
 
+        // 6. 清理 server 指针
         if (ms_server) {
             CLS_INFO("Quit Http server");
             ms_server = nullptr;
