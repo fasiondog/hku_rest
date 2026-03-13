@@ -93,20 +93,30 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
 }
 
 // ============================================================================
-// Connection 实现
+// Connection 实现 - 统一的 HTTP/HTTPS 连接处理器
 // ============================================================================
 
 std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* router,
-                                               net::io_context& io_ctx) {
-    return std::shared_ptr<Connection>(new Connection(std::move(socket), router, io_ctx));
+                                               net::io_context& io_ctx, ssl::context* ssl_ctx) {
+    if (ssl_ctx) {
+        return std::shared_ptr<Connection>(new Connection(std::move(socket), router, io_ctx, ssl_ctx));
+    } else {
+        return std::shared_ptr<Connection>(new Connection(std::move(socket), router, io_ctx, nullptr));
+    }
 }
 
-Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx)
+Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx)
 : m_socket(std::move(socket)),
   m_router(router),
   m_io_ctx(io_ctx),
   m_connection_start(std::chrono::steady_clock::now()) {
-    // HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
+    
+    // 如果提供了 SSL 上下文，初始化 SSL 流
+    if (ssl_ctx) {
+        m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
+    }
+    
+    // HKU_INFO("Connection::start: m_router={}, this={}, is_ssl={}", (void*)m_router, (void*)this, IsSsl());
 
     // 全局连接池管理：检查并增加连接计数
     int expected = HttpServer::ms_active_connections.load(std::memory_order_relaxed);
@@ -141,9 +151,36 @@ void Connection::start() {
     net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
 }
 
+net::awaitable<bool> Connection::sslHandshake() {
+    if (!m_ssl_stream) {
+        co_return true;  // 非SSL连接直接成功
+    }
+    
+    try {
+        co_await m_ssl_stream->async_handshake(ssl::stream_base::server, net::use_awaitable);
+        HKU_DEBUG("SSL handshake successful");
+        co_return true;
+    } catch (const beast::system_error& e) {
+        HKU_ERROR("SSL handshake failed: {}", e.what());
+        co_return false;
+    } catch (const std::exception& e) {
+        HKU_ERROR("SSL handshake exception: {}", e.what());
+        co_return false;
+    }
+}
+
 net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
     // TCP 连接级别的循环，管理多个 HTTP Session
     try {
+        // SSL 握手（如果是 HTTPS）
+        if (m_ssl_stream) {
+            bool success = co_await sslHandshake();
+            if (!success) {
+                close();
+                co_return;
+            }
+        }
+        
         // 增加连接计数
         if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_relaxed) >=
             HttpServer::MAX_CONNECTIONS) {
@@ -177,7 +214,9 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             }
 
             // 为每个 HTTP 请求创建独立的 Session
-            auto session = std::make_shared<BeastContext>(m_socket, m_io_ctx);
+            // 注意：SSL 模式下需要使用 SSL stream 的 next_layer() 作为 socket
+            auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
+            auto session = std::make_shared<BeastContext>(socket_ref, m_io_ctx);
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
 
@@ -197,8 +236,12 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 }
             });
 
-            // 异步读取 HTTP 请求
-            co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
+            // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+            if (m_ssl_stream) {
+                co_await http::async_read(*m_ssl_stream, session->buffer, parser, net::use_awaitable);
+            } else {
+                co_await http::async_read(session->socket, session->buffer, parser, net::use_awaitable);
+            }
 
             // 取消定时器（读取成功）
             session->timer.cancel();
@@ -254,261 +297,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
-    // 安全检查 router 是否为空
-    if (!m_router) {
-        HKU_ERROR("Router is null, cannot process request");
-        context->res.result(http::status::internal_server_error);
-        context->res.set(http::field::content_type, "application/json");
-        context->res.body() =
-          R"({"ret":500,"errmsg":"Internal Server Error: Router not initialized"})";
-        context->res.prepare_payload();
-        co_return;
-    }
-
-    auto handler = m_router->findHandler(method, target);
-
-    if (!handler) {
-        // 未找到路由，返回 404
-        context->res.result(http::status::not_found);
-        context->res.set(http::field::content_type, "application/json");
-        context->res.body() = R"({"ret":404,"errmsg":"Not Found"})";
-        context->res.prepare_payload();
-        co_return;
-    }
-
-    try {
-        // 设置业务处理超时保护（简化版本）
-        // 注意：先取消可能存在的旧定时器，再启动新定时器
-        context->timer.cancel();
-        context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
-
-        // 启动超时定时器，到期时主动取消业务处理
-        context->timer.async_wait([context](beast::error_code ec) {
-            if (!ec) {
-                // 超时时主动取消正在进行的业务处理
-                context->cancel_signal.emit(net::cancellation_type::all);
-            }
-        });
-
-        // 执行业务处理（绑定取消令牌到协程）
-        // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
-        co_await handler(context.get());
-
-        // 取消定时器（处理完成）
-        context->timer.cancel();
-
-        // 设置响应
-        context->res.version(context->req.version());
-        context->res.keep_alive(true);  // 默认保持连接
-
-    } catch (beast::system_error const& e) {
-        if (e.code() == net::error::timed_out) {
-            HKU_WARN("Request processing timeout from {}:{}", context->client_ip,
-                     context->client_port);
-            context->res.result(http::status::gateway_timeout);
-            context->res.set(http::field::content_type, "application/json");
-            context->res.body() = R"({"ret":504,"errmsg":"Request Timeout"})";
-            context->res.prepare_payload();
-            co_return;
-        }
-        context->res.result(http::status::internal_server_error);
-        context->res.set(http::field::content_type, "application/json");
-        context->res.body() = fmt::format(R"({{"ret":500,"errmsg":"{}"}})", e.what());
-        context->res.prepare_payload();
-    } catch (std::exception& e) {
-        context->res.result(http::status::internal_server_error);
-        context->res.set(http::field::content_type, "application/json");
-        context->res.body() = fmt::format(R"({{"ret":500,"errmsg":"{}"}})", e.what());
-        context->res.prepare_payload();
-    }
-}
-
-net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
-    try {
-        // 设置写入超时保护
-        context->timer.expires_after(BeastContext::WRITE_TIMEOUT);
-
-        // 异步写入 HTTP 响应
-        co_await http::async_write(context->socket, context->res, net::use_awaitable);
-
-        // 取消定时器（写入成功）
-        context->timer.cancel();
-    } catch (const beast::system_error& e) {
-        HKU_ERROR("Write response error: {}", e.what());
-        throw;
-    }
-}
-
-void Connection::close() {
-    beast::error_code ec;
-    m_socket.shutdown(tcp::socket::shutdown_send, ec);
-}
-
-// ============================================================================
-// SslConnection 实现 - 使用协程（SSL/TLS）
-// ============================================================================
-
-std::shared_ptr<SslConnection> SslConnection::create(tcp::socket&& socket, Router* router,
-                                                     ssl::context& ssl_ctx,
-                                                     net::io_context& io_ctx) {
-    return std::shared_ptr<SslConnection>(
-      new SslConnection(std::move(socket), router, ssl_ctx, io_ctx));
-}
-
-SslConnection::SslConnection(tcp::socket&& socket, Router* router, ssl::context& ssl_ctx,
-                             net::io_context& io_ctx)
-: m_socket(std::move(socket)),
-  m_router(router),
-  m_ssl_stream(m_socket, ssl_ctx),
-  m_io_ctx(io_ctx),
-  m_connection_start(std::chrono::steady_clock::now()) {
-    HKU_ASSERT(m_router);
-
-    // 全局连接池管理：检查并增加连接计数
-    int expected = HttpServer::ms_active_connections.load(std::memory_order_relaxed);
-    while (expected < HttpServer::MAX_CONNECTIONS) {
-        if (HttpServer::ms_active_connections.compare_exchange_weak(expected, expected + 1,
-                                                                    std::memory_order_relaxed)) {
-            break;
-        }
-    }
-
-    if (expected >= HttpServer::MAX_CONNECTIONS) {
-        HKU_WARN("Global SSL connection limit reached ({}), rejecting connection",
-                 HttpServer::MAX_CONNECTIONS);
-        throw std::runtime_error("SSL Connection limit reached");
-    }
-
-    // 获取客户端地址
-    auto endpoint = m_ssl_stream.next_layer().remote_endpoint();
-    m_client_ip = endpoint.address().to_string();
-    m_client_port = endpoint.port();
-}
-
-SslConnection::~SslConnection() {
-    // 全局连接池管理：减少连接计数
-    HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
-}
-
-void SslConnection::start() {
-    // 使用 shared_from_this 确保 SslConnection 对象在协程执行期间不会被销毁
-    auto self = shared_from_this();
-    net::co_spawn(m_ssl_stream.next_layer().get_executor(), readLoop(self), net::detached);
-}
-
-net::awaitable<void> SslConnection::readLoop(std::shared_ptr<SslConnection> self) {
-    // SSL 握手
-    try {
-        co_await m_ssl_stream.async_handshake(ssl::stream_base::server, net::use_awaitable);
-        HKU_DEBUG("SSL handshake successful");
-    } catch (const beast::system_error& e) {
-        HKU_ERROR("SSL handshake failed: {}", e.what());
-        close();
-        co_return;
-    } catch (const std::exception& e) {
-        HKU_ERROR("SSL handshake exception: {}", e.what());
-        close();
-        co_return;
-    }
-
-    // SSL 握手成功后，进入 HTTP 会话循环
-    try {
-        while (true) {
-            // 检查 Keep-Alive 限制
-            if (++m_request_count > BeastContext::MAX_KEEPALIVE_REQUESTS) {
-                HKU_WARN(
-                  "SSL Keep-Alive limit reached ({} requests), closing connection from {}:{}",
-                  m_request_count, m_client_ip, m_client_port);
-                break;
-            }
-
-            // 检查连接最大存活时间
-            auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
-            if (elapsed > BeastContext::MAX_CONNECTION_AGE) {
-                HKU_WARN("SSL Connection age limit reached, closing from {}:{}", m_client_ip,
-                         m_client_port);
-                break;
-            }
-
-            // 为每个 HTTP 请求创建独立的 Session
-            auto session = std::make_shared<BeastContext>(m_ssl_stream.next_layer(), m_io_ctx);
-            session->client_ip = m_client_ip;
-            session->client_port = m_client_port;
-
-            // 配置 HTTP 解析器选项，防止超大请求和慢速攻击
-            http::request_parser<http::string_body> parser;
-            parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
-            parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
-
-            // 设置读取超时保护（带主动中断机制）
-            session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
-
-            // 启动超时定时器，到期时主动取消异步操作
-            bool timeout_occurred = false;
-            session->timer.async_wait([&timeout_occurred, &session](beast::error_code ec) {
-                if (!ec || ec == boost::asio::error::operation_aborted) {
-                    timeout_occurred = true;
-                    // 主动取消正在进行的异步操作
-                    session->cancel_signal.emit(net::cancellation_type::all);
-                }
-            });
-
-            // 读取一个完整的 HTTP 请求（通过 SSL 流）
-            co_await http::async_read(m_ssl_stream, session->buffer, parser, net::use_awaitable);
-
-            // 取消定时器（读取成功）
-            session->timer.cancel();
-
-            // 将解析后的请求移动到 session 中
-            session->req = parser.release();
-
-            // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
-            if (session->req.method_string() == "PRI") {
-                HKU_DEBUG("HTTP/2 connection attempt detected on HTTP/1.1 server");
-                // 拒绝 HTTP/2 连接，返回 400 或关闭连接
-                session->res.result(http::status::bad_request);
-                session->res.set(http::field::content_type, "text/plain");
-                session->res.body() = "This server only supports HTTP/1.1";
-                session->res.prepare_payload();
-                co_await writeResponse(session);
-                break;
-            }
-
-            // 请求读取完成后，处理该请求（调用 Handle）
-            co_await processHandle(session);
-
-            // 写入响应（通过 SSL 流）
-            co_await writeResponse(session);
-
-            // 检查是否需要保持连接
-            bool keep_alive = session->req.keep_alive();
-
-            if (!keep_alive) {
-                HKU_DEBUG("Closing SSL connection (not keep-alive)");
-                break;
-            }
-
-            HKU_DEBUG("Keeping SSL connection alive for next request");
-        }
-    } catch (const beast::system_error& e) {
-        if (e.code() == http::error::end_of_stream || e.code() == net::error::eof) {
-            HKU_DEBUG("Client disconnected: {}", e.code().message());
-        } else {
-            HKU_ERROR("SSL connection error: {}", e.what());
-        }
-    } catch (const std::exception& e) {
-        HKU_ERROR("Exception in SslConnection::readLoop: {}", e.what());
-    }
-
-    close();
-}
-
-net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> context) {
-    // 查找对应的处理器
-    auto method = std::string(context->req.method_string());
-    auto target = std::string(context->req.target());
-
-    HKU_INFO("SslConnection::processHandle: {} {}, m_router={}", method, target, (void*)m_router);
+    HKU_INFO("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target, (void*)m_router, m_ssl_stream ? "true" : "false");
 
     // 安全检查 router 是否为空
     if (!m_router) {
@@ -547,7 +336,8 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
             }
         });
 
-        // 执行业务处理
+        // 执行业务处理（绑定取消令牌到协程）
+        // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
         co_await handler(context.get());
 
         // 取消定时器（处理完成）
@@ -565,13 +355,17 @@ net::awaitable<void> SslConnection::processHandle(std::shared_ptr<BeastContext> 
     }
 }
 
-net::awaitable<void> SslConnection::writeResponse(std::shared_ptr<BeastContext> context) {
+net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
         // 设置写入超时保护
         context->timer.expires_after(BeastContext::WRITE_TIMEOUT);
 
-        // 异步写入 HTTP 响应（通过 SSL 流）
-        co_await http::async_write(m_ssl_stream, context->res, net::use_awaitable);
+        // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+        if (m_ssl_stream) {
+            co_await http::async_write(*m_ssl_stream, context->res, net::use_awaitable);
+        } else {
+            co_await http::async_write(context->socket, context->res, net::use_awaitable);
+        }
 
         // 取消定时器（写入成功）
         context->timer.cancel();
@@ -581,14 +375,19 @@ net::awaitable<void> SslConnection::writeResponse(std::shared_ptr<BeastContext> 
     }
 }
 
-void SslConnection::close() {
+void Connection::close() {
     beast::error_code ec;
 
-    // SSL shutdown
-    m_ssl_stream.async_shutdown([&ec](beast::error_code shutdown_ec) { ec = shutdown_ec; });
-
-    // TCP shutdown
-    m_ssl_stream.next_layer().shutdown(tcp::socket::shutdown_send, ec);
+    if (m_ssl_stream) {
+        // SSL shutdown
+        m_ssl_stream->async_shutdown([&ec](beast::error_code shutdown_ec) { ec = shutdown_ec; });
+        
+        // TCP shutdown (through SSL stream)
+        m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_send, ec);
+    } else {
+        // 普通 TCP shutdown
+        m_socket.shutdown(tcp::socket::shutdown_send, ec);
+    }
 }
 
 // ============================================================================
@@ -713,9 +512,9 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
             continue;
         }
 
-        // 为 SSL连接创建处理器并启动协程
+        // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
         auto connection =
-          SslConnection::create(std::move(socket), &ms_router, *ms_ssl_context, *ms_io_context);
+          Connection::create(std::move(socket), &ms_router, *ms_io_context, ms_ssl_context);
         connection->start();
     }
 
@@ -778,8 +577,8 @@ net::awaitable<void> HttpServer::doAccept() {
             continue;
         }
 
-        // 为新连接创建处理器并启动协程
-        auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context);
+        // 为新连接创建处理器并启动协程（非SSL模式）
+        auto connection = Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
         connection->start();
     }
 

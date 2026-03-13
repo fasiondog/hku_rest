@@ -66,25 +66,29 @@ private:
     std::vector<std::pair<RouteKey, HandlerFunc>> m_routes;
 };
 
-// HTTP 连接处理器 - 管理 TCP 连接（使用协程）
+// 连接处理器 - 管理 HTTP/HTTPS TCP 连接
+// 支持 SSL/TLS 和非 SSL 两种模式，通过 m_ssl_stream 是否为 nullptr 区分
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
-                                              net::io_context& io_ctx);
+                                              net::io_context& io_ctx, ssl::context* ssl_ctx = nullptr);
     ~Connection();
 
     void start();
 
 private:
-    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx);
+    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx);
 
-    // TCP 连接读取循环
+    // 读取循环（根据 m_ssl_stream 是否为 nullptr 选择不同路径）
     net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
+
+    // SSL 握手（仅当 m_ssl_stream != nullptr 时调用）
+    net::awaitable<bool> sslHandshake();
 
     // 处理请求（协程方式调用 Handle）
     net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
 
-    // 写入响应
+    // 写入响应（根据 m_ssl_stream 是否为 nullptr 选择不同方式）
     net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
 
     // 关闭连接
@@ -92,6 +96,10 @@ private:
 
     tcp::socket m_socket;
     Router* m_router;
+    
+    // SSL 流（仅在 SSL 模式下初始化，通过是否为 nullptr 判断连接类型）
+    std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
+    
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
@@ -112,45 +120,6 @@ struct SslConfig {
 
     SslConfig(const std::string& ca_file, const std::string& pwd = "", int mode = 0)
     : ca_key_file(ca_file), password(pwd), verify_mode(mode), enabled(true) {}
-};
-
-/**
- * SSL 连接处理器 - 管理 HTTPS TCP 连接
- */
-class SslConnection : public std::enable_shared_from_this<SslConnection> {
-public:
-    static std::shared_ptr<SslConnection> create(tcp::socket&& socket, Router* router,
-                                                 ssl::context& ssl_ctx, net::io_context& io_ctx);
-    ~SslConnection();
-
-    void start();
-
-private:
-    SslConnection(tcp::socket&& socket, Router* router, ssl::context& ssl_ctx,
-                  net::io_context& io_ctx);
-
-    // SSL 握手并进入会话循环
-    net::awaitable<void> readLoop(std::shared_ptr<SslConnection> self);
-
-    // 处理请求（协程方式调用 Handle）
-    net::awaitable<void> processHandle(std::shared_ptr<BeastContext> context);
-
-    // 写入响应（通过 SSL 流）
-    net::awaitable<void> writeResponse(std::shared_ptr<BeastContext> context);
-
-    // 关闭连接
-    void close();
-
-    tcp::socket m_socket;
-    Router* m_router;
-    ssl::stream<tcp::socket&> m_ssl_stream;
-    net::io_context& m_io_ctx;
-    std::string m_client_ip;
-    uint16_t m_client_port = 0;
-
-    // Keep-Alive 连接安全限制
-    int m_request_count = 0;                                   // 当前连接已处理请求数
-    std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
 };
 
 /**
