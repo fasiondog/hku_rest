@@ -463,6 +463,14 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
                 // 判断消息类型
                 bool is_text = m_ws_stream->got_text();
 
+                // ========== 增强的 WebSocket 消息验证 ==========
+                // 在传递给业务处理前进行严格验证
+                if (!validateWebSocketMessage(message, is_text)) {
+                    HKU_WARN("Invalid WebSocket message rejected from {}:{}", m_client_ip,
+                             m_client_port);
+                    continue;  // 跳过此消息，不传递给业务处理
+                }
+
                 // ========== 调用用户 Handle 的 onMessage ==========
                 if (active_handle) {
                     co_await active_handle->onMessage(message, is_text);
@@ -557,6 +565,111 @@ net::awaitable<void> WebSocketConnection::sendPing() {
     }
 
     co_return;
+}
+
+/**
+ * @brief WebSocket 消息验证 - 在传递给业务处理前进行严格验证
+ *
+ * 根据"WebSocket 消息输入验证规范"实施以下检查:
+ * 1. 检查消息非空
+ * 2. 验证文本消息的 UTF-8 编码合法性
+ * 3. 限制单条消息最大长度（复用 MAX_BODY_SIZE 配置）
+ * 4. 过滤特殊控制字符
+ * 5. 对二进制消息进行基本格式校验
+ *
+ * @param message 待验证的消息内容
+ * @param is_text 是否为文本消息
+ * @return true 验证通过，false 验证失败
+ */
+bool WebSocketConnection::validateWebSocketMessage(const std::string& message, bool is_text) {
+    // 1. 检查消息非空
+    if (message.empty()) {
+        HKU_DEBUG("Rejected empty WebSocket message");
+        return false;
+    }
+
+    // 2. 检查消息长度限制（复用 HTTP 请求体限制：10MB）
+    if (message.size() > HttpConfig::MAX_BODY_SIZE) {
+        HKU_WARN("Rejected oversized WebSocket message: {} bytes (max: {})", message.size(),
+                 HttpConfig::MAX_BODY_SIZE);
+        return false;
+    }
+
+    // 3. 文本消息的 UTF-8 编码验证
+    if (is_text) {
+        try {
+            // C++20 标准库不直接提供 UTF-8 验证，使用简单验证逻辑
+            // 检查是否存在非法的 UTF-8 序列
+            for (size_t i = 0; i < message.size();) {
+                unsigned char c = static_cast<unsigned char>(message[i]);
+
+                // ASCII 字符 (0x00-0x7F)
+                if (c < 0x80) {
+                    i++;
+                }
+                // 多字节 UTF-8 字符
+                else if (c >= 0xC0 && c < 0xE0) {
+                    // 2 字节序列：需要检查下一个字节是否为延续字节 (10xxxxxx)
+                    if (i + 1 >= message.size() || (message[i + 1] & 0xC0) != 0x80) {
+                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
+                        return false;
+                    }
+                    i += 2;
+                } else if (c >= 0xE0 && c < 0xF0) {
+                    // 3 字节序列：需要检查后续两个字节
+                    if (i + 2 >= message.size() || (message[i + 1] & 0xC0) != 0x80 ||
+                        (message[i + 2] & 0xC0) != 0x80) {
+                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
+                        return false;
+                    }
+                    i += 3;
+                } else if (c >= 0xF0 && c < 0xF8) {
+                    // 4 字节序列：需要检查后续三个字节
+                    if (i + 3 >= message.size() || (message[i + 1] & 0xC0) != 0x80 ||
+                        (message[i + 2] & 0xC0) != 0x80 || (message[i + 3] & 0xC0) != 0x80) {
+                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
+                        return false;
+                    }
+                    i += 4;
+                } else {
+                    // 非法的起始字节
+                    HKU_DEBUG("Invalid UTF-8 start byte at position {}: 0x{:02x}", i,
+                              static_cast<int>(c));
+                    return false;
+                }
+            }
+
+            // 额外检查：过滤特殊控制字符（除了 \n, \r, \t 外）
+            for (char c : message) {
+                unsigned char uc = static_cast<unsigned char>(c);
+                // 允许的控制字符：\n (0x0A), \r (0x0D), \t (0x09)
+                // 其他控制字符（0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F）被过滤
+                if (uc < 0x20 && uc != 0x09 && uc != 0x0A && uc != 0x0D) {
+                    HKU_DEBUG("Rejected message containing control character: 0x{:02x}",
+                              static_cast<int>(uc));
+                    return false;
+                }
+            }
+
+        } catch (const std::exception& e) {
+            HKU_ERROR("UTF-8 validation exception: {}", e.what());
+            return false;
+        }
+    }
+
+    // 4. 二进制消息的基本格式校验
+    if (!is_text) {
+        // 当前仅做基础检查，未来可根据具体协议扩展
+        // 例如：如果是 JSON 二进制数据，可以尝试解析验证
+
+        // 检查是否包含明显的非法二进制数据（可选）
+        // 这里暂时不做特殊处理，保持灵活性
+    }
+
+    // 所有验证通过
+    HKU_DEBUG("WebSocket message validation passed: type={}, size={}", is_text ? "text" : "binary",
+              message.size());
+    return true;
 }
 
 void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::socket&>& ws) {
@@ -838,18 +951,18 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 增强检测：不仅检查方法，还要验证目标和版本号
             if (session->req.method_string() == "PRI") {
                 HKU_DEBUG("HTTP/2 connection attempt detected on HTTP/1.1 server");
-                
+
                 // 进一步验证：检查目标是否为 "*" 且版本是否为 "HTTP/2.0"
-                bool is_http2_preamble = 
-                    session->req.target() == "*" && 
-                    session->req.version() == 2000;  // HTTP/2.0 的版本号为 2000
-                
+                bool is_http2_preamble =
+                  session->req.target() == "*" &&
+                  session->req.version() == 2000;  // HTTP/2.0 的版本号为 2000
+
                 if (!is_http2_preamble) {
                     // 可能是畸形的 HTTP/2 预检或其他异常请求
-                    HKU_WARN("Malformed HTTP/2 preamble or suspicious request from {}:{}", 
+                    HKU_WARN("Malformed HTTP/2 preamble or suspicious request from {}:{}",
                              m_client_ip, m_client_port);
                 }
-                
+
                 // 拒绝 HTTP/2 连接，返回 400 Bad Request
                 session->res.result(http::status::bad_request);
                 session->res.set(http::field::content_type, "text/plain");
@@ -1240,9 +1353,9 @@ void HttpServer::configureSsl() {
               // 安全检查：防止越界访问和畸形数据
               if (protocol_len == 0 || i + protocol_len > inlen) {
                   // 检测到畸形 ALPN 扩展，可能是 DoS 攻击
-                  HKU_WARN("Malformed ALPN extension detected (length={}, position={}/{})", 
+                  HKU_WARN("Malformed ALPN extension detected (length={}, position={}/{})",
                            protocol_len, i, inlen);
-                  
+
                   // 跳过无效条目而不是直接拒绝，防止 DoS 攻击
                   i++;
                   continue;
@@ -1275,7 +1388,7 @@ void HttpServer::configureSsl() {
 
               i += protocol_len + 1;
           }
-          
+
           // ========== 安全降级策略 ==========
           // 始终返回 http/1.1 作为默认协议
           // 这样可以确保即使客户端提供畸形 ALPN 扩展，握手仍能完成

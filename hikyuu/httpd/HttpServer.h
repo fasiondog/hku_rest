@@ -120,6 +120,9 @@ private:
     // 发送心跳 Ping
     net::awaitable<void> sendPing();
 
+    // WebSocket 消息验证
+    bool validateWebSocketMessage(const std::string& message, bool is_text);
+
     // 处理 WebSocket 消息（调用 Handle）
     net::awaitable<void> handleWebSocketMessage(std::shared_ptr<WebSocketHandle> ws_handle,
                                                 std::string_view message, bool is_text);
