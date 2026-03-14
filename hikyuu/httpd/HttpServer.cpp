@@ -326,7 +326,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             parser.header_limit(HttpServer::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
 
             // 设置读取超时保护（带主动中断机制）
-            session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
+            session->timer.expires_after(HttpServer::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
             // 使用 weak_ptr 防止定时器回调访问已销毁的 session
@@ -468,7 +468,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 设置业务处理超时保护（简化版本）
         // 注意：先取消可能存在的旧定时器，再启动新定时器
         context->timer.cancel();
-        context->timer.expires_after(BeastContext::TOTAL_TIMEOUT);
+        context->timer.expires_after(HttpServer::TOTAL_TIMEOUT);
 
         // 启动超时定时器，到期时主动取消业务处理
         // 使用 weak_ptr 防止定时器回调访问已销毁的 context
@@ -515,7 +515,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
         // 设置写入超时保护
-        context->timer.expires_after(BeastContext::WRITE_TIMEOUT);
+        context->timer.expires_after(HttpServer::WRITE_TIMEOUT);
 
         // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）
         if (m_ssl_stream) {

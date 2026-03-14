@@ -52,8 +52,6 @@ struct WebSocketContext {
     static constexpr std::size_t MAX_WRITE_QUEUE_SIZE = 1000;              // 最大待发送消息数
 
     // 超时配置
-    static constexpr std::chrono::seconds READ_TIMEOUT{30};   // 读取超时
-    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};  // 写入超时
     static constexpr std::chrono::seconds PING_INTERVAL{60};  // Ping 间隔
     static constexpr std::chrono::seconds PING_TIMEOUT{10};   // Ping 响应超时
 

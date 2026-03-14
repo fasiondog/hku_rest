@@ -206,6 +206,11 @@ public:
     static constexpr int MAX_CONNECTIONS = 1000;
     static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
 
+    // HTTP 请求超时限制（安全配置）
+    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒
+    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
+    static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
+
     HttpServer(const char* host, uint16_t port);
     virtual ~HttpServer();
 
