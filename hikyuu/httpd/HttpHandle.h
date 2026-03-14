@@ -63,6 +63,9 @@ struct BeastContext {
     
     // P99 优化：复用 request_parser 对象，避免每次请求都创建
     std::optional<http::request_parser<http::string_body>> parser;
+    
+    // 流式传输支持：标记响应是否已手动发送
+    bool response_sent = false;
 
     BeastContext(tcp::socket& sock, net::io_context& io_ctx)
     : socket(sock), timer(io_ctx), buffer(HttpConfig::BUFFER_MIN_CAPACITY) {
@@ -204,6 +207,62 @@ public:
 
     /** 协程方式的调用入口 */
     net::awaitable<void> operator()();
+    
+    // ========== 流式分批传输支持（新增）==========
+    
+    /**
+     * 启用分块传输编码（Chunked Transfer Encoding）
+     * 用于大文件下载、SSE、大数据量导出等场景
+     * 
+     * @note 必须在设置响应体之前调用
+     */
+    void enableChunkedTransfer() {
+        m_chunked_transfer = true;
+        m_headers_sent = false;  // 重置标志
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->res.set(http::field::transfer_encoding, "chunked");
+        }
+    }
+    
+    /**
+     * 检查是否启用了分块传输编码
+     */
+    bool isChunkedTransferEnabled() const {
+        return m_chunked_transfer;
+    }
+    
+    /**
+     * 写入一个数据块（异步协程版本）
+     * 
+     * @param data 数据块内容
+     * @return 是否写入成功
+     * 
+     * @note 必须先调用 enableChunkedTransfer()
+     */
+    virtual net::awaitable<bool> writeChunk(const std::string& data);
+    
+    /**
+     * 写入一个数据块（同步版本）
+     * 
+     * @param data 数据块内容
+     * @return 是否写入成功
+     */
+    bool writeChunkSync(const std::string& data);
+    
+    /**
+     * 完成分块传输
+     * 
+     * @return 是否成功完成
+     * 
+     * @note 必须调用此方法以正确结束分块传输
+     */
+    virtual net::awaitable<bool> finishChunkedTransfer();
+    
+    /**
+     * 完成分块传输（同步版本）
+     */
+    bool finishChunkedTransferSync();
 
 protected:
     /**
@@ -226,6 +285,10 @@ private:
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
     std::vector<std::function<net::awaitable<void>(HttpHandle*)>> m_filters;
+    
+    // 流式分批传输支持
+    bool m_chunked_transfer{false};  // 是否启用分块传输
+    bool m_headers_sent{false};      // 响应头是否已发送（用于分块传输）
 
 public:
     static void enableTrace(bool enable, bool only_traceid = false) {

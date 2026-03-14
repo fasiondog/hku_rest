@@ -11,6 +11,7 @@
 #include "hikyuu/httpd/pod/all.h"
 #include "EchoWsHandle.h"
 #include "QuotePushHandle.h"
+#include "StreamHandle.h"
 
 using namespace hku;
 
@@ -71,6 +72,40 @@ int main(int argc, char* argv[]) {
             // 响应会通过框架统一发送 (自动包含安全响应头)
             co_return;
         });
+        
+        // ========== 流式传输示例 ==========
+        
+        // 简单测试路由
+        server->registerHttpHandle("GET", "/test-download", [](void* ctx) -> net::awaitable<void> {
+            HKU_INFO("Test download handler called");
+            auto context = static_cast<BeastContext*>(ctx);
+            context->res.result(http::status::ok);
+            context->res.body() = "Test download works!";
+            co_return;
+        });
+        
+        // 文件下载示例（需要传递 file 参数）
+        // GET /api/download?file=/path/to/file.txt
+        HKU_INFO("Registering /api/download route");
+        server->registerHttpHandle("GET", "/api/download", [](void* ctx) -> net::awaitable<void> {
+            HKU_INFO("Download handler called");
+            FileDownloadHandle handle(ctx);
+            co_await handle.run();
+        });
+        
+        // SSE 实时推送
+        // GET /api/sse
+        server->registerHttpHandle("GET", "/api/sse", [](void* ctx) -> net::awaitable<void> {
+            SSEHandle handle(ctx);
+            co_await handle.run();
+        });
+        
+        // CSV 大数据导出
+        // GET /api/export/csv
+        server->registerHttpHandle("GET", "/api/export/csv", [](void* ctx) -> net::awaitable<void> {
+            CSVExportHandle handle(ctx);
+            co_await handle.run();
+        });
 
         // ========== 注册 WebSocket Handle ==========
 
@@ -98,6 +133,9 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
         std::cout << "Endpoints:" << std::endl;
         std::cout << "  HTTP REST API:     http://0.0.0.0:8765/api/hello" << std::endl;
+        std::cout << "  HTTP File Download:http://0.0.0.0:8765/api/download?file=/path/to/file" << std::endl;
+        std::cout << "  HTTP SSE Stream:   http://0.0.0.0:8765/api/sse (实时推送)" << std::endl;
+        std::cout << "  HTTP CSV Export:   http://0.0.0.0:8765/api/export/csv (10000 条数据)" << std::endl;
         std::cout << "  WebSocket Echo:    ws://0.0.0.0:8765/echo (基础测试)" << std::endl;
         std::cout << "  WebSocket Quotes:  ws://0.0.0.0:8765/quotes (行情推送)" << std::endl;
         std::cout << std::endl;

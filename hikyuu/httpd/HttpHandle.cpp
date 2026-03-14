@@ -51,6 +51,11 @@ net::awaitable<void> HttpHandle::operator()() {
         co_await run();
         co_await after_run();
 
+        // 如果是分块传输，响应已经在 run() 内部手动发送完成，直接返回
+        if (m_chunked_transfer) {
+            co_return;
+        }
+
         // 默认响应状态码为 200，无需显式设置
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.prepare_payload();
@@ -343,4 +348,250 @@ uint16_t HttpHandle::getClientPort() const noexcept {
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return ctx->client_port;
 }
+
+// ========== 流式分批传输实现（新增）==========
+
+net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) {
+    if (!m_chunked_transfer) {
+        CLS_ERROR("Chunked transfer not enabled! Call enableChunkedTransfer() first.");
+        co_return false;
+    }
+    
+    if (!m_beast_context) {
+        co_return false;
+    }
+    
+    try {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        
+        // 如果是第一次写入，需要先发送响应头
+        if (!m_headers_sent) {
+            m_headers_sent = true;
+            
+            // 设置 Transfer-Encoding: chunked
+            ctx->res.set(http::field::transfer_encoding, "chunked");
+            
+            // 准备空的响应体（重要：这会移除 Content-Length）
+            ctx->res.body() = "";
+            
+            // 不要调用 prepare_payload()！它会设置 Content-Length，而分块传输不需要
+            // ctx->res.prepare_payload();
+            
+            // 手动构造 HTTP 响应头字符串
+            std::string header_str;
+            header_str.reserve(512);
+            
+            // 状态行
+            header_str += fmt::format("HTTP/1.1 {} {}\r\n", 
+                                     ctx->res.result_int(), 
+                                     ctx->res.reason());
+            
+            // 所有响应头
+            for (const auto& field : ctx->res) {
+                header_str += fmt::format("{}: {}\r\n", 
+                                         field.name_string(), 
+                                         field.value());
+            }
+            
+            // 空行表示头结束
+            header_str += "\r\n";
+            
+            // 同步写入响应头
+            beast::error_code ec;
+            net::write(ctx->socket, net::buffer(header_str), ec);
+            
+            if (ec.failed()) {
+                CLS_ERROR("Failed to send response headers: {}", ec.message());
+                co_return false;
+            }
+        }
+        
+        // 构造 HTTP 分块
+        // 格式：chunk-size\r\nchunk-data\r\n
+        std::string chunk = fmt::format("{:x}\r\n", data.size());
+        chunk += data;
+        chunk += "\r\n";
+        
+        // 写入 socket
+        beast::error_code ec;
+        co_await net::async_write(
+            ctx->socket,
+            net::buffer(chunk),
+            net::use_awaitable);
+        
+        co_return !ec.failed();
+        
+    } catch (const std::exception& e) {
+        CLS_ERROR("writeChunk error: {}", e.what());
+        co_return false;
+    } catch (...) {
+        CLS_ERROR("writeChunk unknown error");
+        co_return false;
+    }
+}
+
+bool HttpHandle::writeChunkSync(const std::string& data) {
+    if (!m_chunked_transfer) {
+        CLS_ERROR("Chunked transfer not enabled!");
+        return false;
+    }
+    
+    if (!m_beast_context) {
+        return false;
+    }
+    
+    try {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        
+        // 如果是第一次写入，需要先发送响应头
+        if (!m_headers_sent) {
+            m_headers_sent = true;
+            
+            // 设置 Transfer-Encoding: chunked
+            ctx->res.set(http::field::transfer_encoding, "chunked");
+            
+            // 准备空的响应体（重要：这会移除 Content-Length）
+            ctx->res.body() = "";
+            // 不要调用 prepare_payload()！它会设置 Content-Length，而分块传输不需要
+            
+            // 手动构造 HTTP 响应头字符串
+            std::string header_str;
+            header_str.reserve(512);
+            
+            // 状态行
+            header_str += fmt::format("HTTP/1.1 {} {}\r\n", 
+                                     ctx->res.result_int(), 
+                                     ctx->res.reason());
+            
+            // 所有响应头
+            for (const auto& field : ctx->res) {
+                header_str += fmt::format("{}: {}\r\n", 
+                                         field.name_string(), 
+                                         field.value());
+            }
+            
+            // 空行表示头结束
+            header_str += "\r\n";
+            
+            // 同步写入响应头
+            beast::error_code ec;
+            net::write(ctx->socket, net::buffer(header_str), ec);
+            
+            if (ec.failed()) {
+                CLS_ERROR("Failed to send response headers: {}", ec.message());
+                return false;
+            }
+        }
+        
+        // 构造 HTTP 分块
+        std::string chunk = fmt::format("{:x}\r\n", data.size());
+        chunk += data;
+        chunk += "\r\n";
+        
+        // 同步写入数据块
+        beast::error_code ec;
+        net::write(ctx->socket, net::buffer(chunk), ec);
+        
+        return !ec.failed();
+        
+    } catch (const std::exception& e) {
+        CLS_ERROR("writeChunkSync error: {}", e.what());
+        return false;
+    } catch (...) {
+        return false;
+    }
+}
+
+net::awaitable<bool> HttpHandle::finishChunkedTransfer() {
+    if (!m_chunked_transfer) {
+        CLS_ERROR("Chunked transfer not enabled!");
+        co_return false;
+    }
+    
+    if (!m_beast_context) {
+        co_return false;
+    }
+    
+    try {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        
+        // 发送最后一个空块表示结束：0\r\n\r\n
+        std::string final_chunk = "0\r\n\r\n";
+        
+        beast::error_code ec;
+        co_await net::async_write(
+            ctx->socket,
+            net::buffer(final_chunk),
+            net::use_awaitable);
+        
+        // 重置状态并标记响应已发送
+        m_chunked_transfer = false;
+        m_headers_sent = false;
+        ctx->response_sent = true;
+        
+        co_return !ec.failed();
+        
+    } catch (const std::exception& e) {
+        CLS_ERROR("finishChunkedTransfer error: {}", e.what());
+        // 即使出错也要标记响应已发送，防止框架再次发送响应
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->response_sent = true;
+        }
+        co_return false;
+    } catch (...) {
+        CLS_ERROR("finishChunkedTransfer unknown error");
+        // 即使出错也要标记响应已发送，防止框架再次发送响应
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->response_sent = true;
+        }
+        co_return false;
+    }
+}
+
+bool HttpHandle::finishChunkedTransferSync() {
+    if (!m_chunked_transfer) {
+        CLS_ERROR("Chunked transfer not enabled!");
+        return false;
+    }
+    
+    if (!m_beast_context) {
+        return false;
+    }
+    
+    try {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        
+        // 发送最后一个空块
+        std::string final_chunk = "0\r\n\r\n";
+        
+        beast::error_code ec;
+        net::write(ctx->socket, net::buffer(final_chunk), ec);
+        
+        // 重置状态并标记响应已发送
+        m_chunked_transfer = false;
+        m_headers_sent = false;
+        ctx->response_sent = true;
+        
+        return !ec.failed();
+        
+    } catch (const std::exception& e) {
+        CLS_ERROR("finishChunkedTransferSync error: {}", e.what());
+        // 即使出错也要标记响应已发送，防止框架再次发送响应
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->response_sent = true;
+        }
+        return false;
+    } catch (...) {
+        // 即使出错也要标记响应已发送，防止框架再次发送响应
+        if (m_beast_context) {
+            auto* ctx = static_cast<BeastContext*>(m_beast_context);
+            ctx->response_sent = true;
+        }
+        return false;
+    }
+}
+
 }  // namespace hku

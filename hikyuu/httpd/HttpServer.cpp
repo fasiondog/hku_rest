@@ -161,9 +161,17 @@ void Router::registerHandler(const std::string& method, const std::string& path,
 }
 
 Router::HandlerFunc Router::findHandler(const std::string& method, const std::string& path) {
+    // 从 path 中提取路径部分（去掉查询参数）
+    // 例如：/api/download?file=xxx -> /api/download
+    std::string_view path_view(path);
+    auto query_pos = path_view.find('?');
+    std::string_view path_only = (query_pos != std::string_view::npos) 
+        ? path_view.substr(0, query_pos)
+        : path_view;
+    
     // 精确匹配优先（线性搜索，路由数量有限时性能优于哈希表）
     for (const auto& [key, handler] : m_routes) {
-        if (key.method == method && key.path == path) {
+        if (key.method == method && key.path == path_only) {
             return handler;
         }
     }
@@ -174,7 +182,7 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
         if (key.method == method && !key.path.empty() && key.path.back() == '*') {
             // 前缀匹配：/api/* 匹配 /api/users
             std::string_view prefix(key.path.data(), key.path.size() - 1);
-            if (path.find(prefix) == 0) {
+            if (path_only.find(prefix) == 0) {
                 return handler;
             }
         }
@@ -405,7 +413,12 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
         configureWebSocketSecurity(*m_ws_stream);
 
         // 查找对应的 WebSocket Handle
-        std::string path(req.target());
+        std::string_view target_view(req.target());
+        auto query_pos = target_view.find('?');
+        std::string path = (query_pos != std::string_view::npos) 
+            ? std::string(target_view.substr(0, query_pos))
+            : std::string(target_view);
+        
         auto handler = m_ws_router->findHandler(path);
 
         if (!handler) {
@@ -1022,8 +1035,13 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 请求读取完成后，处理该请求（调用 Handle）
             co_await processHandle(session);
 
-            // 写入响应
-            co_await writeResponse(session);
+            // 写入响应（如果响应还未发送）
+            if (!session->response_sent) {
+                HKU_ERROR("Calling writeResponse: response_sent=false");
+                co_await writeResponse(session);
+            } else {
+                HKU_ERROR("Skipping writeResponse: response already sent");
+            }
 
             // ========== 修复：在处理完请求后递增计数器并检查 Keep-Alive 限制 ==========
             ++m_request_count;
@@ -1069,9 +1087,6 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
-    HKU_TRACE("Connection::processHandle: {} {}, m_router={}, is_ssl={}", method, target,
-              (void*)m_router, m_ssl_stream ? "true" : "false");
-
     // 安全检查 router 是否为空
     if (!m_router) {
         HKU_ERROR("Router is null, cannot process request");
@@ -1086,6 +1101,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         co_return;
     }
 
+    // findHandler 内部会自动处理查询参数
     auto handler = m_router->findHandler(method, target);
 
     // 处理 CORS 预检请求 (OPTIONS)
@@ -1140,6 +1156,11 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
         co_await handler(context.get());
 
+        // 如果响应已经手动发送（如分块传输），则直接返回，不再执行后续操作
+        if (context->response_sent) {
+            co_return;
+        }
+
         // 设置响应版本和 Keep-Alive
         context->res.version(context->req.version());
         context->res.keep_alive(true);  // 默认保持连接
@@ -1161,6 +1182,11 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
+        // 如果响应已经手动发送（如分块传输），则跳过
+        if (context->response_sent) {
+            co_return;
+        }
+        
         // ========== P99 延迟优化：简化定时器处理 ==========
         // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
         context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
