@@ -871,14 +871,6 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
         };
 
         while (true) {
-            // 检查 Keep-Alive 限制
-            if (++m_request_count > HttpConfig::MAX_KEEPALIVE_REQUESTS) {
-                HKU_WARN("Keep-Alive limit reached ({} requests), closing connection from {}:{}",
-                         m_request_count, m_client_ip, m_client_port);
-                decrement_connection();
-                break;
-            }
-
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
             if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
@@ -1000,6 +992,15 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 写入响应
             co_await writeResponse(session);
+
+            // ========== 修复：在处理完请求后递增计数器并检查 Keep-Alive 限制 ==========
+            ++m_request_count;
+            if (m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
+                HKU_INFO("Keep-Alive limit reached ({} requests), closing connection from {}:{}",
+                         m_request_count, m_client_ip, m_client_port);
+                decrement_connection();
+                break;
+            }
 
             // 检查是否需要保持连接
             bool keep_alive = session->req.keep_alive();
