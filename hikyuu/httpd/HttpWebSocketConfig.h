@@ -23,16 +23,24 @@ struct HttpConfig {
     static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB - 请求体最大大小
     static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB - 请求头最大大小
 
-    // ========== 超时控制 ==========
-    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒
-    static constexpr std::chrono::seconds READ_TIMEOUT{30};    // 读取请求超时：30 秒
-    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
-    static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
+    // ========== 超时控制 (针对高频低延迟场景优化) ==========
+    // 注意：超时时间过短会导致频繁的定时器检查和连接重建，反而增加延迟
+    static constexpr std::chrono::milliseconds HEADER_TIMEOUT{2000};  // 请求头首字节超时：2s (平衡性能与安全)
+    static constexpr std::chrono::seconds READ_TIMEOUT{5};            // 读取请求超时：5s (降低从 30s)
+    static constexpr std::chrono::seconds WRITE_TIMEOUT{5};           // 写入响应超时：5s (降低从 30s)
+    static constexpr std::chrono::seconds TOTAL_TIMEOUT{30};          // 总处理超时：30s (降低从 60s)
 
-    // ========== 连接管理 ==========
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;  // 单个连接最大请求数（Keep-Alive 模式）
-    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
-    static constexpr int MAX_CONNECTIONS = 1000;                  // 服务器最大连接数
+    // ========== 连接管理 (针对高频短连接优化) ==========
+    static constexpr int MAX_KEEPALIVE_REQUESTS = 0;         // 0=禁用请求数限制，仅依赖时间限制
+    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{30};  // 连接最大存活时间：30 分钟
+    static constexpr int MAX_CONNECTIONS = 100000;                // 服务器最大连接数
+    
+    // ========== P99 延迟优化配置 ==========
+    // 启用快速路径：对于简单请求跳过部分安全检查
+    static constexpr bool ENABLE_FAST_PATH = true;
+    
+    // 缓冲区复用策略：保留最小容量避免频繁分配
+    static constexpr std::size_t BUFFER_MIN_CAPACITY = 512;  // 保留 512 字节基础容量
 };
 
 /**

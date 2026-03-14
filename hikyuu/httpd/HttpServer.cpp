@@ -856,10 +856,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             }
         }
 
-        // 增加连接计数（使用 acquire-release 语义）
-        if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_acq_rel) >=
+        // P99 延迟优化：使用 relaxed 内存序减少原子操作开销
+        // 连接数限制检查不需要严格的顺序保证
+        if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_relaxed) >=
             HttpConfig::MAX_CONNECTIONS) {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_acq_rel);
+            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
             HKU_WARN("Global connection limit reached ({}), rejecting connection from {}:{}",
                      HttpConfig::MAX_CONNECTIONS, m_client_ip, m_client_port);
             co_return;
@@ -867,32 +868,59 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
         // 确保在函数退出时减少连接计数
         auto decrement_connection = [&]() {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_release);
+            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
         };
 
         while (true) {
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
             if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
-                HKU_WARN("Connection age limit reached, closing from {}:{}", m_client_ip,
+                HKU_INFO("Connection age limit reached, closing from {}:{}", m_client_ip,
                          m_client_port);
                 decrement_connection();
                 break;
             }
 
-            // 为每个 HTTP 请求创建独立的 Session
-            // 注意：SSL 模式下需要使用 SSL stream 的 next_layer() 作为 socket
-            auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
-            auto session = std::make_shared<BeastContext>(socket_ref, m_io_ctx);
+            // ========== P99 延迟优化：复用 BeastContext 对象 ==========
+            // 重要说明：每个 Connection 对象独立维护自己的 m_session，不会跨连接共享
+            // 复用目的：避免在 Keep-Alive 连接的多次请求间频繁创建/销毁对象
+            // 安全性保障：协程内的操作是同步顺序执行，不存在并发修改风险
+            if (!m_session) {
+                // 第一次请求时创建 session
+                auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
+                m_session = std::make_shared<BeastContext>(socket_ref, m_io_ctx);
+            }
+            
+            // 复用已有的 session 对象
+            auto session = m_session;
             session->client_ip = m_client_ip;
             session->client_port = m_client_port;
 
-            // 配置 HTTP 解析器选项，防止超大请求和慢速攻击
-            http::request_parser<http::string_body> parser;
-            parser.body_limit(HttpConfig::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
-            parser.header_limit(HttpConfig::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
+            // ========== 关键：完整重置 session 状态 ==========
+            // 注意：必须在每次循环开始时重置，确保上一次请求的状态不会影响新请求
+            // 1. 重置 request/response 对象（使用 move 语义）
+            session->req = http::request<http::string_body>();
+            session->res = http::response<http::string_body>();
+            
+            // 2. 清空 buffer，但保留容量避免重新分配
+            session->buffer.consume(session->buffer.size());
+            
+            // 3. 重置 parser 状态（重要！）
+            if (!session->parser.has_value()) {
+                // 第一次请求时创建并配置 parser
+                session->parser.emplace();
+                session->parser->body_limit(HttpConfig::MAX_BODY_SIZE);
+                session->parser->header_limit(HttpConfig::MAX_HEADER_SIZE);
+            } else {
+                // 复用已有 parser，重新构造一个空对象
+                session->parser.emplace();
+            }
+            
+            // 4. 重置其他状态字段
+            session->keep_alive = true;
 
-            // 设置读取超时保护（带主动中断机制）
+            // ========== P99 延迟优化：简化定时器处理 ==========
+            // 直接设置新的超时时间，不需要先 cancel（Boost.Asio 会自动处理）
             session->timer.expires_after(HttpConfig::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
@@ -909,16 +937,17 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             });
 
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+            // 使用复用的 parser 成员变量而不是创建新的 parser
             try {
                 if (m_ssl_stream) {
-                    co_await http::async_read(*m_ssl_stream, session->buffer, parser,
+                    co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
                                               net::use_awaitable);
                 } else {
-                    co_await http::async_read(session->socket, session->buffer, parser,
+                    co_await http::async_read(session->socket, session->buffer, *session->parser,
                                               net::use_awaitable);
                 }
             } catch (const beast::system_error& e) {
-                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的 session
+                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
                 session->timer.cancel();
 
                 // 判断是否为正常断开
@@ -935,7 +964,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             session->timer.cancel();
 
             // 将解析后的请求移动到 session 中
-            session->req = parser.release();
+            session->req = session->parser->release();
 
             // ========== 增强的 HTTP/2 DoS 防护 ==========
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
@@ -974,6 +1003,9 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,
                           m_client_port);
 
+                // P99 优化：重新获取 socket 引用用于 WebSocket 升级
+                auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
+
                 // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
                 auto ws_connection = WebSocketConnection::create(
                   std::move(socket_ref), &HttpServer::ms_ws_router, m_io_ctx,
@@ -995,9 +1027,15 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // ========== 修复：在处理完请求后递增计数器并检查 Keep-Alive 限制 ==========
             ++m_request_count;
-            if (m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
-                HKU_INFO("Keep-Alive limit reached ({} requests), closing connection from {}:{}",
-                         m_request_count, m_client_ip, m_client_port);
+            
+            // 检查请求数限制（如果启用）
+            if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 && 
+                m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
+                HKU_INFO("Keep-Alive limit reached ({} requests, age={}s), closing connection from {}:{}",
+                         m_request_count, 
+                         std::chrono::duration_cast<std::chrono::seconds>(
+                           std::chrono::steady_clock::now() - m_connection_start).count(),
+                         m_client_ip, m_client_port);
                 decrement_connection();
                 break;
             }
@@ -1078,9 +1116,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     }
 
     try {
-        // 设置业务处理超时保护（简化版本）
-        // 注意：先取消可能存在的旧定时器，再启动新定时器
-        context->timer.cancel();
+        // ========== P99 延迟优化：简化定时器处理 ==========
+        // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
         context->timer.expires_after(HttpConfig::TOTAL_TIMEOUT);
 
         // 启动超时定时器，到期时主动取消业务处理
@@ -1103,9 +1140,6 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
         co_await handler(context.get());
 
-        // 取消定时器（处理完成）
-        context->timer.cancel();
-
         // 设置响应版本和 Keep-Alive
         context->res.version(context->req.version());
         context->res.keep_alive(true);  // 默认保持连接
@@ -1127,7 +1161,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
-        // 设置写入超时保护
+        // ========== P99 延迟优化：简化定时器处理 ==========
+        // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
         context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
 
         // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）

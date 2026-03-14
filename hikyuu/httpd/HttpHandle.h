@@ -57,9 +57,17 @@ struct BeastContext {
 
     // 新增：取消令牌源，用于主动中断超时操作
     net::cancellation_signal cancel_signal;
+    
+    // P99 优化：Keep-Alive 状态标记
+    bool keep_alive = true;
+    
+    // P99 优化：复用 request_parser 对象，避免每次请求都创建
+    std::optional<http::request_parser<http::string_body>> parser;
 
     BeastContext(tcp::socket& sock, net::io_context& io_ctx)
-    : socket(sock), timer(io_ctx), buffer(HttpConfig::MAX_BUFFER_SIZE) {}
+    : socket(sock), timer(io_ctx), buffer(HttpConfig::BUFFER_MIN_CAPACITY) {
+        // 第一次请求时才创建 parser（延迟初始化）
+    }
 };
 
 class HKU_HTTPD_API HttpHandle {

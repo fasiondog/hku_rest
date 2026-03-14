@@ -189,6 +189,10 @@ private:
     // Keep-Alive 连接安全限制
     int m_request_count = 0;                                   // 当前连接已处理请求数
     std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
+    
+    // ========== P99 延迟优化：复用 BeastContext 对象 ==========
+    // 在 Connection 生命周期内复用 session，避免频繁内存分配
+    std::shared_ptr<BeastContext> m_session;  // 复用的会话上下文
 };
 
 // SSL 上下文配置
@@ -355,6 +359,8 @@ public:
 
     // 全局连接池管理字段（public static）
 public:
+    // P99 延迟优化：使用 relaxed 内存序减少原子操作开销
+    // 连接数检查不需要严格的顺序保证，只需要最终一致性
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
 
     // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
