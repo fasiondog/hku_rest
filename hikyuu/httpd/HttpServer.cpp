@@ -445,6 +445,9 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
             co_return;
         }
 
+        // 【新增】启动心跳保活机制（按 PING_INTERVAL 周期性发送 Ping）
+        net::co_spawn(m_io_ctx, sendPing(), net::detached);
+
         // WebSocket 消息读取循环
         while (true) {
             try {
