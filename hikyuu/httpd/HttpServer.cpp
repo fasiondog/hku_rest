@@ -444,13 +444,6 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
             co_return;
         }
 
-        // 在连接建立时立即调用工厂函数并保存 Handle
-        // 问题：当前工厂函数不返回 Handle，只执行初始化
-        // 解决方案：改进设计，让工厂函数返回 Handle 实例
-        // TODO: 未来版本需要修改 registerWsHandle 的 API
-
-        // 临时方案：在第一次收到消息时创建 Handle
-
         // WebSocket 消息读取循环
         while (true) {
             try {
@@ -670,9 +663,6 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
     if (ssl_ctx) {
         m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
     }
-
-    // HKU_INFO("Connection::start: m_router={}, this={}, is_ssl={}", (void*)m_router, (void*)this,
-    // IsSsl());
 
     // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
     int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
