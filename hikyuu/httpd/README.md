@@ -10,6 +10,7 @@ httpd 是一个使用 Boost.Beast、Boost.Asio、**C++20 协程**和 **TLS/SSL**
 - ✅ **TLS/SSL 加密** - 完整的 HTTPS 支持，基于 boost::asio::ssl
 - ✅ **简洁的同步式代码** - 使用 co_await 编写异步代码，像同步一样简单
 - ✅ **完全兼容原 httpd 接口** - 类名和接口名称保持一致
+- ✅ **统一的配置管理** - HTTP 和 WebSocket 配置分离，集中管理
 
 ## 技术栈
 
@@ -27,11 +28,76 @@ httpd 是一个使用 Boost.Beast、Boost.Asio、**C++20 协程**和 **TLS/SSL**
 - **OpenSSL**: 1.1.1+ (用于 TLS/SSL)
 - **构建系统**: xmake 或 CMake
 
+## 配置说明
+
+### HTTP 协议配置 (HttpConfig)
+
+HTTP 协议的所有安全限制和超时配置都定义在 `HttpConfig` 结构体中:
+
+``cpp
+#include <hikyuu/httpd/HttpWebSocketConfig.h>
+
+// 请求大小限制
+HttpConfig::MAX_BUFFER_SIZE      // 1MB - 读取缓冲区最大大小
+HttpConfig::MAX_BODY_SIZE        // 10MB - 请求体最大大小
+HttpConfig::MAX_HEADER_SIZE      // 8KB - 请求头最大大小
+
+// 超时控制
+HttpConfig::HEADER_TIMEOUT       // 10 秒 - 请求头首字节超时
+HttpConfig::READ_TIMEOUT         // 30 秒 - 读取请求超时
+HttpConfig::WRITE_TIMEOUT        // 30 秒 - 写入响应超时
+HttpConfig::TOTAL_TIMEOUT        // 60 秒 - 总处理超时
+
+// 连接管理
+HttpConfig::MAX_KEEPALIVE_REQUESTS  // 10000 - 单个连接最大请求数
+HttpConfig::MAX_CONNECTION_AGE      // 5 分钟 - 连接最大存活时间
+HttpConfig::MAX_CONNECTIONS         // 1000 - 服务器最大连接数
+```
+
+### WebSocket 协议配置 (WebSocketConfig)
+
+WebSocket 协议的所有安全限制、超时控制和心跳配置都定义在 `WebSocketConfig` 结构体中:
+
+``cpp
+#include <hikyuu/httpd/HttpWebSocketConfig.h>
+
+// 消息大小限制
+WebSocketConfig::MAX_MESSAGE_SIZE      // 10MB - 消息最大大小
+WebSocketConfig::MAX_FRAME_SIZE        // 10MB - 帧最大大小
+WebSocketConfig::MAX_READ_BUFFER_SIZE  // 10MB - 读取缓冲区最大
+WebSocketConfig::MAX_WRITE_QUEUE_SIZE  // 1000 - 最大待发送消息数
+
+// 超时控制
+WebSocketConfig::READ_TIMEOUT          // 30 秒 - 读取消息超时
+WebSocketConfig::WRITE_TIMEOUT         // 30 秒 - 写入消息超时
+
+// 心跳保活机制
+WebSocketConfig::PING_INTERVAL         // 60 秒 - Ping 发送间隔
+WebSocketConfig::PING_TIMEOUT          // 10 秒 - Ping 响应超时
+```
+
+### 配置使用示例
+
+``cpp
+#include <hikyuu/httpd/HttpWebSocketConfig.h>
+
+// 在代码中使用配置
+void configureParser(http::request_parser<http::string_body>& parser) {
+    parser.body_limit(HttpConfig::MAX_BODY_SIZE);
+    parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
+}
+
+void setupWebSocket(websocket::stream<tcp::socket&>& ws) {
+    ws.read_message_max(WebSocketConfig::MAX_MESSAGE_SIZE);
+    ws.auto_fragment(false);
+}
+```
+
 ## 快速开始
 
 ### 1. 创建 Handle（支持协程）
 
-```cpp
+``cpp
 #include <hikyuu/httpd/all.h>
 
 using namespace hku;
@@ -57,7 +123,7 @@ public:
 
 ### 2. 配置 HTTPS（可选）
 
-```cpp
+``cpp
 // 生成自签名证书
 ./generate_ssl_cert.sh . server
 
@@ -70,7 +136,7 @@ https_server.set_tls("server.pem", "", 0);
 
 ### 3. 注册路由
 
-```cpp
+``cpp
 class ApiService : public HttpService {
     HTTP_SERVICE_IMP(ApiService)
     
@@ -83,7 +149,7 @@ public:
 
 ### 4. 启动服务器
 
-```cpp
+``cpp
 int main() {
     // HTTP 服务器
     HttpServer http_server("0.0.0.0", 8080);
@@ -113,7 +179,7 @@ int main() {
 
 ### 4. 测试
 
-```bash
+``bash
 curl http://localhost:8080/api/async
 ```
 
@@ -148,7 +214,7 @@ co_return
 
 ### 1. 异步延迟响应
 
-```cpp
+``cpp
 net::awaitable<void> run() override {
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     
@@ -251,7 +317,7 @@ net::awaitable<void> run() override {
 基础 HTTP 处理器，所有 Handle 的基类。
 
 #### 构造函数
-```cpp
+``cpp
 HTTP_HANDLE_IMP(YourClass)  // 展开为：explicit YourClass(void* beast_context)
 ```
 
@@ -278,7 +344,7 @@ HTTP_HANDLE_IMP(YourClass)  // 展开为：explicit YourClass(void* beast_contex
 
 协程上下文，包含定时器等工具。
 
-```cpp
+``cpp
 struct BeastContext {
     http::request<http::string_body> req;
     http::response<http::string_body> res;
@@ -299,7 +365,7 @@ struct BeastContext {
 - 提供参数检查辅助方法
 
 #### 示例
-```cpp
+``cpp
 class MyRestHandle : public RestHandle {
     REST_HANDLE_IMP(MyRestHandle)
     
@@ -340,7 +406,7 @@ class MyRestHandle : public RestHandle {
 
 ### 2. BeastContext 使用
 
-```cpp
+``cpp
 // 正确用法
 auto* ctx = static_cast<BeastContext*>(m_beast_context);
 ctx->timer.expires_after(...);
@@ -352,7 +418,7 @@ co_await ctx->timer.async_wait(...);
 
 ### 3. 异常安全
 
-```cpp
+``cpp
 // 正确：协程中异常会被框架捕获
 net::awaitable<void> run() override {
     try {
@@ -374,13 +440,13 @@ net::awaitable<void> run() override {
 
 ### 1. 启用编译器优化
 
-```bash
+``bash
 xmake f -m release --cxxflags="-O3 -DNDEBUG"
 ```
 
 ### 2. 使用多线程池
 
-```cpp
+``cpp
 int main() {
     HttpServer server("0.0.0.0", 8080);
     
@@ -407,7 +473,7 @@ int main() {
 
 ### 3. 避免不必要的拷贝
 
-```cpp
+``cpp
 // 好：使用移动语义
 res["data"] = std::move(large_data);
 
@@ -432,7 +498,7 @@ https_server.set_tls("server.pem", "", 0);
 
 ### 生成自签名证书
 
-```bash
+``bash
 # 使用提供的脚本
 chmod +x generate_ssl_cert.sh
 ./generate_ssl_cert.sh . server
@@ -503,7 +569,7 @@ curl -k https://localhost:8443/api/hello
 
 ## 构建和运行
 
-```bash
+``bash
 cd hikyuu/httpd
 
 # 配置项目
@@ -606,14 +672,14 @@ hikyuu/httpd/
 ## 使用方法
 
 ### 创建服务器
-```cpp
+``cpp
 #include <hikyuu/httpd/HttpServer.h>
 
 auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
 ```
 
 ### 注册 HTTP REST API
-```cpp
+``cpp
 // 方式 1: Lambda 方式
 server->registerHttpHandle("GET", "/api/hello", 
     [](void* ctx) -> net::awaitable<void> {
@@ -627,7 +693,7 @@ server->POST<MyHttpPostHandle>("/api/submit");
 ```
 
 ### 注册 WebSocket Handle
-```cpp
+``cpp
 // 方式 1: Lambda 方式
 server->registerWsHandle("/ws/echo",
     [](void* ctx) -> net::awaitable<void> {
@@ -640,13 +706,13 @@ server->WS<EchoWsHandle>("/echo");
 ```
 
 ### 配置 SSL/TLS
-```cpp
+``cpp
 // 同时作用于 HTTP 和 WebSocket
 server->setTls("server.pem", "password", 0);
 ```
 
 ### 启动服务器
-```cpp
+``cpp
 server->start();
 HttpServer::loop();
 ```
@@ -719,7 +785,7 @@ int main() {
 
 ## 协议检测机制
 
-```cpp
+``cpp
 // 在 Connection::handleConnection 中
 bool is_websocket = 
     req.method() == http::verb::get &&
@@ -755,7 +821,7 @@ if (is_websocket) {
 ### 从旧版 WebSocketServer 迁移
 
 **旧代码:**
-```cpp
+``cpp
 #include <hikyuu/httpd/WebSocketServer.h>
 
 WebSocketServer server("0.0.0.0", 8765);
@@ -765,7 +831,7 @@ WebSocketServer::loop();
 ```
 
 **新代码:**
-```cpp
+``cpp
 #include <hikyuu/httpd/HttpServer.h>
 
 auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);

@@ -20,6 +20,7 @@
 #include <boost/asio/awaitable.hpp>
 
 #include <hikyuu/utilities/Log.h>
+#include "HttpWebSocketConfig.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
@@ -47,28 +48,19 @@ struct WebSocketContext {
     std::function<net::awaitable<bool>(std::string_view, bool)> send_callback;
     std::function<net::awaitable<void>(ws::close_code, std::string_view)> close_callback;
 
-    // 安全限制配置 - 复用 HTTP 模块的安全限制标准 (10MB)
-    static constexpr std::size_t MAX_MESSAGE_SIZE =
-      10 * 1024 * 1024;  // 10MB - 消息最大大小 (与 HTTP 请求体一致)
-    static constexpr std::size_t MAX_FRAME_SIZE =
-      10 * 1024 * 1024;  // 10MB - 帧最大大小 (允许完整消息的单帧传输)
-    static constexpr std::size_t MAX_READ_BUFFER_SIZE = 10 * 1024 * 1024;  // 10MB - 读取缓冲区最大
-    static constexpr std::size_t MAX_WRITE_QUEUE_SIZE = 1000;              // 最大待发送消息数
-
-    // 超时配置
-    static constexpr std::chrono::seconds PING_INTERVAL{60};  // Ping 间隔
-    static constexpr std::chrono::seconds PING_TIMEOUT{10};   // Ping 响应超时
-
-    WebSocketContext(net::io_context& io_ctx) : buffer(MAX_READ_BUFFER_SIZE), timer(io_ctx) {
+    WebSocketContext(net::io_context& io_ctx)
+    : buffer(WebSocketConfig::MAX_READ_BUFFER_SIZE), timer(io_ctx) {
         // 设置缓冲区大小限制，防止内存耗尽攻击
-        buffer.max_size(MAX_READ_BUFFER_SIZE);
+        buffer.max_size(WebSocketConfig::MAX_READ_BUFFER_SIZE);
     }
 
-    WebSocketContext(const net::any_io_executor& exec) : buffer(MAX_READ_BUFFER_SIZE), timer(exec) {
+    WebSocketContext(const net::any_io_executor& exec)
+    : buffer(WebSocketConfig::MAX_READ_BUFFER_SIZE), timer(exec) {
         // 设置缓冲区大小限制，防止内存耗尽攻击
-        buffer.max_size(MAX_READ_BUFFER_SIZE);
+        buffer.max_size(WebSocketConfig::MAX_READ_BUFFER_SIZE);
     }
 };
+
 /**
  * WebSocket Handle 基类 - 用户继承此类实现业务逻辑
  */
@@ -175,16 +167,16 @@ protected:
     template <typename StreamType>
     static void configureWebSocketSecurity(StreamType& ws) {
         // 设置消息最大大小 (防止攻击者通过超大消息消耗内存)
-        ws.read_message_max(WebSocketContext::MAX_MESSAGE_SIZE);
+        ws.read_message_max(WebSocketConfig::MAX_MESSAGE_SIZE);
 
         // 设置帧最大大小 (允许完整消息的单帧传输)
-        ws.write_message_max(WebSocketContext::MAX_FRAME_SIZE);
+        ws.write_message_max(WebSocketConfig::MAX_FRAME_SIZE);
 
         // 禁用自动 Fragmentation，由应用层控制分片策略
         ws.auto_fragment(false);
 
         HKU_DEBUG("WebSocket security configured: max_message_size={}, max_frame_size={}",
-                  WebSocketContext::MAX_MESSAGE_SIZE, WebSocketContext::MAX_FRAME_SIZE);
+                  WebSocketConfig::MAX_MESSAGE_SIZE, WebSocketConfig::MAX_FRAME_SIZE);
     }
 
 protected:

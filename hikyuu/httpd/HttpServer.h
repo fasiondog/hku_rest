@@ -30,6 +30,7 @@
 
 #include "HttpHandle.h"
 #include "WebSocketHandle.h"
+#include "HttpWebSocketConfig.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
@@ -259,7 +260,7 @@ struct CorsConfig {
 };
 
 /**
- * HTTP服务器 - 支持协程和 TLS/SSL
+ * HTTP 服务器 - 支持协程和 TLS/SSL
  *
  * 增强版本：同时支持 HTTP/HTTPS 和 WebSocket 协议
  * - 自动检测请求类型并路由到对应处理器
@@ -272,19 +273,6 @@ class HKU_HTTPD_API HttpServer {
 public:
     using HttpHandleFactory = std::function<net::awaitable<void>(void*)>;
     using WsHandleFactory = std::function<std::shared_ptr<WebSocketHandle>(void*)>;
-
-    // HTTP/WebSocket请求安全限制
-    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;     // 1MB
-    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB
-    static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;
-    static constexpr int MAX_CONNECTIONS = 1000;
-    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
-
-    // HTTP 请求超时限制（安全配置）
-    static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒
-    static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
-    static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
 
     HttpServer(const char* host, uint16_t port);
     virtual ~HttpServer();
@@ -360,9 +348,6 @@ public:
     // 全局连接池管理接口（public）
     static int get_active_connections() {
         return ms_active_connections.load(std::memory_order_relaxed);
-    }
-    static constexpr int get_max_connections() {
-        return MAX_CONNECTIONS;
     }
 
     // 全局连接池管理字段（public static）

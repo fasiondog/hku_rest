@@ -10,6 +10,7 @@
 #include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
 #include "WebSocketHandle.h"
+#include "HttpWebSocketConfig.h"
 
 #if HKU_OS_WINDOWS
 #include <Windows.h>
@@ -231,16 +232,16 @@ WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* 
 
     // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
     int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
-    while (expected < HttpServer::MAX_CONNECTIONS) {
+    while (expected < HttpConfig::MAX_CONNECTIONS) {
         if (HttpServer::ms_active_connections.compare_exchange_weak(
               expected, expected + 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
             break;
         }
     }
 
-    if (expected >= HttpServer::MAX_CONNECTIONS) {
+    if (expected >= HttpConfig::MAX_CONNECTIONS) {
         HKU_WARN("Global connection limit reached ({}), rejecting connection",
-                 HttpServer::MAX_CONNECTIONS);
+                 HttpConfig::MAX_CONNECTIONS);
         throw std::runtime_error("Connection limit reached");
     }
 
@@ -343,8 +344,8 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
             // 需要重新读取 HTTP 请求
             beast::flat_buffer buffer;
             http::request_parser<http::string_body> parser;
-            parser.body_limit(HttpServer::MAX_BODY_SIZE);
-            parser.header_limit(HttpServer::MAX_HEADER_SIZE);
+            parser.body_limit(HttpConfig::MAX_BODY_SIZE);
+            parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
 
             // 异步读取请求
             if (m_ssl_stream) {
@@ -519,7 +520,7 @@ net::awaitable<void> WebSocketConnection::sendPing() {
         while (m_ws_stream && m_ws_stream->is_open()) {
             // 等待 PING_INTERVAL
             net::steady_timer timer(m_io_ctx);
-            timer.expires_after(WebSocketContext::PING_INTERVAL);
+            timer.expires_after(WebSocketConfig::PING_INTERVAL);
             co_await timer.async_wait(net::use_awaitable);
 
             if (!m_ws_stream || !m_ws_stream->is_open()) {
@@ -527,7 +528,7 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             }
 
             // 设置超时定时器
-            m_ws_ctx->timer.expires_after(WebSocketContext::PING_TIMEOUT);
+            m_ws_ctx->timer.expires_after(WebSocketConfig::PING_TIMEOUT);
             auto weak_self = weak_from_this();
 
             // 异步发送 Ping（使用空 payload）
@@ -554,7 +555,7 @@ net::awaitable<void> WebSocketConnection::sendPing() {
 
 void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::socket&>& ws) {
     // 设置消息最大大小 (防止攻击者通过超大消息消耗内存)
-    ws.read_message_max(10 * 1024 * 1024);  // 10MB
+    ws.read_message_max(WebSocketConfig::MAX_MESSAGE_SIZE);
 
     // 注意：Boost.Beast 没有 write_message_max，只有 read_message_max
     // 写入大小由应用层控制
@@ -562,7 +563,8 @@ void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::sock
     // 禁用自动 Fragmentation，由应用层控制分片策略
     ws.auto_fragment(false);
 
-    HKU_DEBUG("WebSocket security configured: max_message_size={}", 10 * 1024 * 1024);
+    HKU_DEBUG("WebSocket security configured: max_message_size={}",
+              WebSocketConfig::MAX_MESSAGE_SIZE);
 }
 
 net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is_text) {
@@ -666,7 +668,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 
     // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
     int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
-    while (expected < HttpServer::MAX_CONNECTIONS) {
+    while (expected < HttpConfig::MAX_CONNECTIONS) {
         if (HttpServer::ms_active_connections.compare_exchange_weak(
               expected, expected + 1,
               std::memory_order_acq_rel,     // 成功时使用 acquire-release
@@ -675,9 +677,9 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
         }
     }
 
-    if (expected >= HttpServer::MAX_CONNECTIONS) {
+    if (expected >= HttpConfig::MAX_CONNECTIONS) {
         HKU_WARN("Global connection limit reached ({}), rejecting connection",
-                 HttpServer::MAX_CONNECTIONS);
+                 HttpConfig::MAX_CONNECTIONS);
         throw std::runtime_error("Connection limit reached");
     }
 
@@ -737,10 +739,10 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
         // 增加连接计数（使用 acquire-release 语义）
         if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_acq_rel) >=
-            HttpServer::MAX_CONNECTIONS) {
+            HttpConfig::MAX_CONNECTIONS) {
             HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_acq_rel);
             HKU_WARN("Global connection limit reached ({}), rejecting connection from {}:{}",
-                     HttpServer::MAX_CONNECTIONS, m_client_ip, m_client_port);
+                     HttpConfig::MAX_CONNECTIONS, m_client_ip, m_client_port);
             co_return;
         }
 
@@ -751,7 +753,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
         while (true) {
             // 检查 Keep-Alive 限制
-            if (++m_request_count > HttpServer::MAX_KEEPALIVE_REQUESTS) {
+            if (++m_request_count > HttpConfig::MAX_KEEPALIVE_REQUESTS) {
                 HKU_WARN("Keep-Alive limit reached ({} requests), closing connection from {}:{}",
                          m_request_count, m_client_ip, m_client_port);
                 decrement_connection();
@@ -760,7 +762,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
-            if (elapsed > HttpServer::MAX_CONNECTION_AGE) {
+            if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
                 HKU_WARN("Connection age limit reached, closing from {}:{}", m_client_ip,
                          m_client_port);
                 decrement_connection();
@@ -776,11 +778,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 配置 HTTP 解析器选项，防止超大请求和慢速攻击
             http::request_parser<http::string_body> parser;
-            parser.body_limit(HttpServer::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
-            parser.header_limit(HttpServer::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
+            parser.body_limit(HttpConfig::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
+            parser.header_limit(HttpConfig::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
 
             // 设置读取超时保护（带主动中断机制）
-            session->timer.expires_after(HttpServer::HEADER_TIMEOUT);
+            session->timer.expires_after(HttpConfig::HEADER_TIMEOUT);
 
             // 启动超时定时器，到期时主动取消异步操作
             // 使用 weak_ptr 防止定时器回调访问已销毁的 session
@@ -945,7 +947,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         // 设置业务处理超时保护（简化版本）
         // 注意：先取消可能存在的旧定时器，再启动新定时器
         context->timer.cancel();
-        context->timer.expires_after(HttpServer::TOTAL_TIMEOUT);
+        context->timer.expires_after(HttpConfig::TOTAL_TIMEOUT);
 
         // 启动超时定时器，到期时主动取消业务处理
         // 使用 weak_ptr 防止定时器回调访问已销毁的 context
@@ -992,7 +994,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
     try {
         // 设置写入超时保护
-        context->timer.expires_after(HttpServer::WRITE_TIMEOUT);
+        context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
 
         // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）
         if (m_ssl_stream) {
@@ -1332,8 +1334,8 @@ net::awaitable<void> HttpServer::doAccept() {
         }
 
         // 检查连接数限制
-        if (ms_active_connections.load(std::memory_order_relaxed) >= MAX_CONNECTIONS) {
-            CLS_WARN("Maximum connections ({}) reached, rejecting", MAX_CONNECTIONS);
+        if (ms_active_connections.load(std::memory_order_relaxed) >= HttpConfig::MAX_CONNECTIONS) {
+            CLS_WARN("Maximum connections ({}) reached, rejecting", HttpConfig::MAX_CONNECTIONS);
             continue;
         }
 

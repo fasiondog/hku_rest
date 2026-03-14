@@ -11,6 +11,7 @@
 #include "HttpError.h"
 #include "hikyuu/utilities/Log.h"
 #include "hikyuu/httpd/pod/MOHelper.h"
+#include "HttpWebSocketConfig.h"
 
 #include <string>
 #include <memory>
@@ -57,11 +58,8 @@ struct BeastContext {
     // 新增：取消令牌源，用于主动中断超时操作
     net::cancellation_signal cancel_signal;
 
-    // HTTP 请求大小限制（安全配置）
-    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;  // 1MB - 缓冲区最大大小
-
     BeastContext(tcp::socket& sock, net::io_context& io_ctx)
-    : socket(sock), timer(io_ctx), buffer(MAX_BUFFER_SIZE) {}
+    : socket(sock), timer(io_ctx), buffer(HttpConfig::MAX_BUFFER_SIZE) {}
 };
 
 class HKU_HTTPD_API HttpHandle {
