@@ -284,3 +284,204 @@ public:
 - [WebSocketHandle API](../../hikyuu/httpd/WebSocketHandle.h)
 - [HttpServer 实现](../../hikyuu/httpd/HttpServer.cpp)
 - [EchoWsHandle 示例](EchoWsHandle.h)
+
+# WebSocket Server 示例
+
+## 功能特性
+
+本示例展示了基于 Boost.Beast 的 WebSocket 服务器实现，支持以下特性：
+
+- ✅ HTTP/HTTPS/WebSocket统一架构
+- ✅ 协议自动检测（HTTP → WebSocket 升级）
+- ✅ SSL/TLS加密支持
+- ✅ 跨域资源共享（CORS）
+- ✅ **流式分批推送**（适用于行情数据推送）⭐
+
+## WebSocket 端点
+
+### 1. Echo 服务（基础测试）
+
+**地址：** `ws://localhost:8765/echo`
+
+**功能：** 简单的消息回显测试
+
+**测试方式：**
+```python
+import websockets
+
+async with websockets.connect("ws://localhost:8765/echo") as ws:
+    await ws.send("Hello")
+    response = await ws.recv()  # 返回 "Hello"
+```
+
+### 2. 行情推送服务（新功能）⭐
+
+**地址：** `ws://localhost:8765/quotes`
+
+**功能：** 演示如何推送 10000 条股票行情数据
+
+#### 模式一：订阅模式（预生成列表）
+
+适合内存充足场景，预先准备好所有数据：
+
+```python
+import websockets
+import json
+
+async with websockets.connect("ws://localhost:8765/quotes") as ws:
+    # 发送订阅请求
+    request = {
+        "action": "subscribe_quotes",
+        "symbols": ["SH600000", "SH600001", ...]  # 可选，默认 10000 只
+    }
+    await ws.send(json.dumps(request))
+    
+    # 接收推送
+    while True:
+        response = await ws.recv()
+        data = json.loads(response)
+        if data.get("type") == "quote_finish":
+            print(f"推送完成：{data}")
+            break
+```
+
+**性能指标：**
+- 批次大小：500 条/批
+- 批次间隔：50ms
+- 10000 条数据预计耗时：~1 秒（20 批次 × 50ms）
+
+#### 模式二：流式模式（动态生成器）
+
+适合内存敏感场景，边生成边发送：
+
+```python
+import websockets
+import json
+
+async with websockets.connect("ws://localhost:8765/quotes") as ws:
+    # 发送流式推送请求
+    request = {
+        "action": "stream_quotes",
+        "count": 10000  # 推送数量
+    }
+    await ws.send(json.dumps(request))
+    
+    # 接收推送
+    quote_count = 0
+    while True:
+        response = await ws.recv()
+        data = json.loads(response)
+        
+        if data.get("type") == "stream_finish":
+            print(f"流式推送完成：{data}")
+            break
+        
+        # 统计行情数据
+        if "symbol" in data:
+            quote_count += 1
+            if quote_count % 100 == 0:
+                print(f"已接收 {quote_count} 条行情")
+```
+
+## 运行示例
+
+### 1. 启动服务器
+
+```bash
+cd /Users/fasiondog/workspace/hku_rest
+xmake r websocket_server
+```
+
+### 2. 安装 Python 依赖
+
+```bash
+pip3 install --user websockets
+```
+
+### 3. 运行测试脚本
+
+#### 基础 Echo 测试
+
+```bash
+python example/websocket_server/simple_ws_test.py
+```
+
+#### 综合心跳测试
+
+```bash
+python example/websocket_server/comprehensive_heartbeat_test.py
+```
+
+#### 流式推送功能测试（新增）⭐
+
+```bash
+python example/websocket_server/test_quote_push.py
+```
+
+## 技术实现细节
+
+### 配置参数（WebSocketConfig）
+
+```cpp
+// hikyuu/httpd/HttpWebSocketConfig.h
+struct WebSocketConfig {
+    // 流式分批推送配置
+    static constexpr bool ENABLE_STREAMING_BATCH = true;  // 启用流式分批
+    static constexpr std::size_t BATCH_SIZE = 500;        // 500 条/批
+    static constexpr std::chrono::milliseconds BATCH_INTERVAL{50}; // 50ms 间隔
+    
+    // 消息大小限制
+    static constexpr std::size_t MAX_MESSAGE_SIZE = 15 * 1024 * 1024;  // 15MB
+    static constexpr std::size_t MAX_FRAME_SIZE = 15 * 1024 * 1024;    // 15MB
+    static constexpr std::size_t MAX_READ_BUFFER_SIZE = 32 * 1024 * 1024; // 32MB
+    
+    // 心跳机制
+    static constexpr std::chrono::seconds PING_INTERVAL{30};  // 30 秒
+    static constexpr std::chrono::seconds PING_TIMEOUT{15};   // 15 秒
+};
+```
+
+### API 方法
+
+#### sendBatch - 预生成列表模式
+
+```cpp
+net::awaitable<bool> sendBatch(
+    const std::vector<std::string>& messages,  // 消息列表
+    bool is_text = true,                        // 消息类型
+    std::size_t batchSize = 500,               // 每批数量
+    std::chrono::milliseconds batchInterval = std::chrono::milliseconds(50)
+);
+```
+
+#### sendBatch - 动态生成器模式
+
+```cpp
+net::awaitable<bool> sendBatch(
+    std::function<std::optional<std::string>()> generator,  // 生成器函数
+    bool is_text = true,                                     // 消息类型
+    std::size_t batchSize = 500,                            // 每批数量
+    std::chrono::milliseconds batchInterval = std::chrono::milliseconds(50)
+);
+```
+
+### 优势
+
+1. **避免网络拥塞**：将大数据集分割成小批次，避免一次性推送造成的网络阻塞
+2. **内存友好**：生成器版本支持边生成边发送，无需预先加载全部数据到内存
+3. **可调节速率**：通过调整 batchSize 和 batchInterval 控制推送速率
+4. **自动日志记录**：自动记录每批发送进度和总耗时
+5. **错误处理**：中途失败立即返回 false，便于及时重试或降级
+
+### 注意事项
+
+1. 所有批次共享同一个连接，如果连接中断会立即返回失败
+2. 批次间隔时间应结合网络延迟和客户端处理能力调整
+3. 建议配合心跳机制检测连接状态
+4. 对于实时性要求极高的场景，可减少批次间隔或增大批次大小
+
+## 更多资源
+
+- [Boost.Beast 官方文档](https://www.boost.org/doc/libs/release/libs/beast/)
+- [Boost.Asio 异步编程指南](https://www.boost.org/doc/libs/release/libs/asio/)
+- [WebSocket RFC 6455](https://datatracker.ietf.org/doc/html/rfc6455)

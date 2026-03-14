@@ -10,6 +10,7 @@
 #include <hikyuu/httpd/HttpServer.h>
 #include "hikyuu/httpd/pod/all.h"
 #include "EchoWsHandle.h"
+#include "QuotePushHandle.h"
 
 using namespace hku;
 
@@ -73,8 +74,11 @@ int main(int argc, char* argv[]) {
 
         // ========== 注册 WebSocket Handle ==========
 
-        // 方式 1: 模板方式 (推荐)
+        // 方式 1: 模板方式（推荐）- Echo 测试服务
         server->WS<EchoWsHandle>("/echo");
+        
+        // 方式 2: 行情推送示例（演示流式分批推送功能）
+        server->WS<QuotePushHandle>("/quotes");
 
         // ========== 可选配置 ==========
 
@@ -93,14 +97,24 @@ int main(int argc, char* argv[]) {
 
         std::cout << std::endl;
         std::cout << "Endpoints:" << std::endl;
-        std::cout << "  HTTP REST API:  http://0.0.0.0:8765/api/hello" << std::endl;
-        std::cout << "  WebSocket:      ws://0.0.0.0:8765/echo" << std::endl;
+        std::cout << "  HTTP REST API:     http://0.0.0.0:8765/api/hello" << std::endl;
+        std::cout << "  WebSocket Echo:    ws://0.0.0.0:8765/echo (基础测试)" << std::endl;
+        std::cout << "  WebSocket Quotes:  ws://0.0.0.0:8765/quotes (行情推送)" << std::endl;
+        std::cout << std::endl;
+        std::cout << "Quote Push Examples:" << std::endl;
+        std::cout << "  1. Subscribe mode (pre-generated list):" << std::endl;
+        std::cout << "     {\"action\": \"subscribe_quotes\", \"symbols\": [\"SH600000\", ...]}" << std::endl;
+        std::cout << std::endl;
+        std::cout << "  2. Streaming mode (dynamic generator):" << std::endl;
+        std::cout << "     {\"action\": \"stream_quotes\", \"count\": 10000}" << std::endl;
         std::cout << std::endl;
         std::cout << "Features:" << std::endl;
         std::cout << "  ✓ Unified HTTP + WebSocket server" << std::endl;
         std::cout << "  ✓ Shared IO thread pool" << std::endl;
         std::cout << "  ✓ Shared SSL/TLS configuration" << std::endl;
         std::cout << "  ✓ Auto protocol detection" << std::endl;
+        std::cout << "  ✓ Streaming batch push (500 msg/batch, 50ms interval)" << std::endl;
+        std::cout << "  ✓ Push 10000 quotes in ~1 second" << std::endl;
         std::cout << std::endl;
 
         // 启动服务器
