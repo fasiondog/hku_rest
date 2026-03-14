@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
 
     // HTTP 服务器
     HttpServer server("0.0.0.0", 8080);
-    // HttpHandle::enableTrace(true, false);
+    HttpHandle::enableTrace(true, false);
 
     // HTTPS 服务器示例
     // HttpServer server("0.0.0.0", 8443);

@@ -7,7 +7,6 @@
 
 #pragma once
 
-#include <nlohmann/json.hpp>
 #include "config.h"
 #include "HttpError.h"
 #include "hikyuu/utilities/Log.h"
@@ -36,15 +35,12 @@
 #define HKU_HTTPD_API
 #endif
 
+namespace hku {
+
 namespace beast = boost::beast;
 namespace http = beast::http;
 namespace net = boost::asio;
 using tcp = net::ip::tcp;
-
-using json = nlohmann::json;                  // 不保持插入排序
-using ordered_json = nlohmann::ordered_json;  // 保持插入排序
-
-namespace hku {
 
 /**
  * Beast 上下文 - 封装 beast 的请求和响应对象
@@ -73,7 +69,7 @@ struct BeastContext {
     static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒（新增）
 
     // Keep-Alive 连接限制（防滥用）
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;          // 单个连接最大请求数（压测场景）
+    static constexpr int MAX_KEEPALIVE_REQUESTS = 100000;         // 单个连接最大请求数（压测场景）
     static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
 
     BeastContext(tcp::socket& sock, net::io_context& io_ctx)
@@ -166,9 +162,6 @@ public:
      */
     std::string tryGetReqData() noexcept;
 
-    /** 返回请求的 json 数据，如无法解析为 json，将抛出异常*/
-    json getReqJson();
-
     /** 判断请求的 ulr 中是否包含 query 参数 */
     bool haveQueryParams() const noexcept;
 
@@ -187,21 +180,6 @@ public:
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
             ctx->res.set(key, val);
         }
-    }
-
-    /** 设置响应数据，并根据 Content-encoding 进行 gzip 压缩 */
-    void setResData(const char* content);
-
-    void setResData(const std::string& content) {
-        setResData(content.c_str());
-    }
-
-    void setResData(const json& data) {
-        setResData(data.dump());
-    }
-
-    void setResData(const ordered_json& data) {
-        setResData(data.dump());
     }
 
     /** 获取当前的相应数据 */
@@ -254,9 +232,6 @@ private:
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
     std::vector<std::function<net::awaitable<void>(HttpHandle*)>> m_filters;
-
-    // 响应数据（临时存储，在 run() 完成后统一写入 BeastContext）
-    std::string m_res_body;
 
 public:
     static void enableTrace(bool enable, bool only_traceid = false) {

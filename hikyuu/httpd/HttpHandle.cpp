@@ -9,7 +9,6 @@
 #include <hikyuu/utilities/arithmetic.h>
 #include <hikyuu/utilities/datetime/Datetime.h>
 #include <hikyuu/utilities/http_client/url.h>
-#include "gzip/compress.hpp"
 #include "gzip/decompress.hpp"
 #include "gzip/utils.hpp"
 #include "HttpHandle.h"
@@ -35,9 +34,7 @@ namespace hku {
 bool HttpHandle::ms_enable_trace = false;
 bool HttpHandle::ms_enable_only_traceid = false;
 
-HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {
-    // 所有请求信息均延迟到实际调用相应 getter 时从 BeastContext 中提取
-}
+HttpHandle::HttpHandle(void* beast_context) : m_beast_context(beast_context) {}
 
 net::awaitable<void> HttpHandle::operator()() {
     if (!m_beast_context) {
@@ -46,40 +43,17 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
-        // 默认响应状态码为 200，无需显式设置
-
         for (const auto& filter : m_filters) {
             co_await filter(this);
         }
 
-        std::string encodings = getReqHeader("Accept-Encoding");
-        size_t pos = encodings.find("gzip");
-        if (pos != std::string::npos) {
-            setResHeader("Content-Encoding", "gzip");
-        }
-
         co_await before_run();
-
-        // 协程方式调用 run 方法
         co_await run();
-
         co_await after_run();
 
-        // 将响应体写入 BeastContext（响应头已通过 setResHeader 直接设置）
-        // 注意：状态码已在 setResStatus 或 processException 中直接写入 context
-        if (m_beast_context) {
-            auto* ctx = static_cast<BeastContext*>(m_beast_context);
-
-            // 设置响应体
-            ctx->res.body() = m_res_body;
-            ctx->res.prepare_payload();
-        }
-
-    } catch (nlohmann::json::exception& e) {
-        processException(400, INVALID_JSON_REQUEST, e.what());
-        CLS_WARN("HttpBadRequestError({}): {}, client: {}:{}, url: {}, req: {}",
-                 int(INVALID_JSON_REQUEST), e.what(), getClientIp(), getClientPort(), getReqUrl(),
-                 tryGetReqData());
+        // 默认响应状态码为 200，无需显式设置
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->res.prepare_payload();
 
     } catch (HttpError& e) {
         processException(e.status(), e.errcode(), e.what());
@@ -100,6 +74,21 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     co_return;
+}
+
+void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
+    try {
+        // 直接设置错误响应的状态码和数据
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->res.result(http_status);
+        ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
+        ctx->res.prepare_payload();
+    } catch (std::exception& e) {
+        CLS_ERROR("Exception in processException: {}", e.what());
+    } catch (...) {
+        CLS_FATAL("Unknown error in processException!");
+    }
 }
 
 void HttpHandle::printTraceInfo() noexcept {
@@ -153,48 +142,25 @@ void HttpHandle::printTraceInfo() noexcept {
     }
 }
 
-void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
-    try {
-        // 直接设置错误响应的状态码和数据
-        if (m_beast_context) {
-            auto* ctx = static_cast<BeastContext*>(m_beast_context);
-            ctx->res.result(http_status);
-            ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-            ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
-            ctx->res.prepare_payload();
-        }
-
-        setResHeader("Content-Type", "application/json; charset=UTF-8");
-        m_res_body = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
-    } catch (std::exception& e) {
-        CLS_ERROR("Exception in processException: {}", e.what());
-    } catch (...) {
-        CLS_FATAL("Unknown error in processException!");
-    }
-}
-
 std::string HttpHandle::getReqMethod() const noexcept {
-    if (!m_beast_context) {
-        return "";
-    }
-
+    std::string ret;
+    HKU_IF_RETURN(!m_beast_context, ret);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
-    return std::string(ctx->req.method_string());
+    ret = ctx->req.method_string();
+    return ret;
 }
 
 std::string HttpHandle::getReqUrl() const noexcept {
-    if (!m_beast_context) {
-        return "";
-    }
-
+    std::string ret;
+    HKU_IF_RETURN(!m_beast_context, ret);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
-    return std::string(ctx->req.target());
+    ret = ctx->req.target();
+    return ret;
 }
 
 std::string HttpHandle::getReqHeader(const char* name) const noexcept {
-    if (!m_beast_context) {
-        return "";
-    }
+    std::string ret;
+    HKU_IF_RETURN(!m_beast_context, ret);
 
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     auto& req = ctx->req;
@@ -202,20 +168,21 @@ std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     // 直接遍历请求头查找
     for (auto& field : req) {
         if (field.name_string() == name) {
-            return std::string(field.value());
+            ret = field.value();
+            break;
         }
     }
 
-    return "";
+    return ret;
 }
 
 std::string HttpHandle::getReqData() {
+    std::string result;
     if (!m_beast_context) {
-        return "";
+        return result;
     }
 
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
-    std::string result;
 
     std::string encoding = getReqHeader("Content-Encoding");
     if (encoding.empty()) {
@@ -228,7 +195,7 @@ std::string HttpHandle::getReqData() {
     } else {
         throw HttpNotAcceptableError(
           HttpNotAcceptableError::UNSUPPORT_CONTENT_ENCODING,
-          fmt::format("Unsupported Content-Encoding format: {}", encoding));
+          fmt::format("Unsupported Content-Encoding format: {}! only gzip", encoding));
     }
 
     return result;
@@ -244,28 +211,18 @@ std::string HttpHandle::tryGetReqData() noexcept {
 
 std::string HttpHandle::getResData() const {
     std::string result;
+    HKU_IF_RETURN(!m_beast_context, result);
 
-    if (!gzip::is_compressed(m_res_body.data(), m_res_body.size())) {
-        result = m_res_body;
+    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+    auto& body = ctx->res.body();
+
+    if (!gzip::is_compressed(body.data(), body.size())) {
+        result = body;
         return result;
     }
 
     gzip::Decompressor decomp;
-    decomp.decompress(result, m_res_body.data(), m_res_body.size());
-    return result;
-}
-
-json HttpHandle::getReqJson() {
-    std::string data = getReqData();
-    json result;
-    try {
-        if (!data.empty()) {
-            result = json::parse(data);
-        }
-    } catch (json::exception& e) {
-        HKU_ERROR("Failed parse json: {}", data);
-        throw HttpBadRequestError(BadRequestErrorCode::INVALID_JSON_REQUEST, e.what());
-    }
+    decomp.decompress(result, body.data(), body.size());
     return result;
 }
 
@@ -330,25 +287,6 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
     return query_params.size() != 0;
 }
 
-void HttpHandle::setResData(const char* content) {
-    const char* encoding = nullptr;
-    // 直接从 BeastContext 读取 Content-Encoding
-    if (m_beast_context) {
-        auto* ctx = static_cast<BeastContext*>(m_beast_context);
-        auto it = ctx->res.find("Content-Encoding");
-        if (it != ctx->res.end()) {
-            encoding = it->value().data();
-        }
-    }
-
-    if (!encoding) {
-        m_res_body = content;
-    } else {
-        gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
-        comp.compress(m_res_body, content, strlen(content));
-    }
-}
-
 std::string HttpHandle::getLanguage() const {
     std::string lang = getReqHeader("Accept-Language");
     auto pos = lang.find_first_of(',');
@@ -362,12 +300,11 @@ std::string HttpHandle::getLanguage() const {
 }
 
 std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
-    if (!m_beast_context) {
-        return "";
-    }
+    std::string result;
+    HKU_IF_RETURN(!m_beast_context, result);
 
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
-    std::string result = ctx->client_ip;
+    result = ctx->client_ip;
 
     if (tryFromHeader) {
         std::string ip_hdr;
@@ -402,10 +339,7 @@ std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
 }
 
 uint16_t HttpHandle::getClientPort() const noexcept {
-    if (!m_beast_context) {
-        return 0;
-    }
-
+    HKU_IF_RETURN(!m_beast_context, 0);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return ctx->client_port;
 }

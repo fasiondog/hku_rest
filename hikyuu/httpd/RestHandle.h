@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <nlohmann/json.hpp>
 #include <stdlib.h>
 #include <string_view>
 #include <string>
@@ -20,7 +21,10 @@
 
 namespace hku {
 
-class RestHandle : public HttpHandle {
+using json = nlohmann::json;                  // 不保持插入排序
+using ordered_json = nlohmann::ordered_json;  // 保持插入排序
+
+class HKU_HTTPD_API RestHandle : public HttpHandle {
     CLASS_LOGGER_IMP(RestHandle)
 
 public:
@@ -28,22 +32,10 @@ public:
         // addFilter(AuthorizeFilter);
     }
 
-    virtual ~RestHandle() {}
+    virtual ~RestHandle() override = default;
 
-    virtual net::awaitable<void> before_run() override {
-        setResHeader("Content-Type", "application/json; charset=UTF-8");
-        req = getReqJson();
-        co_return;
-    }
-
-    virtual net::awaitable<void> after_run() override {
-        // 强制关闭连接，即仅有短连接
-        json new_res;
-        new_res["ret"] = 0;
-        new_res["data"] = std::move(res);
-        setResData(new_res);
-        co_return;
-    }
+    virtual net::awaitable<void> before_run() override;
+    virtual net::awaitable<void> after_run() override;
 
 protected:
     void check_missing_param(std::string_view param) {
