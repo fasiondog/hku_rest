@@ -204,6 +204,7 @@ public:
     static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB
     static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;
     static constexpr int MAX_CONNECTIONS = 1000;
+    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
 
     HttpServer(const char* host, uint16_t port);
     virtual ~HttpServer();

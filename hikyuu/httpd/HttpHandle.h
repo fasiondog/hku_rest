@@ -58,19 +58,13 @@ struct BeastContext {
     net::cancellation_signal cancel_signal;
 
     // HTTP 请求大小限制（安全配置）
-    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;     // 1MB - 缓冲区最大大小
-    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB - 请求体最大大小
-    static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB - 请求头最大大小
+    static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;  // 1MB - 缓冲区最大大小
 
     // HTTP 请求超时限制（安全配置）
     static constexpr std::chrono::seconds READ_TIMEOUT{30};    // 读取请求超时：30 秒
     static constexpr std::chrono::seconds WRITE_TIMEOUT{30};   // 写入响应超时：30 秒
     static constexpr std::chrono::seconds TOTAL_TIMEOUT{60};   // 总处理超时：60 秒
     static constexpr std::chrono::seconds HEADER_TIMEOUT{10};  // 请求头首字节超时：10 秒（新增）
-
-    // Keep-Alive 连接限制（防滥用）
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 100000;         // 单个连接最大请求数（压测场景）
-    static constexpr std::chrono::minutes MAX_CONNECTION_AGE{5};  // 连接最大存活时间：5 分钟
 
     BeastContext(tcp::socket& sock, net::io_context& io_ctx)
     : socket(sock), timer(io_ctx), buffer(MAX_BUFFER_SIZE) {}

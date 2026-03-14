@@ -297,7 +297,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
         while (true) {
             // 检查 Keep-Alive 限制
-            if (++m_request_count > BeastContext::MAX_KEEPALIVE_REQUESTS) {
+            if (++m_request_count > HttpServer::MAX_KEEPALIVE_REQUESTS) {
                 HKU_WARN("Keep-Alive limit reached ({} requests), closing connection from {}:{}",
                          m_request_count, m_client_ip, m_client_port);
                 decrement_connection();
@@ -306,7 +306,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
-            if (elapsed > BeastContext::MAX_CONNECTION_AGE) {
+            if (elapsed > HttpServer::MAX_CONNECTION_AGE) {
                 HKU_WARN("Connection age limit reached, closing from {}:{}", m_client_ip,
                          m_client_port);
                 decrement_connection();
@@ -322,8 +322,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 配置 HTTP 解析器选项，防止超大请求和慢速攻击
             http::request_parser<http::string_body> parser;
-            parser.body_limit(BeastContext::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
-            parser.header_limit(BeastContext::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
+            parser.body_limit(HttpServer::MAX_BODY_SIZE);      // 限制请求体最大为 10MB
+            parser.header_limit(HttpServer::MAX_HEADER_SIZE);  // 限制请求头最大为 8KB
 
             // 设置读取超时保护（带主动中断机制）
             session->timer.expires_after(BeastContext::HEADER_TIMEOUT);
