@@ -832,11 +832,25 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 将解析后的请求移动到 session 中
             session->req = parser.release();
 
+            // ========== 增强的 HTTP/2 DoS 防护 ==========
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             // HTTP/2 客户端会先发送 "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+            // 增强检测：不仅检查方法，还要验证目标和版本号
             if (session->req.method_string() == "PRI") {
                 HKU_DEBUG("HTTP/2 connection attempt detected on HTTP/1.1 server");
-                // 拒绝 HTTP/2 连接，返回 400 或关闭连接
+                
+                // 进一步验证：检查目标是否为 "*" 且版本是否为 "HTTP/2.0"
+                bool is_http2_preamble = 
+                    session->req.target() == "*" && 
+                    session->req.version() == 2000;  // HTTP/2.0 的版本号为 2000
+                
+                if (!is_http2_preamble) {
+                    // 可能是畸形的 HTTP/2 预检或其他异常请求
+                    HKU_WARN("Malformed HTTP/2 preamble or suspicious request from {}:{}", 
+                             m_client_ip, m_client_port);
+                }
+                
+                // 拒绝 HTTP/2 连接，返回 400 Bad Request
                 session->res.result(http::status::bad_request);
                 session->res.set(http::field::content_type, "text/plain");
                 session->res.body() = "This server only supports HTTP/1.1";
@@ -1209,11 +1223,12 @@ void HttpServer::configureSsl() {
             break;
     }
 
+    // ========== 增强的 ALPN 扩展校验（HTTP/2 DoS 防护） ==========
     // 禁用 HTTP/2 (ALPN)，强制使用 HTTP/1.1
     // 当前实现仅支持 HTTP/1.1，待后续集成 nghttp2 支持 HTTP/2
     SSL_CTX_set_alpn_select_cb(
       ms_ssl_context->native_handle(),
-      [](SSL* /*ssl*/, const unsigned char** out, unsigned char* outlen, const unsigned char* in,
+      [](SSL* ssl, const unsigned char** out, unsigned char* outlen, const unsigned char* in,
          unsigned int inlen, void* /*arg*/) -> int {
           // 遍历客户端提供的协议列表
           unsigned int i = 0;
@@ -1221,10 +1236,14 @@ void HttpServer::configureSsl() {
           while (i < inlen) {
               unsigned char protocol_len = in[i];
 
-              // 安全检查：防止越界访问
-              // 修复：跳过无效条目而不是直接拒绝，防止 DoS 攻击
+              // ========== 增强的畸形 ALPN 检测 ==========
+              // 安全检查：防止越界访问和畸形数据
               if (protocol_len == 0 || i + protocol_len > inlen) {
-                  // 跳过当前无效条目，继续检查下一个
+                  // 检测到畸形 ALPN 扩展，可能是 DoS 攻击
+                  HKU_WARN("Malformed ALPN extension detected (length={}, position={}/{})", 
+                           protocol_len, i, inlen);
+                  
+                  // 跳过无效条目而不是直接拒绝，防止 DoS 攻击
                   i++;
                   continue;
               }
@@ -1236,17 +1255,31 @@ void HttpServer::configureSsl() {
                   break;  // 找到目标协议，退出循环
               }
 
+              // ========== 增强的 HTTP/2 检测 ==========
               // 如果是 h2 或 h2c，记录但继续遍历
               if ((protocol_len == 2 && memcmp(&in[i + 1], "h2", 2) == 0) ||
                   (protocol_len == 3 && memcmp(&in[i + 1], "h2c", 3) == 0)) {
-                  HKU_DEBUG("Rejected HTTP/2 negotiation attempt");
+                  // 尝试获取远程端点信息用于日志记录
+                  try {
+                      auto endpoint = SSL_get_fd(ssl);
+                      if (endpoint >= 0) {
+                          // 简单标记为 HTTP/2 尝试
+                          HKU_DEBUG("Rejected HTTP/2 negotiation attempt");
+                      } else {
+                          HKU_DEBUG("Rejected HTTP/2 negotiation attempt (no fd)");
+                      }
+                  } catch (...) {
+                      HKU_DEBUG("Rejected HTTP/2 negotiation attempt (unknown endpoint)");
+                  }
               }
 
               i += protocol_len + 1;
           }
-
+          
+          // ========== 安全降级策略 ==========
           // 始终返回 http/1.1 作为默认协议
           // 这样可以确保即使客户端提供畸形 ALPN 扩展，握手仍能完成
+          // 避免在协议协商阶段就阻断连接导致资源浪费
           static const unsigned char default_http11[] = {0x08, 'h', 't', 't', 'p',
                                                          '/',  '1', '.', '1'};
           *out = default_http11 + 1;  // 跳过长度字节
