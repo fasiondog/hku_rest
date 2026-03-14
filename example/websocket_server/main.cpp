@@ -26,8 +26,6 @@ void signal_handle(int signal) {
     exit(0);  // 直接退出，不再返回 main 函数
 }
 
-
-
 /**
  * @brief 统一的 HTTP + WebSocket 服务器示例
  *
@@ -103,8 +101,6 @@ int main(int argc, char* argv[]) {
         std::cout << "  ✓ Shared IO thread pool" << std::endl;
         std::cout << "  ✓ Shared SSL/TLS configuration" << std::endl;
         std::cout << "  ✓ Auto protocol detection" << std::endl;
-        std::cout << "  ✓ Connection pooling (max: " << HttpServer::get_max_connections() << ")"
-                  << std::endl;
         std::cout << std::endl;
 
         // 启动服务器
