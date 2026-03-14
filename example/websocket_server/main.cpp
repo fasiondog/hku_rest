@@ -50,8 +50,24 @@ int main(int argc, char* argv[]) {
         std::cout << "HTTP + WebSocket Unified Server" << std::endl;
         std::cout << "========================================" << std::endl;
 
-        // 创建统一的 HTTP 服务器实例 (同时支持 WebSocket)
+        // ========== 方案 A: 单端口模式（推荐） ==========
+        // HTTP 和 WebSocket 共用 8765 端口，通过路径区分：
+        // - HTTP API: /api/*
+        // - WebSocket: /echo, /quotes
         auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+        
+        // ========== 方案 B: 双端口模式（如需独立端口） ==========
+        // 如果确实需要独立的 HTTP 和 WebSocket 端口，需要创建两个服务器实例并分别运行
+        // 注意：当前版本不支持多实例，需要使用以下变通方案：
+        /*
+        // 方案 B1: 使用不同端口的两个独立进程（推荐用于生产环境）
+        // 进程 1: HTTP 服务器 (端口 8765)
+        // 进程 2: WebSocket 服务器 (端口 8766)
+        // 通过进程管理器（如 systemd/supervisord）分别管理
+        
+        // 方案 B2: 单线程交替处理（不推荐，复杂且性能差）
+        // 需要修改 HttpServer 架构，使每个实例拥有独立的 io_context
+        */
 
         // ========== 注册 HTTP Handle ==========
 

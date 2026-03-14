@@ -10,6 +10,131 @@
 - ✅ **资源共享**: 共享 IO 线程池、SSL 配置和连接管理
 - ✅ **协议检测**: 自动识别并路由 HTTP 和 WebSocket请求
 - ✅ **零迁移成本**: API 与旧版 WebSocketServer 完全兼容
+- ✅ **灵活部署**: 支持单端口模式或双端口独立部署
+
+## 端口配置说明
+
+### 方案 A: 单端口模式（推荐）⭐
+
+**HTTP 和 WebSocket 共用同一个端口**，通过路径前缀区分：
+
+```cpp
+auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+
+// HTTP API (路径前缀：/api/*)
+server->GET<HelloHandle>("/api/hello");
+server->registerHttpHandle("GET", "/api/download", download_handler);
+
+// WebSocket (路径：/echo, /quotes 等)
+server->WS<EchoWsHandle>("/echo");
+server->WS<QuotePushHandle>("/quotes");
+```
+
+**访问方式：**
+- HTTP: `http://localhost:8765/api/hello`
+- WebSocket: `ws://localhost:8765/echo`
+
+**优点：**
+- ✅ 配置简单，只需管理一个端口
+- ✅ 资源共享，减少系统开销
+- ✅ 现代服务架构的最佳实践（类似 FastAPI、gRPC）
+
+### 方案 B: 双端口模式
+
+**HTTP 和 WebSocket 使用不同的端口**，完全独立：
+
+#### 当前架构限制 ⚠️
+
+**注意**：当前版本的 `HttpServer` 使用静态成员变量管理 IO 上下文和监听器，**不支持在单个进程中创建多个服务器实例**。
+
+如需双端口部署，推荐以下两种方案：
+
+#### 方案 B1: 多进程部署（推荐用于生产环境）⭐
+
+使用进程管理器分别运行 HTTP 和 WebSocket 服务：
+
+**进程 1: HTTP 服务器 (配置文件 `http_server.conf`)**
+```python
+# /etc/supervisor/conf.d/http_server.conf
+[program:http_server]
+command=/path/to/websocket_server --port 8765 --mode http
+autostart=true
+autorestart=true
+```
+
+**进程 2: WebSocket 服务器 (配置文件 `ws_server.conf`)**
+```python
+# /etc/supervisor/conf.d/ws_server.conf
+[program:ws_server]
+command=/path/to/websocket_server --port 8766 --mode ws
+autostart=true
+autorestart=true
+```
+
+**启动命令：**
+```bash
+sudo supervisorctl reread
+sudo supervisorctl update
+sudo supervisorctl start http_server
+sudo supervisorctl start ws_server
+```
+
+**优点：**
+- ✅ 完全隔离，互不影响
+- ✅ 可独立扩展和重启
+- ✅ 故障域分离
+- ✅ 易于监控和管理
+
+#### 方案 B2: 修改架构支持多实例（需要代码改造）
+
+需要重构 `HttpServer`，将静态成员改为实例成员：
+
+```cpp
+// 修改后的 HttpServer 设计（伪代码）
+class HttpServer {
+private:
+    net::io_context m_io_context;      // 每个实例独立的 IO 上下文
+    tcp::acceptor m_acceptor;          // 每个实例独立的监听器
+    std::thread m_io_thread;           // 每个实例独立的 IO 线程
+    
+public:
+    void start() {
+        // 启动独立的 IO 线程
+        m_io_thread = std::thread([this]() {
+            m_io_context.run();
+        });
+    }
+    
+    void stop() {
+        m_io_context.stop();
+        m_io_thread.join();
+    }
+};
+
+// 使用示例
+auto http_server = std::make_unique<HttpServer>("0.0.0.0", 8765);
+auto ws_server = std::make_unique<HttpServer>("0.0.0.0", 8766);
+
+http_server->start();
+ws_server->start();
+
+// 主线程等待或处理其他任务
+while (running) {
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+}
+
+http_server->stop();
+ws_server->stop();
+```
+
+**访问方式：**
+- HTTP: `http://localhost:8765/api/hello`
+- WebSocket: `ws://localhost:8766/echo`
+
+**适用场景：**
+- 🔧 需要独立控制 HTTP 和 WebSocket 的访问策略
+- 🔧 需要分别扩展某个协议的服务实例
+- 🔧 安全要求严格隔离的场景
 
 ## 编译
 
@@ -33,7 +158,7 @@ curl http://localhost:8765/api/hello
 ```
 
 **响应:**
-```json
+```
 {"message": "Hello from HTTP Server!"}
 ```
 
