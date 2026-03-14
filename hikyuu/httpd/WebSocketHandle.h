@@ -43,6 +43,10 @@ struct WebSocketContext {
     net::steady_timer timer;
     net::cancellation_signal cancel_signal;
 
+    // 保存发送和关闭的回调函数（由 WebSocketConnection 设置）
+    std::function<net::awaitable<bool>(std::string_view, bool)> send_callback;
+    std::function<net::awaitable<void>(ws::close_code, std::string_view)> close_callback;
+
     // 安全限制配置 - 复用 HTTP 模块的安全限制标准 (10MB)
     static constexpr std::size_t MAX_MESSAGE_SIZE =
       10 * 1024 * 1024;  // 10MB - 消息最大大小 (与 HTTP 请求体一致)
@@ -127,7 +131,7 @@ protected:
      * @param is_text true 表示文本消息，false 表示二进制消息
      * @return true 成功，false 失败
      */
-    net::awaitable<bool> send(std::string_view message, bool is_text = true);
+    virtual net::awaitable<bool> send(std::string_view message, bool is_text = true);
 
     /**
      * 发送消息给所有连接的客户端（广播）
@@ -154,8 +158,8 @@ protected:
      * @param code WebSocket 关闭码
      * @param reason 关闭原因
      */
-    net::awaitable<void> close(ws::close_code code = ws::close_code::normal,
-                               std::string_view reason = "");
+    virtual net::awaitable<void> close(ws::close_code code = ws::close_code::normal,
+                                       std::string_view reason = "");
 
     /**
      * @brief 配置 WebSocket 安全选项

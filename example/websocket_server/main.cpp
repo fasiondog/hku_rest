@@ -8,9 +8,25 @@
 #include <iostream>
 #include <csignal>
 #include <hikyuu/httpd/HttpServer.h>
+#include "hikyuu/httpd/pod/all.h"
 #include "EchoWsHandle.h"
 
 using namespace hku;
+
+static std::atomic<bool> g_shutdown_flag{false};  // 防止重复退出
+
+void signal_handle(int signal) {
+    if (g_shutdown_flag.exchange(true)) {
+        return;  // 已经处理过退出信号，忽略后续信号
+    }
+
+    HKU_INFO("Shutdown now ...");
+    hku::pod::quit();
+    HttpServer::stop();
+    exit(0);  // 直接退出，不再返回 main 函数
+}
+
+
 
 /**
  * @brief 统一的 HTTP + WebSocket 服务器示例
@@ -22,6 +38,11 @@ using namespace hku;
  */
 int main(int argc, char* argv[]) {
     try {
+        std::signal(SIGINT, signal_handle);
+        std::signal(SIGTERM, signal_handle);
+        std::signal(SIGABRT, signal_handle);
+        std::signal(SIGSEGV, signal_handle);
+
         // 设置日志级别（可选）
         // setLogLevel(2);
 
@@ -56,12 +77,6 @@ int main(int argc, char* argv[]) {
 
         // 方式 1: 模板方式 (推荐)
         server->WS<EchoWsHandle>("/echo");
-
-        // 方式 2: Lambda 方式
-        // server->registerWsHandle("/ws/echo", [](void* ctx) -> net::awaitable<void> {
-        //     // WebSocket 处理逻辑
-        //     co_return;
-        // });
 
         // ========== 可选配置 ==========
 

@@ -9,6 +9,7 @@
 #include <thread>
 #include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
+#include "WebSocketHandle.h"
 
 #if HKU_OS_WINDOWS
 #include <Windows.h>
@@ -61,7 +62,7 @@ std::atomic<bool> HttpServer::ms_running{false};
 size_t HttpServer::ms_io_thread_count = 0;
 std::atomic<int> HttpServer::ms_active_connections{0};
 Router HttpServer::ms_router;
-Router HttpServer::ms_ws_router;  // WebSocket 路由器
+WebSocketRouter HttpServer::ms_ws_router;
 
 // HTTP 错误消息映射
 static std::unordered_map<int16_t, std::string> g_error_messages;
@@ -179,6 +180,469 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
     }
 
     return nullptr;
+}
+
+// ============================================================================
+// WebSocketRouter 实现
+// ============================================================================
+
+void WebSocketRouter::registerHandler(const std::string& path, HandleFactory factory) {
+    m_routes.emplace_back(path, std::move(factory));
+}
+
+WebSocketRouter::HandleFactory WebSocketRouter::findHandler(const std::string& path) {
+    // 精确匹配优先（线性搜索）
+    for (const auto& [route_path, factory] : m_routes) {
+        if (route_path == path) {
+            return factory;
+        }
+    }
+
+    return nullptr;
+}
+
+// ============================================================================
+// WebSocketConnection 实现 - WebSocket 连接处理器
+// ============================================================================
+
+std::shared_ptr<WebSocketConnection> WebSocketConnection::create(
+  tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx, ssl::context* ssl_ctx,
+  const http::request<http::string_body>* existing_req) {
+    if (ssl_ctx) {
+        return std::shared_ptr<WebSocketConnection>(
+          new WebSocketConnection(std::move(socket), ws_router, io_ctx, ssl_ctx, existing_req));
+    } else {
+        return std::shared_ptr<WebSocketConnection>(
+          new WebSocketConnection(std::move(socket), ws_router, io_ctx, nullptr, existing_req));
+    }
+}
+
+WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* ws_router,
+                                         net::io_context& io_ctx, ssl::context* ssl_ctx,
+                                         const http::request<http::string_body>* existing_req)
+: m_socket(std::move(socket)),
+  m_ws_router(ws_router),
+  m_io_ctx(io_ctx),
+  m_connection_start(std::chrono::steady_clock::now()) {
+    // 如果提供了 SSL 上下文，初始化 SSL 流
+    if (ssl_ctx) {
+        m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
+    }
+
+    // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
+    int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
+    while (expected < HttpServer::MAX_CONNECTIONS) {
+        if (HttpServer::ms_active_connections.compare_exchange_weak(
+              expected, expected + 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            break;
+        }
+    }
+
+    if (expected >= HttpServer::MAX_CONNECTIONS) {
+        HKU_WARN("Global connection limit reached ({}), rejecting connection",
+                 HttpServer::MAX_CONNECTIONS);
+        throw std::runtime_error("Connection limit reached");
+    }
+
+    // 获取客户端地址
+    try {
+        auto endpoint = m_socket.remote_endpoint();
+        m_client_ip = endpoint.address().to_string();
+        m_client_port = endpoint.port();
+    } catch (const std::exception& e) {
+        HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
+        m_client_ip = "unknown";
+        m_client_port = 0;
+    }
+
+    // 保存已有的 HTTP 请求（如果有）
+    if (existing_req) {
+        m_existing_req = *existing_req;
+    }
+}
+
+WebSocketConnection::~WebSocketConnection() {
+    // 全局连接池管理：减少连接计数
+    HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
+}
+
+void WebSocketConnection::start() {
+    auto self = shared_from_this();
+    net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
+}
+
+net::awaitable<bool> WebSocketConnection::sslHandshake() {
+    if (!m_ssl_stream) {
+        co_return true;  // 非 SSL 连接直接成功
+    }
+
+    try {
+        co_await m_ssl_stream->async_handshake(ssl::stream_base::server, net::use_awaitable);
+        HKU_DEBUG("SSL handshake successful");
+        co_return true;
+    } catch (const beast::system_error& e) {
+        HKU_ERROR("SSL handshake failed: {}", e.what());
+        co_return false;
+    } catch (const std::exception& e) {
+        HKU_ERROR("SSL handshake exception: {}", e.what());
+        co_return false;
+    }
+}
+
+net::awaitable<bool> WebSocketConnection::websocketHandshake(
+  const http::request<http::string_body>& req) {
+    try {
+        // 创建 WebSocket stream
+        if (m_ssl_stream) {
+            m_ws_stream =
+              std::make_unique<websocket::stream<tcp::socket&>>(m_ssl_stream->next_layer());
+        } else {
+            m_ws_stream = std::make_unique<websocket::stream<tcp::socket&>>(m_socket);
+        }
+
+        // 设置 WebSocket 选项
+        m_ws_stream->set_option(
+          websocket::stream_base::decorator([](websocket::response_type& res) {
+              res.set(http::field::server, "Hikyuu-WebSocketServer");
+          }));
+
+        // 执行 WebSocket 握手
+        co_await m_ws_stream->async_accept(req, net::use_awaitable);
+
+        HKU_DEBUG("WebSocket handshake successful for client {}: {}", m_client_ip, m_client_port);
+        co_return true;
+
+    } catch (const beast::system_error& e) {
+        HKU_ERROR("WebSocket handshake failed: {}", e.what());
+        co_return false;
+    } catch (const std::exception& e) {
+        HKU_ERROR("WebSocket handshake exception: {}", e.what());
+        co_return false;
+    }
+}
+
+net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConnection> self) {
+    try {
+        // SSL 握手（如果是 WSS）
+        if (m_ssl_stream) {
+            bool success = co_await sslHandshake();
+            if (!success) {
+                close();
+                co_return;
+            }
+        }
+
+        // 如果没有已有的 HTTP 请求，需要重新读取
+        const http::request<http::string_body>* req_ptr = nullptr;
+
+        if (m_existing_req.method() != http::verb::unknown) {
+            // 使用已有的请求
+            req_ptr = &m_existing_req;
+            HKU_DEBUG("Using existing HTTP request for WebSocket upgrade");
+        } else {
+            // 需要重新读取 HTTP 请求
+            beast::flat_buffer buffer;
+            http::request_parser<http::string_body> parser;
+            parser.body_limit(HttpServer::MAX_BODY_SIZE);
+            parser.header_limit(HttpServer::MAX_HEADER_SIZE);
+
+            // 异步读取请求
+            if (m_ssl_stream) {
+                co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
+            } else {
+                co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
+            }
+
+            m_existing_req = parser.release();
+            req_ptr = &m_existing_req;
+        }
+
+        auto& req = *req_ptr;
+
+        // 验证 WebSocket 升级请求
+        if (req.method() != http::verb::get || req.find(http::field::upgrade) == req.end() ||
+            !beast::iequals(req[http::field::upgrade], "websocket")) {
+            HKU_ERROR("Invalid WebSocket upgrade request from {}:{}", m_client_ip, m_client_port);
+            close();
+            co_return;
+        }
+
+        // WebSocket 握手
+        bool handshake_success = co_await websocketHandshake(req);
+        if (!handshake_success) {
+            close();
+            co_return;
+        }
+
+        // 创建 WebSocketContext
+        m_ws_ctx = std::make_shared<WebSocketContext>(m_io_ctx);
+        m_ws_ctx->client_ip = m_client_ip;
+        m_ws_ctx->client_port = m_client_port;
+
+        // 设置发送和关闭的回调函数（这样 Handle 就可以通过 Context 发送消息了）
+        auto weak_self = weak_from_this();
+        m_ws_ctx->send_callback = [weak_self](std::string_view msg,
+                                              bool is_text) -> net::awaitable<bool> {
+            HKU_DEBUG("WebSocketContext send_callback called (is_text={})", is_text);
+            if (auto self = weak_self.lock()) {
+                HKU_DEBUG("Sending message via WebSocketConnection::send()");
+                co_return co_await self->send(msg, is_text);
+            }
+            HKU_WARN("WebSocketContext send_callback: weak_self.lock() failed");
+            co_return false;
+        };
+
+        m_ws_ctx->close_callback = [weak_self](ws::close_code code,
+                                               std::string_view reason) -> net::awaitable<void> {
+            if (auto self = weak_self.lock()) {
+                co_await self->closeWebSocket(code, reason);
+            }
+            co_return;
+        };
+
+        // 配置 WebSocket 安全选项（使用 public 静态方法）
+        configureWebSocketSecurity(*m_ws_stream);
+
+        // 查找对应的 WebSocket Handle
+        std::string path(req.target());
+        auto handler = m_ws_router->findHandler(path);
+
+        if (!handler) {
+            HKU_INFO("WebSocket handler not found for path: {}", path);
+            // 发送 404 响应并关闭
+            m_ws_stream->close(websocket::close_code::policy_error);
+            close();
+            co_return;
+        }
+
+        // ========== WebSocket Handle 集成方案 ==========
+        // 保存工厂函数以便在消息循环中使用
+        auto ws_handle_factory = handler;
+
+        HKU_DEBUG("Starting WebSocket message loop for path: {}", path);
+
+        // ========== 在连接建立时立即创建 Handle 并调用 onOpen ==========
+        std::shared_ptr<WebSocketHandle> active_handle;
+        try {
+            // 使用工厂函数创建 Handle 实例
+            active_handle = ws_handle_factory(m_ws_ctx.get());
+
+            if (!active_handle) {
+                HKU_ERROR("Failed to create WebSocket Handle for path: {}", path);
+                close();
+                co_return;
+            }
+
+            // 调用 onOpen() 发送欢迎消息
+            co_await active_handle->onOpen();
+
+            HKU_DEBUG("Handle initialized and onOpen() called for path: {}", path);
+
+        } catch (const std::exception& e) {
+            HKU_ERROR("Failed to initialize Handle: {}", e.what());
+            close();
+            co_return;
+        }
+
+        // 在连接建立时立即调用工厂函数并保存 Handle
+        // 问题：当前工厂函数不返回 Handle，只执行初始化
+        // 解决方案：改进设计，让工厂函数返回 Handle 实例
+        // TODO: 未来版本需要修改 registerWsHandle 的 API
+
+        // 临时方案：在第一次收到消息时创建 Handle
+
+        // WebSocket 消息读取循环
+        while (true) {
+            try {
+                // 读取 WebSocket 消息
+                m_ws_ctx->buffer.consume(m_ws_ctx->buffer.size());
+                co_await m_ws_stream->async_read(m_ws_ctx->buffer, net::use_awaitable);
+
+                // 获取消息内容
+                auto data = m_ws_ctx->buffer.data();
+                std::string message(static_cast<const char*>(data.data()), data.size());
+                m_ws_ctx->buffer.consume(data.size());
+
+                // 判断消息类型
+                bool is_text = m_ws_stream->got_text();
+
+                // ========== 调用用户 Handle 的 onMessage ==========
+                if (active_handle) {
+                    co_await active_handle->onMessage(message, is_text);
+                }
+
+            } catch (const beast::system_error& e) {
+                if (e.code() == websocket::error::closed || e.code() == net::error::eof ||
+                    e.code() == beast::errc::connection_reset) {
+                    HKU_DEBUG("Client disconnected: {}:{} - {}", m_client_ip, m_client_port,
+                              e.code().message());
+                } else {
+                    HKU_ERROR("WebSocket read error: {}", e.what());
+                }
+                break;
+            } catch (const std::exception& e) {
+                HKU_ERROR("WebSocket exception: {}", e.what());
+                // 注意：不能在 catch 块中使用 co_await
+                // bridge->onError(beast::errc::make_error_code(beast::errc::connection_aborted),
+                // e.what());
+                break;
+            }
+        }
+
+        // ========== 连接关闭，调用 Handle 的 onClose ==========
+        if (active_handle) {
+            try {
+                auto close_reason = m_ws_stream->reason();
+                co_await active_handle->onClose(static_cast<ws::close_code>(close_reason.code),
+                                                close_reason.reason);
+
+                HKU_INFO("WebSocket connection closed: code={}, reason={}",
+                         static_cast<int>(close_reason.code), close_reason.reason);
+            } catch (const std::exception& e) {
+                HKU_ERROR("onClose exception: {}", e.what());
+            }
+        }
+
+    } catch (const beast::system_error& e) {
+        if (e.code() == http::error::end_of_stream || e.code() == net::error::eof) {
+            HKU_DEBUG("Client disconnected during WebSocket setup: {}:{}", m_client_ip,
+                      m_client_port);
+        } else {
+            HKU_ERROR("WebSocket connection error: {}", e.what());
+        }
+    } catch (const std::exception& e) {
+        HKU_ERROR("WebSocket exception in readLoop: {}", e.what());
+    }
+
+    close();
+}
+
+net::awaitable<void> WebSocketConnection::sendPing() {
+    if (!m_ws_stream || !m_ws_stream->is_open()) {
+        co_return;
+    }
+
+    try {
+        while (m_ws_stream && m_ws_stream->is_open()) {
+            // 等待 PING_INTERVAL
+            net::steady_timer timer(m_io_ctx);
+            timer.expires_after(WebSocketContext::PING_INTERVAL);
+            co_await timer.async_wait(net::use_awaitable);
+
+            if (!m_ws_stream || !m_ws_stream->is_open()) {
+                break;
+            }
+
+            // 设置超时定时器
+            m_ws_ctx->timer.expires_after(WebSocketContext::PING_TIMEOUT);
+            auto weak_self = weak_from_this();
+
+            // 异步发送 Ping（使用空 payload）
+            auto ping_sent = std::make_shared<bool>(false);
+            websocket::ping_data ping_payload;
+            m_ws_stream->async_ping(ping_payload,
+                                    [ping_sent](beast::error_code ec) { *ping_sent = !ec; });
+
+            // 等待 Ping 完成或超时
+            co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
+
+            if (!*ping_sent) {
+                HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
+                close();
+                co_return;
+            }
+        }
+    } catch (const std::exception& e) {
+        HKU_DEBUG("Ping loop exception: {}", e.what());
+    }
+
+    co_return;
+}
+
+void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::socket&>& ws) {
+    // 设置消息最大大小 (防止攻击者通过超大消息消耗内存)
+    ws.read_message_max(10 * 1024 * 1024);  // 10MB
+
+    // 注意：Boost.Beast 没有 write_message_max，只有 read_message_max
+    // 写入大小由应用层控制
+
+    // 禁用自动 Fragmentation，由应用层控制分片策略
+    ws.auto_fragment(false);
+
+    HKU_DEBUG("WebSocket security configured: max_message_size={}", 10 * 1024 * 1024);
+}
+
+net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is_text) {
+    if (!m_ws_stream || !m_ws_stream->is_open()) {
+        co_return false;
+    }
+
+    try {
+        // 异步发送消息（使用 buffer）
+        co_await m_ws_stream->async_write(net::buffer(message), net::use_awaitable);
+        co_return true;
+    } catch (const beast::system_error& e) {
+        HKU_ERROR("WebSocket send error: {}", e.what());
+        co_return false;
+    }
+}
+
+net::awaitable<void> WebSocketConnection::closeWebSocket(ws::close_code code,
+                                                         std::string_view reason) {
+    if (!m_ws_stream || !m_ws_stream->is_open()) {
+        co_return;
+    }
+
+    try {
+        // 异步关闭 WebSocket（构造 close_reason）
+        websocket::close_reason cr(code, std::string(reason));
+        co_await m_ws_stream->async_close(cr, net::use_awaitable);
+    } catch (const beast::system_error& e) {
+        HKU_ERROR("WebSocket close error: {}", e.what());
+    }
+}
+
+net::awaitable<void> WebSocketConnection::handleWebSocketMessage(
+  std::shared_ptr<WebSocketHandle> ws_handle, std::string_view message, bool is_text) {
+    if (!ws_handle) {
+        co_return;
+    }
+
+    try {
+        co_await ws_handle->onMessage(message, is_text);
+    } catch (const std::exception& e) {
+        HKU_ERROR("handleWebSocketMessage exception: {}", e.what());
+        // 注意：不能在 catch 块中使用 co_await
+        // ws_handle->onError(beast::errc::make_error_code(beast::errc::connection_aborted),
+        // e.what());
+    }
+}
+
+void WebSocketConnection::close() {
+    beast::error_code ec;
+
+    if (m_ws_stream && m_ws_stream->is_open()) {
+        // 关闭 WebSocket stream
+        try {
+            m_ws_stream->async_close(websocket::close_code::normal, [](beast::error_code close_ec) {
+                // 异步关闭完成，忽略错误
+            });
+        } catch (...) {
+            // 忽略关闭异常
+        }
+    }
+
+    if (m_ssl_stream) {
+        // SSL shutdown
+        try {
+            m_ssl_stream->next_layer().shutdown(tcp::socket::shutdown_send, ec);
+        } catch (...) {
+            // 忽略异常
+        }
+    } else {
+        // TCP shutdown
+        m_socket.shutdown(tcp::socket::shutdown_send, ec);
+    }
 }
 
 // ============================================================================
@@ -380,6 +844,29 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 session->res.body() = "This server only supports HTTP/1.1";
                 session->res.prepare_payload();
                 co_await writeResponse(session);
+                break;
+            }
+
+            // ========== WebSocket 协议检测 ==========
+            // 检查是否为 WebSocket 升级请求
+            bool is_websocket = session->req.method() == http::verb::get &&
+                                session->req.find(http::field::upgrade) != session->req.end() &&
+                                beast::iequals(session->req[http::field::upgrade], "websocket");
+
+            if (is_websocket) {
+                HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,
+                          m_client_port);
+
+                // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
+                auto ws_connection = WebSocketConnection::create(
+                  std::move(socket_ref), &HttpServer::ms_ws_router, m_io_ctx,
+                  m_ssl_stream ? HttpServer::ms_ssl_context : nullptr,
+                  &session->req);  // 传递已读取的请求
+
+                ws_connection->start();
+
+                // WebSocket 连接已接管，退出当前 HTTP 循环
+                decrement_connection();
                 break;
             }
 
@@ -967,15 +1454,6 @@ void HttpServer::stop() {
     }
 }
 
-void HttpServer::set_error_msg(int16_t http_status, const std::string& body) {
-    // TODO: 实现错误页面设置
-    CLS_WARN("set_error_msg not implemented yet: status={}, body={}", http_status, body);
-}
-
-void HttpServer::regHandle(const char* method, const char* path, HandlerFunc rest_handle) {
-    ms_router.registerHandler(method, path, rest_handle);
-}
-
 void HttpServer::registerHttpHandle(const std::string& method, const std::string& path,
                                     HttpHandleFactory handler) {
     ms_router.registerHandler(method, path, handler);
@@ -987,7 +1465,7 @@ void HttpServer::registerHttpHandle(const char* method, const char* path,
 }
 
 void HttpServer::registerWsHandle(const std::string& path, WsHandleFactory handler) {
-    ms_ws_router.registerHandler("WS", path, std::move(handler));
+    ms_ws_router.registerHandler(path, std::move(handler));
 }
 
 void HttpServer::registerWsHandle(const char* path, WsHandleFactory handler) {

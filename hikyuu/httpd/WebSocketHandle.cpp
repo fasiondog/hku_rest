@@ -45,8 +45,20 @@ net::awaitable<void> WebSocketHandle::onPing() {
 }
 
 net::awaitable<bool> WebSocketHandle::send(std::string_view message, bool is_text) {
-    // 默认实现返回 false，具体实现在派生类中
-    // 实际发送由 WebSocketConnection 通过回调完成
+    if (!m_ws_context) {
+        HKU_ERROR("WebSocketContext is null");
+        co_return false;
+    }
+
+    auto* ctx = static_cast<WebSocketContext*>(m_ws_context);
+    
+    // 使用 Context 中保存的回调函数发送消息
+    if (ctx->send_callback) {
+        HKU_DEBUG("WebSocketHandle::send called (is_text={})", is_text);
+        co_return co_await ctx->send_callback(message, is_text);
+    }
+    
+    HKU_WARN("WebSocketContext send_callback is not set");
     co_return false;
 }
 
@@ -73,8 +85,19 @@ uint16_t WebSocketHandle::getClientPort() const noexcept {
 }
 
 net::awaitable<void> WebSocketHandle::close(ws::close_code code, std::string_view reason) {
-    // 默认实现为空，具体实现在派生类中
-    // 实际关闭由 WebSocketConnection 通过回调完成
+    if (!m_ws_context) {
+        HKU_ERROR("WebSocketContext is null");
+        co_return;
+    }
+
+    auto* ctx = static_cast<WebSocketContext*>(m_ws_context);
+    
+    // 使用 Context 中保存的回调函数关闭连接
+    if (ctx->close_callback) {
+        co_await ctx->close_callback(code, reason);
+    } else {
+        HKU_WARN("WebSocketContext close_callback is not set");
+    }
     co_return;
 }
 

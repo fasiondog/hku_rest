@@ -22,7 +22,7 @@ public:
     explicit EchoWsHandle(void* ctx) : WebSocketHandle(ctx) {}
 
     net::awaitable<void> onOpen() override {
-        HKU_INFO("EchoWsHandle: Client connected from {}", getClientIp());
+        HKU_INFO("EchoWsHandle::onOpen() called for {}", getClientIp());
 
         // 发送欢迎消息
         json welcome;
@@ -30,7 +30,9 @@ public:
         welcome["message"] = "Welcome to WebSocket Echo Server!";
         welcome["time"] = std::time(nullptr);
 
-        co_await send(welcome.dump());
+        HKU_DEBUG("EchoWsHandle: Sending welcome message");
+        bool sent = co_await send(welcome.dump());
+        HKU_INFO("EchoWsHandle: Welcome message sent (sent={})", sent);
     }
 
     net::awaitable<void> onMessage(std::string_view message, bool is_text) override {

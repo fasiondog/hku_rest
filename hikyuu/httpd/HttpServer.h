@@ -29,6 +29,7 @@
 #include <boost/asio/ssl.hpp>
 
 #include "HttpHandle.h"
+#include "WebSocketHandle.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
@@ -67,7 +68,81 @@ private:
     std::vector<std::pair<RouteKey, HandlerFunc>> m_routes;
 };
 
-// 连接处理器 - 管理 HTTP/HTTPS TCP 连接
+/**
+ * WebSocket 专用路由器 - 负责根据路径创建 Handle 实例
+ */
+class WebSocketRouter {
+public:
+    using HandleFactory = std::function<std::shared_ptr<WebSocketHandle>(void*)>;
+
+    void registerHandler(const std::string& path, HandleFactory factory);
+    HandleFactory findHandler(const std::string& path);
+
+private:
+    std::vector<std::pair<std::string, HandleFactory>> m_routes;
+};
+
+// WebSocket 连接处理器 - 管理 WebSocket 连接的生命周期
+class WebSocketConnection : public std::enable_shared_from_this<WebSocketConnection> {
+public:
+    static std::shared_ptr<WebSocketConnection> create(
+      tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
+      ssl::context* ssl_ctx = nullptr,
+      const http::request<http::string_body>* existing_req = nullptr);  // 已有的 HTTP 请求（可选）
+    ~WebSocketConnection();
+
+    void start();
+
+private:
+    WebSocketConnection(tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
+                        ssl::context* ssl_ctx,
+                        const http::request<http::string_body>* existing_req);
+
+    // SSL 握手（仅当 m_ssl_stream != nullptr 时调用）
+    net::awaitable<bool> sslHandshake();
+
+    // WebSocket 握手
+    net::awaitable<bool> websocketHandshake(const http::request<http::string_body>& req);
+
+    // WebSocket 消息读取循环
+    net::awaitable<void> readLoop(std::shared_ptr<WebSocketConnection> self);
+
+    // 发送消息
+    net::awaitable<bool> send(std::string_view message, bool is_text);
+
+    // 关闭连接
+    net::awaitable<void> closeWebSocket(ws::close_code code, std::string_view reason);
+
+    // 配置 WebSocket 安全选项
+    static void configureWebSocketSecurity(websocket::stream<tcp::socket&>& ws);
+
+    // 发送心跳 Ping
+    net::awaitable<void> sendPing();
+
+    // 处理 WebSocket 消息（调用 Handle）
+    net::awaitable<void> handleWebSocketMessage(std::shared_ptr<WebSocketHandle> ws_handle,
+                                                std::string_view message, bool is_text);
+
+    // 关闭连接
+    void close();
+
+    tcp::socket m_socket;
+    WebSocketRouter* m_ws_router;
+    std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
+    std::unique_ptr<websocket::stream<tcp::socket&>> m_ws_stream;
+    net::io_context& m_io_ctx;
+    std::string m_client_ip;
+    uint16_t m_client_port = 0;
+
+    std::shared_ptr<WebSocketContext> m_ws_ctx;  // WebSocket 上下文
+    std::chrono::steady_clock::time_point m_connection_start;
+    http::request<http::string_body> m_existing_req;  // 已存在的 HTTP 请求（如果有）
+
+    // ========== 为每个连接保存独立的 Handle 实例 ==========
+    std::shared_ptr<WebSocketHandle> m_handle;  // 该连接对应的 Handle
+};
+
+// HTTP 连接处理器 - 管理 HTTP/HTTPS TCP 连接
 // 支持 SSL/TLS 和非 SSL 两种模式，通过 m_ssl_stream 是否为 nullptr 区分
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
@@ -196,7 +271,7 @@ class HKU_HTTPD_API HttpServer {
 
 public:
     using HttpHandleFactory = std::function<net::awaitable<void>(void*)>;
-    using WsHandleFactory = std::function<net::awaitable<void>(void*)>;
+    using WsHandleFactory = std::function<std::shared_ptr<WebSocketHandle>(void*)>;
 
     // HTTP/WebSocket请求安全限制
     static constexpr std::size_t MAX_BUFFER_SIZE = 1024 * 1024;     // 1MB
@@ -226,13 +301,6 @@ public:
     static void stop();
     static void http_exit();
     static void signal_handler(int signal);
-
-    /**
-     * @brief 设置 handle 无法捕获的错误返回信息，如 404
-     * @param http_status http 状态码
-     * @param body 返回消息
-     */
-    static void set_error_msg(int16_t http_status, const std::string& body);
 
     /**
      * @brief 配置 CORS (跨域资源共享)
@@ -301,6 +369,10 @@ public:
 public:
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
 
+    // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
+    static WebSocketRouter ms_ws_router;  // WebSocket 路由器
+    static ssl::context* ms_ssl_context;  // SSL 上下文
+
     // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
     void GET(const char* path) {
@@ -345,15 +417,13 @@ public:
     // WebSocket 快捷注册
     template <typename Handle>
     void WS(const char* path) {
-        registerWsHandle(path, [](void* ctx) -> net::awaitable<void> {
-            Handle x(ctx);
-            co_await x();
+        registerWsHandle(path, [](void* ctx) -> std::shared_ptr<WebSocketHandle> {
+            return std::make_shared<Handle>(ctx);
         });
     }
 
 private:
     using HandlerFunc = std::function<net::awaitable<void>(void*)>;
-    void regHandle(const char* method, const char* path, HandlerFunc rest_handle);
     void configureSsl();
     net::awaitable<void> doAccept();
     net::awaitable<void> doAcceptSsl();
@@ -368,12 +438,10 @@ private:
     // 静态成员变量在 HttpServer.cpp 中定义
     static HttpServer* ms_server;
     static Router ms_router;
-    static Router ms_ws_router;  // WebSocket 路由器
     static net::io_context* ms_io_context;
     static tcp::acceptor* ms_acceptor;
     static std::atomic<bool> ms_running;
     static SslConfig ms_ssl_config;
-    static ssl::context* ms_ssl_context;
 };
 
 #define HTTP_HANDLE_IMP(cls) \
