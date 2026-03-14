@@ -527,8 +527,11 @@ net::awaitable<void> WebSocketConnection::sendPing() {
                 break;
             }
 
+            m_ws_ctx->timer.cancel();
+
             // 设置超时定时器
             m_ws_ctx->timer.expires_after(WebSocketConfig::PING_TIMEOUT);
+
             auto weak_self = weak_from_this();
 
             // 异步发送 Ping（使用空 payload）
