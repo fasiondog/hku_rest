@@ -64,6 +64,7 @@ size_t HttpServer::ms_io_thread_count = 0;
 std::atomic<int> HttpServer::ms_active_connections{0};
 Router HttpServer::ms_router;
 WebSocketRouter HttpServer::ms_ws_router;
+bool HttpServer::ms_use_external_io{false};  // 初始化静态成员
 
 // HTTP 错误消息映射
 static std::unordered_map<int16_t, std::string> g_error_messages;
@@ -1274,7 +1275,8 @@ void HttpServer::signal_handler(int signal) {
     }
 }
 
-HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(port) {
+HttpServer::HttpServer(const char* host, uint16_t port) 
+: m_host(host), m_port(port) {
     HKU_CHECK(ms_server == nullptr, "Can only one server!");
     ms_server = this;
 
@@ -1284,7 +1286,21 @@ HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(p
 HttpServer::~HttpServer() {}
 
 void HttpServer::set_io_thread_count(size_t thread_count) {
-    ms_io_thread_count = thread_count;  // 修改为静态成员变量
+    ms_io_thread_count = thread_count;
+}
+
+void HttpServer::bind_io_context(net::io_context& io_ctx) {
+    if (ms_io_context) {
+        CLS_WARN("io_context already bound, ignoring bind_io_context call");
+        return;
+    }
+    ms_io_context = &io_ctx;
+    ms_use_external_io = true;
+    CLS_INFO("Bound to external io_context at {}", static_cast<void*>(&io_ctx));
+}
+
+net::io_context* HttpServer::get_io_context() {
+    return ms_io_context;
 }
 
 void HttpServer::setCors(const CorsConfig& config) {
@@ -1497,7 +1513,12 @@ void HttpServer::start() {
     }
 
     try {
-        ms_io_context = new net::io_context();
+        // 如果未绑定外部 io_context，则自行创建
+        if (!ms_use_external_io) {
+            ms_io_context = new net::io_context();
+        } else {
+            CLS_INFO("Using externally bound io_context");
+        }
 
         // 创建 acceptor
         auto addr = net::ip::make_address(m_host.c_str());
@@ -1646,10 +1667,12 @@ void HttpServer::stop() {
             ms_ssl_context = nullptr;
         }
 
-        // 5. 最后清理 io_context 对象
-        if (ms_io_context) {
+        // 5. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
+        if (ms_io_context && !ms_use_external_io) {
             delete ms_io_context;
             ms_io_context = nullptr;
+        } else if (ms_io_context && ms_use_external_io) {
+            CLS_INFO("External io_context detected, skipping cleanup");
         }
 
         // 6. 清理 server 指针

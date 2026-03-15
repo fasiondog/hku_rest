@@ -292,6 +292,23 @@ public:
      */
     void set_io_thread_count(size_t thread_count);
 
+    /**
+     * @brief 绑定外部指定的 io_context（可选）
+     * 
+     * 调用此方法后，HttpServer 将使用外部提供的 io_context 而非自行创建
+     * 必须在 start() 之前调用，且调用后 set_io_thread_count() 将失效
+     * 
+     * @param io_ctx 外部 io_context 引用
+     */
+    void bind_io_context(net::io_context& io_ctx);
+
+    /**
+     * @brief 获取当前服务器使用的 io_context
+     * 
+     * @return net::io_context* io_context 指针，如果尚未初始化则返回 nullptr
+     */
+    static net::io_context* get_io_context();
+
     static void loop();
     static void stop();
     static void http_exit();
@@ -428,6 +445,7 @@ private:
     uint16_t m_port{80};
     static size_t ms_io_thread_count;  // 改为静态成员变量
     CorsConfig m_cors_config;          // CORS 配置
+    static bool ms_use_external_io;    // 是否使用外部 io_context（静态）
 
     // 静态成员变量在 HttpServer.cpp 中定义
     static HttpServer* ms_server;
