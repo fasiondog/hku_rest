@@ -1051,7 +1051,6 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 写入响应（如果响应还未发送）
             if (!session->response_sent) {
-                HKU_ERROR("Calling writeResponse: response_sent=false");
                 co_await writeResponse(session);
             } else {
                 HKU_ERROR("Skipping writeResponse: response already sent");
