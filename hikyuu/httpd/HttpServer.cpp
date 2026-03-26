@@ -166,10 +166,9 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
     // 例如：/api/download?file=xxx -> /api/download
     std::string_view path_view(path);
     auto query_pos = path_view.find('?');
-    std::string_view path_only = (query_pos != std::string_view::npos) 
-        ? path_view.substr(0, query_pos)
-        : path_view;
-    
+    std::string_view path_only =
+      (query_pos != std::string_view::npos) ? path_view.substr(0, query_pos) : path_view;
+
     // 精确匹配优先（线性搜索，路由数量有限时性能优于哈希表）
     for (const auto& [key, handler] : m_routes) {
         if (key.method == method && key.path == path_only) {
@@ -416,10 +415,10 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
         // 查找对应的 WebSocket Handle
         std::string_view target_view(req.target());
         auto query_pos = target_view.find('?');
-        std::string path = (query_pos != std::string_view::npos) 
-            ? std::string(target_view.substr(0, query_pos))
-            : std::string(target_view);
-        
+        std::string path = (query_pos != std::string_view::npos)
+                             ? std::string(target_view.substr(0, query_pos))
+                             : std::string(target_view);
+
         auto handler = m_ws_router->findHandler(path);
 
         if (!handler) {
@@ -904,7 +903,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
                 m_session = std::make_shared<BeastContext>(socket_ref, m_io_ctx);
             }
-            
+
             // 复用已有的 session 对象
             auto session = m_session;
             session->client_ip = m_client_ip;
@@ -915,10 +914,10 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 1. 重置 request/response 对象（使用 move 语义）
             session->req = http::request<http::string_body>();
             session->res = http::response<http::string_body>();
-            
+
             // 2. 清空 buffer，但保留容量避免重新分配
             session->buffer.consume(session->buffer.size());
-            
+
             // 3. 重置 parser 状态（重要！）
             if (!session->parser.has_value()) {
                 // 第一次请求时创建并配置 parser
@@ -929,7 +928,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 // 复用已有 parser，重新构造一个空对象
                 session->parser.emplace();
             }
-            
+
             // 4. 重置其他状态字段
             session->keep_alive = true;
 
@@ -1009,9 +1008,20 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // ========== WebSocket 协议检测 ==========
             // 检查是否为 WebSocket 升级请求
-            bool is_websocket = session->req.method() == http::verb::get &&
-                                session->req.find(http::field::upgrade) != session->req.end() &&
-                                beast::iequals(session->req[http::field::upgrade], "websocket");
+            // 根据 RFC 6455，必须同时满足以下条件：
+            // 1. GET 方法
+            // 2. Upgrade: websocket
+            // 3. Connection: Upgrade
+            // 4. Sec-WebSocket-Key (握手密钥)
+            // 5. Sec-WebSocket-Version: 13
+            bool is_websocket = 
+                session->req.method() == http::verb::get &&
+                session->req.find(http::field::upgrade) != session->req.end() &&
+                beast::iequals(session->req[http::field::upgrade], "websocket") &&
+                session->req.find(http::field::connection) != session->req.end() &&
+                beast::iequals(session->req[http::field::connection], "Upgrade") &&
+                !session->req["Sec-WebSocket-Key"].empty() &&
+                session->req["Sec-WebSocket-Version"] == "13";
 
             if (is_websocket) {
                 HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,
@@ -1046,15 +1056,17 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // ========== 修复：在处理完请求后递增计数器并检查 Keep-Alive 限制 ==========
             ++m_request_count;
-            
+
             // 检查请求数限制（如果启用）
-            if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 && 
+            if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 &&
                 m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
-                HKU_INFO("Keep-Alive limit reached ({} requests, age={}s), closing connection from {}:{}",
-                         m_request_count, 
-                         std::chrono::duration_cast<std::chrono::seconds>(
-                           std::chrono::steady_clock::now() - m_connection_start).count(),
-                         m_client_ip, m_client_port);
+                HKU_INFO(
+                  "Keep-Alive limit reached ({} requests, age={}s), closing connection from {}:{}",
+                  m_request_count,
+                  std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - m_connection_start)
+                    .count(),
+                  m_client_ip, m_client_port);
                 decrement_connection();
                 break;
             }
@@ -1123,7 +1135,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         HKU_INFO("not found: {}", target);
         context->res.result(http::status::not_found);
         context->res.set(http::field::content_type, "application/json");
-        context->res.body() = R"({"ret":404,"errmsg":"Not Found"})";
+        context->res.body() = R"({"ret":404, "errcode":404, "errmsg":"Not Found"})";
         context->res.prepare_payload();
 
         // 设置响应头 (安全头 + CORS)
@@ -1187,7 +1199,7 @@ net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> con
         if (context->response_sent) {
             co_return;
         }
-        
+
         // ========== P99 延迟优化：简化定时器处理 ==========
         // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
         context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
@@ -1275,8 +1287,7 @@ void HttpServer::signal_handler(int signal) {
     }
 }
 
-HttpServer::HttpServer(const char* host, uint16_t port) 
-: m_host(host), m_port(port) {
+HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(port) {
     HKU_CHECK(ms_server == nullptr, "Can only one server!");
     ms_server = this;
 
