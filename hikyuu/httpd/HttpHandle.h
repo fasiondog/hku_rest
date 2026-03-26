@@ -54,6 +54,7 @@ struct BeastContext {
     std::string client_ip;
     uint16_t client_port = 0;
     beast::flat_buffer buffer;  // 用于读取请求的缓冲区
+    net::io_context* io_ctx_ptr{nullptr};
 
     // 新增：取消令牌源，用于主动中断超时操作
     net::cancellation_signal cancel_signal;
@@ -67,10 +68,11 @@ struct BeastContext {
     // 流式传输支持：标记响应是否已手动发送
     bool response_sent = false;
 
-    BeastContext(tcp::socket& sock, net::io_context& io_ctx)
-    : socket(sock), timer(io_ctx), buffer(HttpConfig::BUFFER_MIN_CAPACITY) {
-        // 第一次请求时才创建 parser（延迟初始化）
-    }
+    BeastContext(tcp::socket& sock, net::io_context& io_context)
+    : socket(sock),
+      timer(io_context),
+      buffer(HttpConfig::BUFFER_MIN_CAPACITY),
+      io_ctx_ptr(&io_context) {}
 };
 
 class HKU_HTTPD_API HttpHandle {
@@ -263,6 +265,18 @@ public:
      * 完成分块传输（同步版本）
      */
     bool finishChunkedTransferSync();
+
+    /**
+     * 获取 io_context
+     * @return net::io_context* io_context 指针
+     */
+    net::io_context* get_io_context() const noexcept {
+        if (!m_beast_context) {
+            return nullptr;
+        }
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        return ctx->io_ctx_ptr;
+    }
 
 protected:
     /**
