@@ -1056,10 +1056,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 HKU_ERROR("Skipping writeResponse: response already sent");
             }
 
-            // ========== 修复：在处理完请求后递增计数器并检查 Keep-Alive 限制 ==========
+            // ========== 检查是否需要保持连接 ==========
+            // 递增请求计数器
             ++m_request_count;
 
-            // 检查请求数限制（如果启用）
+            // 检查 Keep-Alive 请求数限制（服务器端策略限制）
             if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 &&
                 m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
                 HKU_INFO(
@@ -1073,15 +1074,20 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 break;
             }
 
-            // 检查是否需要保持连接
-            bool keep_alive = session->req.keep_alive();
-
-            if (!keep_alive) {
-                HKU_DEBUG("Closing connection (not keep-alive)");
+            // 直接使用 Beast 的 keep_alive() 判断
+            // 该方法会自动检查：
+            // 1. HTTP/1.0 且无 Connection: keep-alive 头 -> false
+            // 2. HTTP/1.1 且无 Connection: close 头 -> true
+            // 3. 任何版本有 Connection: close 头 -> false
+            if (!session->req.keep_alive()) {
+                HKU_DEBUG(
+                  "Closing connection (client requested close or HTTP version={}, method={})",
+                  session->req.version(), session->req.method_string());
                 break;
             }
 
-            HKU_DEBUG("Keeping connection alive for next request");
+            HKU_DEBUG("Keeping connection alive for next request (request #{}, client={}:{})",
+                      m_request_count, m_client_ip, m_client_port);
         }
     } catch (const beast::system_error& e) {
         if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
@@ -1192,6 +1198,9 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":500,"errmsg":"Internal Server Error"})";
         context->res.prepare_payload();
+
+        // 异常时也要设置响应头（安全头 + CORS）
+        setResponseHeaders(context->res, HttpServer::getCorsConfig());
     }
 }
 
