@@ -10,12 +10,15 @@
 #include <string>
 #include <exception>
 #include <fmt/format.h>
+#include <boost/beast/http.hpp>
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
 
 namespace hku {
+
+namespace http = boost::beast::http;
 
 #if !defined(__clang__) && !defined(__GNUC__)
 class HttpError : public std::exception {
@@ -112,9 +115,9 @@ class HttpBadRequestError : public HttpError {
 public:
     HttpBadRequestError() : HttpError("HttpBadRequestError") {}
     HttpBadRequestError(int errcode, const char* msg)
-    : HttpError("HttpBadRequestError", 400, errcode, msg) {}
+    : HttpError("HttpBadRequestError", (int)http::status::bad_request, errcode, msg) {}
     HttpBadRequestError(int errcode, const std::string& msg)
-    : HttpError("HttpBadRequestError", 400, errcode, msg) {}
+    : HttpError("HttpBadRequestError", (int)http::status::bad_request, errcode, msg) {}
 };
 
 /**
@@ -124,9 +127,9 @@ class HttpUnauthorizedError : public HttpError {
 public:
     HttpUnauthorizedError() : HttpError("HttpUnauthorizedError") {}
     HttpUnauthorizedError(int errcode, const char* msg)
-    : HttpError("HttpUnauthorizedError", 401, errcode, msg) {}
+    : HttpError("HttpUnauthorizedError", (int)http::status::unauthorized, errcode, msg) {}
     HttpUnauthorizedError(int errcode, const std::string& msg)
-    : HttpError("HttpUnauthorizedError", 401, errcode, msg) {}
+    : HttpError("HttpUnauthorizedError", (int)http::status::unauthorized, errcode, msg) {}
 };
 
 class HttpNotAcceptableError : public HttpError {
@@ -137,9 +140,9 @@ public:
 
     HttpNotAcceptableError() : HttpError("HttpNotAcceptableError") {}
     HttpNotAcceptableError(int errcode, const char* msg)
-    : HttpError("HttpNotAcceptableError", 406, errcode, msg) {}
+    : HttpError("HttpNotAcceptableError", (int)http::status::not_acceptable, errcode, msg) {}
     HttpNotAcceptableError(int errcode, const std::string& msg)
-    : HttpError("HttpNotAcceptableError", 406, errcode, msg) {}
+    : HttpError("HttpNotAcceptableError", (int)http::status::not_acceptable, errcode, msg) {}
 };
 
 /**
@@ -153,7 +156,7 @@ enum AuthorizeErrorCode {
 
 enum BadRequestErrorCode {
     INVALID_JSON_REQUEST = 20001,  // 请求数据无法解析为 JSON
-    MISS_PARAMETER,  // 缺失参数，参数不能为空 必填参数不能为空（各个业务接口返回各个接口的参数）
+    MISS_PARAMETER,   // 缺失参数，参数不能为空 必填参数不能为空（各个业务接口返回各个接口的参数）
     WRONG_PARAMETER,  // 参数值填写错误（各个业务接口返回各个接口的参数）
     WRONG_PARAMETER_TYPE  // 参数类型错误（各个业务接口返回各个接口的参数）
 };
