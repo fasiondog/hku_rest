@@ -20,11 +20,11 @@ void CommonPod::init() {
     auto& config = PodConfig::instance();
     int thread_num = config.get<int>("pod_task_thread_num", 0);
     CLS_INFO("pod_task_thread_num: {}", thread_num);
-    CLS_WARN_IF(thread_num <= 0, "Common task group is disabled!");
-    if (thread_num > 0) {
-        ms_tg = std::make_unique<TaskGroup>(thread_num);
-        CLS_CHECK(ms_tg, "Failed allocate TaskPod::ms_tg!");
+    if (thread_num <= 0) {
+        thread_num = std::thread::hardware_concurrency();
     }
+    ms_tg = std::make_unique<TaskGroup>(thread_num);
+    CLS_CHECK(ms_tg, "Failed allocate TaskPod::ms_tg!");
 
     thread_num = config.get<int>("pod_timer_thread_num", 1);
     CLS_INFO("pod_timer_thread_num: {}", thread_num);
