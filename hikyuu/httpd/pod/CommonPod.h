@@ -35,6 +35,11 @@ public:
         return ms_tg.get();
     }
 
+    /** 协程执行器 */
+    static TaskGroup::ExecutorWrapper executor() {
+        return getTaskGroup()->executor();
+    }
+
     static TimerManager *getScheduler() {
         return ms_scheduler.get();
     }
