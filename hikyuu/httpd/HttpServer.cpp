@@ -64,7 +64,8 @@ size_t HttpServer::ms_io_thread_count = 0;
 std::atomic<int> HttpServer::ms_active_connections{0};
 Router HttpServer::ms_router;
 WebSocketRouter HttpServer::ms_ws_router;
-bool HttpServer::ms_use_external_io{false};  // 初始化静态成员
+bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
+bool HttpServer::ms_websocket_enabled{false};  // WebSocket 功能默认禁用
 
 // HTTP 错误消息映射
 static std::unordered_map<int16_t, std::string> g_error_messages;
@@ -1009,19 +1010,21 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // ========== WebSocket 协议检测 ==========
             // 检查是否为 WebSocket 升级请求
             // 根据 RFC 6455，必须同时满足以下条件：
-            // 1. GET 方法
-            // 2. Upgrade: websocket
-            // 3. Connection: Upgrade
-            // 4. Sec-WebSocket-Key (握手密钥)
-            // 5. Sec-WebSocket-Version: 13
-            bool is_websocket = 
-                session->req.method() == http::verb::get &&
-                session->req.find(http::field::upgrade) != session->req.end() &&
-                beast::iequals(session->req[http::field::upgrade], "websocket") &&
-                session->req.find(http::field::connection) != session->req.end() &&
-                beast::iequals(session->req[http::field::connection], "Upgrade") &&
-                !session->req["Sec-WebSocket-Key"].empty() &&
-                session->req["Sec-WebSocket-Version"] == "13";
+            // 1. HttpServer 已启用 WebSocket 支持
+            // 2. GET 方法
+            // 3. Upgrade: websocket
+            // 4. Connection: Upgrade
+            // 5. Sec-WebSocket-Key (握手密钥)
+            // 6. Sec-WebSocket-Version: 13
+            bool is_websocket =
+              HttpServer::ms_websocket_enabled &&  // 检查 WebSocket 功能是否已启用
+              session->req.method() == http::verb::get &&
+              session->req.find(http::field::upgrade) != session->req.end() &&
+              beast::iequals(session->req[http::field::upgrade], "websocket") &&
+              session->req.find(http::field::connection) != session->req.end() &&
+              beast::iequals(session->req[http::field::connection], "Upgrade") &&
+              !session->req["Sec-WebSocket-Key"].empty() &&
+              session->req["Sec-WebSocket-Version"] == "13";
 
             if (is_websocket) {
                 HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,

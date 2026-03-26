@@ -55,7 +55,7 @@ int main(int argc, char* argv[]) {
         // - HTTP API: /api/*
         // - WebSocket: /echo, /quotes
         auto server = std::make_unique<HttpServer>("0.0.0.0", 8765);
-        
+
         // ========== 方案 B: 双端口模式（如需独立端口） ==========
         // 如果确实需要独立的 HTTP 和 WebSocket 端口，需要创建两个服务器实例并分别运行
         // 注意：当前版本不支持多实例，需要使用以下变通方案：
@@ -64,7 +64,7 @@ int main(int argc, char* argv[]) {
         // 进程 1: HTTP 服务器 (端口 8765)
         // 进程 2: WebSocket 服务器 (端口 8766)
         // 通过进程管理器（如 systemd/supervisord）分别管理
-        
+
         // 方案 B2: 单线程交替处理（不推荐，复杂且性能差）
         // 需要修改 HttpServer 架构，使每个实例拥有独立的 io_context
         */
@@ -88,9 +88,9 @@ int main(int argc, char* argv[]) {
             // 响应会通过框架统一发送 (自动包含安全响应头)
             co_return;
         });
-        
+
         // ========== 流式传输示例 ==========
-        
+
         // 简单测试路由
         server->registerHttpHandle("GET", "/test-download", [](void* ctx) -> net::awaitable<void> {
             HKU_INFO("Test download handler called");
@@ -99,7 +99,7 @@ int main(int argc, char* argv[]) {
             context->res.body() = "Test download works!";
             co_return;
         });
-        
+
         // 文件下载示例（需要传递 file 参数）
         // GET /api/download?file=/path/to/file.txt
         HKU_INFO("Registering /api/download route");
@@ -108,14 +108,14 @@ int main(int argc, char* argv[]) {
             FileDownloadHandle handle(ctx);
             co_await handle.run();
         });
-        
+
         // SSE 实时推送
         // GET /api/sse
         server->registerHttpHandle("GET", "/api/sse", [](void* ctx) -> net::awaitable<void> {
             SSEHandle handle(ctx);
             co_await handle.run();
         });
-        
+
         // CSV 大数据导出
         // GET /api/export/csv
         server->registerHttpHandle("GET", "/api/export/csv", [](void* ctx) -> net::awaitable<void> {
@@ -123,11 +123,15 @@ int main(int argc, char* argv[]) {
             co_await handle.run();
         });
 
+        // ========== 启用 WebSocket 支持（必须显式启用） ==========
+        // WebSocket 功能默认禁用，只有显式启用后才会处理 WebSocket 升级请求
+        server->enableWebSocket(true);
+
         // ========== 注册 WebSocket Handle ==========
 
         // 方式 1: 模板方式（推荐）- Echo 测试服务
         server->WS<EchoWsHandle>("/echo");
-        
+
         // 方式 2: 行情推送示例（演示流式分批推送功能）
         server->WS<QuotePushHandle>("/quotes");
 
@@ -149,15 +153,18 @@ int main(int argc, char* argv[]) {
         std::cout << std::endl;
         std::cout << "Endpoints:" << std::endl;
         std::cout << "  HTTP REST API:     http://0.0.0.0:8765/api/hello" << std::endl;
-        std::cout << "  HTTP File Download:http://0.0.0.0:8765/api/download?file=/path/to/file" << std::endl;
+        std::cout << "  HTTP File Download:http://0.0.0.0:8765/api/download?file=/path/to/file"
+                  << std::endl;
         std::cout << "  HTTP SSE Stream:   http://0.0.0.0:8765/api/sse (实时推送)" << std::endl;
-        std::cout << "  HTTP CSV Export:   http://0.0.0.0:8765/api/export/csv (10000 条数据)" << std::endl;
+        std::cout << "  HTTP CSV Export:   http://0.0.0.0:8765/api/export/csv (10000 条数据)"
+                  << std::endl;
         std::cout << "  WebSocket Echo:    ws://0.0.0.0:8765/echo (基础测试)" << std::endl;
         std::cout << "  WebSocket Quotes:  ws://0.0.0.0:8765/quotes (行情推送)" << std::endl;
         std::cout << std::endl;
         std::cout << "Quote Push Examples:" << std::endl;
         std::cout << "  1. Subscribe mode (pre-generated list):" << std::endl;
-        std::cout << "     {\"action\": \"subscribe_quotes\", \"symbols\": [\"SH600000\", ...]}" << std::endl;
+        std::cout << "     {\"action\": \"subscribe_quotes\", \"symbols\": [\"SH600000\", ...]}"
+                  << std::endl;
         std::cout << std::endl;
         std::cout << "  2. Streaming mode (dynamic generator):" << std::endl;
         std::cout << "     {\"action\": \"stream_quotes\", \"count\": 10000}" << std::endl;

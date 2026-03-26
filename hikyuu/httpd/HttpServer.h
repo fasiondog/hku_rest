@@ -189,7 +189,7 @@ private:
     // Keep-Alive 连接安全限制
     int m_request_count = 0;                                   // 当前连接已处理请求数
     std::chrono::steady_clock::time_point m_connection_start;  // 连接建立时间
-    
+
     // ========== P99 延迟优化：复用 BeastContext 对象 ==========
     // 在 Connection 生命周期内复用 session，避免频繁内存分配
     std::shared_ptr<BeastContext> m_session;  // 复用的会话上下文
@@ -294,17 +294,17 @@ public:
 
     /**
      * @brief 绑定外部指定的 io_context（可选）
-     * 
+     *
      * 调用此方法后，HttpServer 将使用外部提供的 io_context 而非自行创建
      * 必须在 start() 之前调用，且调用后 set_io_thread_count() 将失效
-     * 
+     *
      * @param io_ctx 外部 io_context 引用
      */
     void bind_io_context(net::io_context& io_ctx);
 
     /**
      * @brief 获取当前服务器使用的 io_context
-     * 
+     *
      * @return net::io_context* io_context 指针，如果尚未初始化则返回 nullptr
      */
     static net::io_context* get_io_context();
@@ -362,6 +362,29 @@ public:
     void registerWsHandle(const char* path, WsHandleFactory handler);
 
     /**
+     * @brief 启用或禁用 WebSocket 支持（默认禁用）
+     * @param enable true-启用 WebSocket，false-禁用 WebSocket
+     *
+     * 示例:
+     *   // 启用 WebSocket
+     *   server->enableWebSocket(true);
+     *
+     *   // 禁用 WebSocket
+     *   server->enableWebSocket(false);
+     */
+    void enableWebSocket(bool enable = true) {
+        ms_websocket_enabled = enable;
+    }
+
+    /**
+     * @brief 检查是否启用了 WebSocket
+     * @return true-已启用，false-未启用
+     */
+    bool isWebSocketEnabled() const {
+        return ms_websocket_enabled;
+    }
+
+    /**
      * @brief 配置 SSL/TLS(同时作用于 HTTP 和 WebSocket)
      * @param ca_key_file CA 证书和私钥文件 (PEM 格式)
      * @param password 私钥密码 (可为空)
@@ -383,6 +406,9 @@ public:
     // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
     static WebSocketRouter ms_ws_router;  // WebSocket 路由器
     static ssl::context* ms_ssl_context;  // SSL 上下文
+
+    // WebSocket 功能开关（全局控制）
+    static bool ms_websocket_enabled;  // WebSocket 功能是否已启用（默认 false）
 
     // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
