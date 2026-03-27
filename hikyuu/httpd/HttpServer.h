@@ -31,10 +31,17 @@
 #include "HttpHandle.h"
 #include "WebSocketHandle.h"
 #include "HttpWebSocketConfig.h"
+#include "ConnectionManager.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
+
+namespace hku {
+    // 前向声明
+    class ConnectionPermit;
+    class ConnectionManager;
+}
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -144,6 +151,9 @@ private:
 
     // ========== 为每个连接保存独立的 Handle 实例 ==========
     std::shared_ptr<WebSocketHandle> m_handle;  // 该连接对应的 Handle
+    
+    // ========== 心跳协程停止标志 ==========
+    std::atomic<bool> m_ping_stopped{false};  // 标记心跳协程是否应该停止
 };
 
 // HTTP 连接处理器 - 管理 HTTP/HTTPS TCP 连接
@@ -193,6 +203,9 @@ private:
     // ========== P99 延迟优化：复用 BeastContext 对象 ==========
     // 在 Connection 生命周期内复用 session，避免频繁内存分配
     std::shared_ptr<BeastContext> m_session;  // 复用的会话上下文
+    
+    // ========== 智能连接管理：RAII 许可令牌 ==========
+    ConnectionPermit m_permit;  // 连接许可，析构时自动释放
 };
 
 // SSL 上下文配置
@@ -397,11 +410,31 @@ public:
         return ms_active_connections.load(std::memory_order_relaxed);
     }
 
+    /**
+     * @brief 获取连接管理器实例
+     * @return ConnectionManager* 连接管理器指针
+     */
+    static ConnectionManager* get_connection_manager() {
+        return ms_connection_manager.get();
+    }
+
+    /**
+     * @brief 设置最大并发连接数
+     * @param max_concurrent 最大并发数
+     * @param wait_timeout_ms 等待超时时间（毫秒），0 表示无限等待
+     */
+    void set_max_concurrent_connections(size_t max_concurrent, size_t wait_timeout_ms = 30000) {
+        ms_connection_manager = std::make_shared<ConnectionManager>(max_concurrent, wait_timeout_ms);
+    }
+
     // 全局连接池管理字段（public static）
 public:
     // P99 延迟优化：使用 relaxed 内存序减少原子操作开销
     // 连接数检查不需要严格的顺序保证，只需要最终一致性
     static std::atomic<int> ms_active_connections;  // 当前活跃连接数
+    
+    // 智能连接管理器（替代简单的计数限流）
+    static std::shared_ptr<ConnectionManager> ms_connection_manager;  // 连接管理器
 
     // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
     static WebSocketRouter ms_ws_router;  // WebSocket 路由器

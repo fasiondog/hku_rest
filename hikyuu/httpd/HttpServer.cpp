@@ -62,6 +62,7 @@ tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::atomic<bool> HttpServer::ms_running{false};
 size_t HttpServer::ms_io_thread_count = 0;
 std::atomic<int> HttpServer::ms_active_connections{0};
+std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 Router HttpServer::ms_router;
 WebSocketRouter HttpServer::ms_ws_router;
 bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
@@ -258,7 +259,7 @@ WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* 
     try {
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
-        m_client_port = endpoint.port();
+
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
@@ -272,6 +273,14 @@ WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* 
 }
 
 WebSocketConnection::~WebSocketConnection() {
+    // 设置停止标志，确保心跳协程退出
+    m_ping_stopped.store(true);
+
+    // 取消所有定时器
+    if (m_ws_ctx) {
+        m_ws_ctx->timer.cancel();
+    }
+
     // 全局连接池管理：减少连接计数
     HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
 }
@@ -542,17 +551,32 @@ net::awaitable<void> WebSocketConnection::sendPing() {
     }
 
     try {
-        while (m_ws_stream && m_ws_stream->is_open()) {
-            // 等待 PING_INTERVAL
+        while (m_ws_stream && m_ws_stream->is_open() && !m_ping_stopped.load()) {
+            // 等待 PING_INTERVAL，但使用可取消的定时器
             net::steady_timer timer(m_io_ctx);
             timer.expires_after(WebSocketConfig::PING_INTERVAL);
-            co_await timer.async_wait(net::use_awaitable);
 
-            if (!m_ws_stream || !m_ws_stream->is_open()) {
+            // 使用可取消的等待，这样当服务器停止时能快速退出
+            try {
+                co_await timer.async_wait(net::use_awaitable);
+            } catch (const boost::system::system_error& e) {
+                // 定时器被取消是正常现象，直接退出
+                if (e.code() == boost::asio::error::operation_aborted) {
+                    HKU_DEBUG("Ping timer cancelled, stopping ping loop");
+                    break;
+                }
+                throw;  // 重新抛出其他异常
+            }
+
+            // 检查停止标志和连接状态
+            if (!m_ws_stream || !m_ws_stream->is_open() || m_ping_stopped.load()) {
                 break;
             }
 
-            m_ws_ctx->timer.cancel();
+            // 取消之前的定时器（如果有）
+            if (m_ws_ctx->timer.expiry() != net::steady_timer::time_point()) {
+                m_ws_ctx->timer.cancel();
+            }
 
             // 设置超时定时器
             m_ws_ctx->timer.expires_after(WebSocketConfig::PING_TIMEOUT);
@@ -566,7 +590,15 @@ net::awaitable<void> WebSocketConnection::sendPing() {
                                     [ping_sent](beast::error_code ec) { *ping_sent = !ec; });
 
             // 等待 Ping 完成或超时
-            co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
+            try {
+                co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
+            } catch (const boost::system::system_error& e) {
+                if (e.code() == boost::asio::error::operation_aborted) {
+                    // 定时器被取消，继续下一次循环
+                    continue;
+                }
+                throw;
+            }
 
             if (!*ping_sent) {
                 HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
@@ -578,6 +610,7 @@ net::awaitable<void> WebSocketConnection::sendPing() {
         HKU_DEBUG("Ping loop exception: {}", e.what());
     }
 
+    HKU_DEBUG("Ping loop stopped for client {}:{}", m_client_ip, m_client_port);
     co_return;
 }
 
@@ -747,6 +780,14 @@ net::awaitable<void> WebSocketConnection::handleWebSocketMessage(
 }
 
 void WebSocketConnection::close() {
+    // 设置停止标志，确保心跳协程退出
+    m_ping_stopped.store(true);
+
+    // 取消所有定时器
+    if (m_ws_ctx) {
+        m_ws_ctx->timer.cancel();
+    }
+
     beast::error_code ec;
 
     if (m_ws_stream && m_ws_stream->is_open()) {
@@ -793,28 +834,15 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 : m_socket(std::move(socket)),
   m_router(router),
   m_io_ctx(io_ctx),
-  m_connection_start(std::chrono::steady_clock::now()) {
+  m_connection_start(std::chrono::steady_clock::now()),
+  m_permit() {  // 初始化为无效许可
     // 如果提供了 SSL 上下文，初始化 SSL 流
     if (ssl_ctx) {
         m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
     }
 
-    // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
-    int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
-    while (expected < HttpConfig::MAX_CONNECTIONS) {
-        if (HttpServer::ms_active_connections.compare_exchange_weak(
-              expected, expected + 1,
-              std::memory_order_acq_rel,     // 成功时使用 acquire-release
-              std::memory_order_acquire)) {  // 失败时使用 acquire
-            break;
-        }
-    }
-
-    if (expected >= HttpConfig::MAX_CONNECTIONS) {
-        HKU_WARN("Global connection limit reached ({}), rejecting connection",
-                 HttpConfig::MAX_CONNECTIONS);
-        throw std::runtime_error("Connection limit reached");
-    }
+    // 注意：不在构造函数中获取许可，避免阻塞 IO 线程
+    // 许可将在 readLoop 协程中异步获取（支持等待队列）
 
     // 获取客户端地址
     try {
@@ -829,7 +857,19 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 }
 
 Connection::~Connection() {
-    // 全局连接池管理：减少连接计数
+    // ========== 智能连接管理：释放连接许可（RAII） ==========
+    if (m_permit && HttpServer::ms_connection_manager) {
+        try {
+            HttpServer::ms_connection_manager->release(m_permit.getId());
+            HKU_DEBUG("Connection {} released", m_permit.getId());
+        } catch (const std::exception& e) {
+            HKU_WARN("Failed to release permit {}: {}", m_permit.getId(), e.what());
+        }
+    }
+
+    // 减少全局连接计数
+    // 设计说明：每个 Connection 对象在构造时（TCP 连接建立）就会增加计数
+    // 所以析构时必须减少计数，确保资源正确释放
     HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
 }
 
@@ -870,20 +910,20 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             }
         }
 
-        // P99 延迟优化：使用 relaxed 内存序减少原子操作开销
-        // 连接数限制检查不需要严格的顺序保证
-        if (HttpServer::ms_active_connections.fetch_add(1, std::memory_order_relaxed) >=
-            HttpConfig::MAX_CONNECTIONS) {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
-            HKU_WARN("Global connection limit reached ({}), rejecting connection from {}:{}",
-                     HttpConfig::MAX_CONNECTIONS, m_client_ip, m_client_port);
+        // ========== 智能连接管理：异步获取连接许可 ==========
+        // 使用协程版本的 acquire()，支持等待队列和超时控制
+        // 如果达到最大并发数，会进入 FIFO 等待队列而不是直接拒绝
+        m_permit = co_await HttpServer::ms_connection_manager->acquire();
+
+        if (!m_permit) {
+            // 等待超时，返回无效许可
+            HKU_WARN("Connection acquire timeout from {}:{}", m_client_ip, m_client_port);
             co_return;
         }
 
-        // 确保在函数退出时减少连接计数
-        auto decrement_connection = [&]() {
-            HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
-        };
+        HKU_DEBUG("Connection {} acquired: active={}, waiting={}", m_permit.getId(),
+                  HttpServer::get_active_connections(),
+                  HttpServer::ms_connection_manager->getWaitingCount());
 
         while (true) {
             // 检查连接最大存活时间
@@ -891,7 +931,6 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
                 HKU_INFO("Connection age limit reached, closing from {}:{}", m_client_ip,
                          m_client_port);
-                decrement_connection();
                 break;
             }
 
@@ -1042,7 +1081,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 ws_connection->start();
 
                 // WebSocket 连接已接管，退出当前 HTTP 循环
-                decrement_connection();
+                // 注意：不需要手动减少连接计数，Connection 析构时会处理
                 break;
             }
 
@@ -1070,7 +1109,6 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                     std::chrono::steady_clock::now() - m_connection_start)
                     .count(),
                   m_client_ip, m_client_port);
-                decrement_connection();
                 break;
             }
 
@@ -1531,37 +1569,49 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
 
 void HttpServer::start() {
     if (ms_running.load()) {
+        CLS_WARN("Server is already running");
         return;
     }
+
+    CLS_INFO("HttpServer::start() begin");
 
     try {
         // 如果未绑定外部 io_context，则自行创建
         if (!ms_use_external_io) {
+            CLS_INFO("Creating io_context...");
             ms_io_context = new net::io_context();
+            CLS_INFO("io_context created: {}", (void*)ms_io_context);
         } else {
             CLS_INFO("Using externally bound io_context");
         }
 
         // 创建 acceptor
+        CLS_INFO("Creating acceptor on {}:{}", m_host, m_port);
         auto addr = net::ip::make_address(m_host.c_str());
         ms_acceptor = new tcp::acceptor(*ms_io_context, {addr, m_port});
+        CLS_INFO("Acceptor created: {}", (void*)ms_acceptor);
 
         // 配置 SSL（如果启用）
         if (ms_ssl_config.enabled) {
+            CLS_INFO("Configuring SSL...");
             configureSsl();
 
             CLS_INFO("HTTPS Server started on {}:{}", m_host, m_port);
 
-            // 使用协程开始接受 SSL连接
+            // 使用协程开始接受 SSL 连接
+            CLS_INFO("Spawning doAcceptSsl coroutine...");
             net::co_spawn(*ms_io_context, doAcceptSsl(), net::detached);
         } else {
             CLS_INFO("HTTP Server started on {}:{}", m_host, m_port);
 
             // 使用协程开始接受连接
+            CLS_INFO("Spawning doAccept coroutine...");
             net::co_spawn(*ms_io_context, doAccept(), net::detached);
         }
 
+        CLS_INFO("Setting ms_running = true");
         ms_running.store(true);
+        CLS_INFO("Server start completed successfully");
 
 #if defined(_WIN32)
         // Windows 下设置控制台程序输出代码页为 UTF8
@@ -1571,6 +1621,10 @@ void HttpServer::start() {
 
     } catch (std::exception& e) {
         CLS_FATAL("Failed to start server: {}", e.what());
+        CLS_FATAL("Exception type: {}", typeid(e).name());
+        http_exit();
+    } catch (...) {
+        CLS_FATAL("Unknown exception occurred during server start");
         http_exit();
     }
 }
@@ -1590,16 +1644,8 @@ net::awaitable<void> HttpServer::doAccept() {
             continue;
         }
 
-        // 检查连接数限制
-        if (ms_active_connections.load(std::memory_order_relaxed) >= HttpConfig::MAX_CONNECTIONS) {
-            CLS_WARN("Maximum connections ({}) reached, rejecting", HttpConfig::MAX_CONNECTIONS);
-            continue;
-        }
-
-        // 增加活跃连接计数
-        ms_active_connections.fetch_add(1, std::memory_order_relaxed);
-
         // 为新连接创建处理器并启动协程（非 SSL 模式）
+        // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
         auto connection =
           Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
         connection->start();
@@ -1609,6 +1655,9 @@ net::awaitable<void> HttpServer::doAccept() {
 }
 
 void HttpServer::loop() {
+    CLS_INFO("HttpServer::loop() called, ms_running={}, ms_io_context={}", ms_running.load(),
+             (void*)ms_io_context);
+
     if (ms_io_context && ms_running.load()) {
         // 确定线程数：如果未设置或设置为 0，使用硬件并发数
         size_t thread_count = ms_io_thread_count;
@@ -1620,6 +1669,14 @@ void HttpServer::loop() {
         if (thread_count <= 1) {
             CLS_INFO("Running io_context with single thread");
             ms_io_context->run();
+            CLS_INFO("io_context.run() finished, cleaning up...");
+
+            // 【关键】在 run() 返回后清理 io_context
+            if (!ms_use_external_io) {
+                delete ms_io_context;
+                ms_io_context = nullptr;
+                CLS_INFO("io_context deleted");
+            }
             return;
         }
 
@@ -1647,6 +1704,12 @@ void HttpServer::loop() {
                 t.join();
             }
         }
+
+        CLS_INFO("All io_context threads finished, cleaning up...");
+
+    } else {
+        CLS_WARN("HttpServer::loop() skipped: ms_io_context={}, ms_running={}",
+                 (void*)ms_io_context, ms_running.load());
     }
 }
 
@@ -1655,35 +1718,53 @@ void HttpServer::stop() {
     SetConsoleOutputCP(g_old_cp);
 #endif
 
+    HKU_INFO("=== HttpServer::stop() ENTERED ===");
+
     if (ms_running.load()) {
         ms_running.store(false);
 
         // 1. 先关闭 acceptor，停止接受新连接
+        HKU_INFO("Step 1: Closing acceptor...");
         if (ms_acceptor) {
             ms_acceptor->cancel();
             ms_acceptor->close();
             delete ms_acceptor;
             ms_acceptor = nullptr;
+            HKU_INFO("Acceptor closed");
         }
 
-        // 2. 等待所有活动连接完成（通过 ms_active_connections 判断）
-        int wait_count = 0;
-        while (ms_active_connections.load(std::memory_order_acquire) > 0 && wait_count < 100) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            wait_count++;
+        // 2. 【关键】通知 ConnectionManager 停止，唤醒所有等待的连接
+        HKU_INFO("Step 2: Shutting down ConnectionManager...");
+        if (ms_connection_manager) {
+            HKU_INFO("Stopping connection manager, waking up all waiting connections...");
+            ms_connection_manager->shutdown();
+            HKU_INFO("ConnectionManager shutdown complete");
+        } else {
+            HKU_WARN("ConnectionManager is null!");
         }
 
-        if (ms_active_connections.load(std::memory_order_acquire) > 0) {
-            HKU_WARN("Stopping with {} active connections",
-                     ms_active_connections.load(std::memory_order_acquire));
+        // 3. 【关键】不再等待活动连接，直接停止 io_context
+        // 原因：用户已按 Ctrl-C，应该立即退出
+        // 注意：这可能导致部分正在处理的请求被中断
+        size_t active_conns = ms_active_connections.load(std::memory_order_acquire);
+        HKU_INFO("Step 3: Forcing stop, active connections: {}", active_conns);
+
+        if (active_conns > 0) {
+            HKU_WARN("Forcefully stopping {} active connections (may cause resource leak)",
+                     active_conns);
         }
 
-        // 3. 停止 io_context，取消所有待处理操作
+        // 4. 停止 io_context，取消所有待处理操作
+        HKU_INFO("Step 4: Stopping io_context...");
         if (ms_io_context) {
             ms_io_context->stop();
+            HKU_INFO("io_context stopped - this should unblock loop()");
+        } else {
+            HKU_WARN("io_context is null!");
         }
 
-        // 4. 清理 SSL 上下文
+        // 5. 清理 SSL 上下文
+        HKU_INFO("Step 5: Cleaning up SSL context...");
         if (ms_ssl_context) {
             delete ms_ssl_context;
             ms_ssl_context = nullptr;
@@ -1691,10 +1772,15 @@ void HttpServer::stop() {
 
         // 5. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
         if (ms_io_context && !ms_use_external_io) {
+            // 重要：等待一小段时间确保所有协程完成
+            // 因为调用 stop() 后，异步操作可能仍在完成中
+            // 直接删除 io_context 可能导致未定义行为
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             delete ms_io_context;
             ms_io_context = nullptr;
+            CLS_INFO("io_context deleted in stop()");
         } else if (ms_io_context && ms_use_external_io) {
-            CLS_INFO("External io_context detected, skipping cleanup");
+            CLS_INFO("External io_context detected, skipping cleanup in stop()");
         }
 
         // 6. 清理 server 指针
@@ -1702,6 +1788,8 @@ void HttpServer::stop() {
             CLS_INFO("Quit Http server");
             ms_server = nullptr;
         }
+
+        HKU_INFO("=== HttpServer::stop() COMPLETED ===");
     }
 }
 
