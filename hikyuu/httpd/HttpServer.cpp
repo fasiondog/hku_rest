@@ -626,7 +626,7 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             }
         }
     } catch (const std::exception& e) {
-        HKU_DEBUG("Ping loop exception: {}", e.what());
+        HKU_ERROR("Ping loop exception: {}", e.what());
     }
 
     HKU_DEBUG("Ping loop stopped for client {}:{}", m_client_ip, m_client_port);
