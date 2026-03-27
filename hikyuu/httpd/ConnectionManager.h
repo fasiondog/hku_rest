@@ -13,6 +13,7 @@
 #include <queue>
 #include <memory>
 #include <chrono>
+#include <vector>
 
 namespace hku {
 
@@ -157,18 +158,25 @@ public:
         // 设置关闭标志，禁止新的等待
         m_is_shutdown.store(true, std::memory_order_release);
 
-        // 取消所有等待的定时器，清空等待队列
+        // 【关键】先收集所有定时器（持锁），然后在锁外取消，避免死锁
+        std::vector<std::shared_ptr<boost::asio::steady_timer>> timers_to_cancel;
         {
             std::lock_guard<std::mutex> lock(m_wait_mutex);
             while (!m_wait_queue.empty()) {
-                auto timer = m_wait_queue.front();
+                timers_to_cancel.push_back(m_wait_queue.front());
                 m_wait_queue.pop();
-                timer->cancel();  // 取消定时器，触发 async_wait 完成
             }
+        }
+
+        // 在锁外取消定时器，避免死锁
+        for (auto& timer : timers_to_cancel) {
+            timer->cancel();
         }
 
         // 重置等待计数器
         m_waiting_count.store(0, std::memory_order_release);
+
+        HKU_INFO("Connection manager shutdown, all waiting connections notified");
     }
 
     /**

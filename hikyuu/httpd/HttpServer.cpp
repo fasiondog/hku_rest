@@ -273,9 +273,10 @@ WebSocketConnection::~WebSocketConnection() {
     // 设置停止标志，确保心跳协程退出
     m_ping_stopped.store(true);
 
-    // 取消所有定时器
+    // 【关键】取消并重置定时器，从 io_context 中移除
     if (m_ws_ctx) {
         m_ws_ctx->timer.cancel();
+        m_ws_ctx->timer = decltype(m_ws_ctx->timer)(m_ws_ctx->timer.get_executor());
     }
 
     // ========== 释放 WebSocket 连接许可 ==========
@@ -1215,7 +1216,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 检查 Keep-Alive 请求数限制（服务器端策略限制）
             if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 &&
                 m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
-                HKU_TRACE(
+                HKU_INFO(
                   "Keep-Alive limit reached ({} requests, age={}s), closing connection from {}:{}",
                   m_request_count,
                   std::chrono::duration_cast<std::chrono::seconds>(
@@ -1835,14 +1836,6 @@ void HttpServer::loop() {
         if (thread_count <= 1) {
             CLS_INFO("Running io_context with single thread");
             ms_io_context->run();
-            CLS_INFO("io_context.run() finished, cleaning up...");
-
-            // 【关键】在 run() 返回后清理 io_context
-            if (!ms_use_external_io) {
-                delete ms_io_context;
-                ms_io_context = nullptr;
-                CLS_INFO("io_context deleted");
-            }
             return;
         }
 
@@ -1870,8 +1863,6 @@ void HttpServer::loop() {
                 t.join();
             }
         }
-
-        CLS_INFO("All io_context threads finished, cleaning up...");
 
     } else {
         CLS_WARN("HttpServer::loop() skipped: ms_io_context={}, ms_running={}",
