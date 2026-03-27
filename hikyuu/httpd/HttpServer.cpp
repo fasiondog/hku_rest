@@ -475,9 +475,26 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
         // WebSocket 消息读取循环
         while (true) {
             try {
+                // 设置读取超时定时器
+                m_ws_ctx->timer.expires_after(WebSocketConfig::READ_TIMEOUT);
+
+                // 启动超时定时器
+                auto weak_self = weak_from_this();
+                m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
+                    if (!ec || ec == boost::asio::error::operation_aborted) {
+                        if (auto self = weak_self.lock()) {
+                            // 取消正在进行的异步操作
+                            self->m_socket.cancel();
+                        }
+                    }
+                });
+
                 // 读取 WebSocket 消息
                 m_ws_ctx->buffer.consume(m_ws_ctx->buffer.size());
                 co_await m_ws_stream->async_read(m_ws_ctx->buffer, net::use_awaitable);
+
+                // 读取成功，取消定时器
+                m_ws_ctx->timer.cancel();
 
                 // 获取消息内容
                 auto data = m_ws_ctx->buffer.data();
@@ -761,7 +778,7 @@ void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::sock
     // 禁用自动 Fragmentation，由应用层控制分片策略
     ws.auto_fragment(false);
 
-    HKU_DEBUG("WebSocket security configured: max_message_size={}",
+    HKU_DEBUG("WebSocket security configured: max_message_size={}, auto_fragment=false",
               WebSocketConfig::MAX_MESSAGE_SIZE);
 }
 
@@ -770,12 +787,45 @@ net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is
         co_return false;
     }
 
+    // 检查写队列大小限制（防止高频推送阻塞）
+    if (m_write_queue_size.load() >= WebSocketConfig::MAX_WRITE_QUEUE_SIZE) {
+        HKU_WARN("Write queue full ({} >= {}), rejecting message", m_write_queue_size.load(),
+                 WebSocketConfig::MAX_WRITE_QUEUE_SIZE);
+        co_return false;
+    }
+
+    // 增加队列计数
+    m_write_queue_size.fetch_add(1);
+
     try {
+        // 设置写入超时定时器
+        m_ws_ctx->timer.expires_after(WebSocketConfig::WRITE_TIMEOUT);
+
+        // 启动超时定时器
+        auto weak_self = weak_from_this();
+        m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
+            if (!ec || ec == boost::asio::error::operation_aborted) {
+                if (auto self = weak_self.lock()) {
+                    // 取消正在进行的异步操作
+                    self->m_socket.cancel();
+                }
+            }
+        });
+
         // 异步发送消息（使用 buffer）
         co_await m_ws_stream->async_write(net::buffer(message), net::use_awaitable);
+
+        // 发送成功，取消定时器
+        m_ws_ctx->timer.cancel();
+
+        // 减少队列计数
+        m_write_queue_size.fetch_sub(1);
+
         co_return true;
     } catch (const beast::system_error& e) {
         HKU_ERROR("WebSocket send error: {}", e.what());
+        // 减少队列计数（异常情况下也要释放）
+        m_write_queue_size.fetch_sub(1);
         co_return false;
     }
 }
@@ -1153,6 +1203,15 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             HKU_DEBUG("Keeping connection alive for next request (request #{}, client={}:{})",
                       m_request_count, m_client_ip, m_client_port);
+
+            // ========== P99 延迟优化：缓冲区容量管理 ==========
+            // 在 Keep-Alive 连接中，保留基础容量避免频繁分配
+            // 但清空内容，释放多余内存
+            if (session->buffer.capacity() > HttpConfig::BUFFER_MIN_CAPACITY) {
+                session->buffer.consume(session->buffer.size());
+                // 注意：boost::beast::flat_buffer 没有 shrink_to 方法
+                // 这里仅清空内容，容量会在后续操作中自然调整
+            }
         }
     } catch (const beast::system_error& e) {
         if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
@@ -1219,17 +1278,17 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
     try {
         // ========== P99 延迟优化：简化定时器处理 ==========
-        // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
-        context->timer.expires_after(HttpConfig::TOTAL_TIMEOUT);
+        // 直接设置新的超时时间，不需要先 cancel（Boost.Asio 会自动处理）
+        context->timer.expires_after(HttpConfig::READ_TIMEOUT);
 
-        // 启动超时定时器，到期时主动取消业务处理
-        // 使用 weak_ptr 防止定时器回调访问已销毁的 context
+        // 启动超时定时器，到期时主动取消异步操作
+        // 使用 weak_ptr 防止定时器回调访问已销毁的 session
         auto weak_context = std::weak_ptr<BeastContext>(context);
         context->timer.async_wait([weak_ctx = std::move(weak_context)](beast::error_code ec) {
             if (!ec || ec == boost::asio::error::operation_aborted) {
                 // 尝试锁定 shared_ptr
                 if (auto ctx = weak_ctx.lock()) {
-                    // 超时时主动取消正在进行的业务处理
+                    // 主动取消正在进行的异步操作
                     ctx->cancel_signal.emit(net::cancellation_type::all);
                 }
             }

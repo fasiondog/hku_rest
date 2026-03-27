@@ -158,6 +158,9 @@ private:
 
     // ========== WebSocket 连接许可（如使用 ConnectionManager） ==========
     WebSocketPermit m_ws_permit;  // WebSocket 连接许可，析构时自动释放
+
+    // ========== 写队列管理 ==========
+    std::atomic<std::size_t> m_write_queue_size{0};  // 当前待发送消息数
 };
 
 // HTTP 连接处理器 - 管理 HTTP/HTTPS TCP 连接
