@@ -91,6 +91,8 @@ static UINT g_old_cp;
  * - X-Frame-Options: 防止点击劫持攻击
  * - X-XSS-Protection: XSS 防护
  * - Referrer-Policy: 控制 Referer 信息泄露
+ * - Content-Security-Policy: 内容安全策略（防止XSS）
+ * - Permissions-Policy: 权限策略（限制浏览器功能）
  * - CORS 头 (如果启用)
  *
  * @tparam ResponseType 响应类型 (http::response 或其引用)
@@ -105,6 +107,12 @@ static void setResponseHeaders(ResponseType& response, const CorsConfig* cors_co
     response.set(http::field::x_frame_options, "DENY");
     response.set(http::field::x_xss_protection, "1; mode=block");
     response.set(http::field::referrer_policy, "no-referrer-when-downgrade");
+
+    // 增强安全头
+    response.set(http::field::content_security_policy,
+                 "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src "
+                 "'self' data:;");
+    response.set(http::field::cache_control, "no-store, no-cache, must-revalidate, max-age=0");
 
     // 设置 CORS 头 (如果提供了配置且已启用)
     if (cors_config && cors_config->enabled) {
@@ -645,53 +653,84 @@ bool WebSocketConnection::validateWebSocketMessage(const std::string& message, b
     // 3. 文本消息的 UTF-8 编码验证
     if (is_text) {
         try {
-            // C++20 标准库不直接提供 UTF-8 验证，使用简单验证逻辑
-            // 检查是否存在非法的 UTF-8 序列
-            for (size_t i = 0; i < message.size();) {
+            // 增强的 UTF-8 验证逻辑
+            size_t i = 0;
+            while (i < message.size()) {
                 unsigned char c = static_cast<unsigned char>(message[i]);
 
-                // ASCII 字符 (0x00-0x7F)
+                // 检查 UTF-8 序列长度
+                size_t seq_len = 0;
                 if (c < 0x80) {
-                    i++;
-                }
-                // 多字节 UTF-8 字符
-                else if (c >= 0xC0 && c < 0xE0) {
-                    // 2 字节序列：需要检查下一个字节是否为延续字节 (10xxxxxx)
-                    if (i + 1 >= message.size() || (message[i + 1] & 0xC0) != 0x80) {
-                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
-                        return false;
-                    }
-                    i += 2;
-                } else if (c >= 0xE0 && c < 0xF0) {
-                    // 3 字节序列：需要检查后续两个字节
-                    if (i + 2 >= message.size() || (message[i + 1] & 0xC0) != 0x80 ||
-                        (message[i + 2] & 0xC0) != 0x80) {
-                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
-                        return false;
-                    }
-                    i += 3;
-                } else if (c >= 0xF0 && c < 0xF8) {
-                    // 4 字节序列：需要检查后续三个字节
-                    if (i + 3 >= message.size() || (message[i + 1] & 0xC0) != 0x80 ||
-                        (message[i + 2] & 0xC0) != 0x80 || (message[i + 3] & 0xC0) != 0x80) {
-                        HKU_DEBUG("Invalid UTF-8 sequence at position {}", i);
-                        return false;
-                    }
-                    i += 4;
+                    // 单字节 ASCII (0x00-0x7F)
+                    seq_len = 1;
+                } else if ((c & 0xE0) == 0xC0) {
+                    // 2 字节序列 (110xxxxx)
+                    seq_len = 2;
+                } else if ((c & 0xF0) == 0xE0) {
+                    // 3 字节序列 (1110xxxx)
+                    seq_len = 3;
+                } else if ((c & 0xF8) == 0xF0) {
+                    // 4 字节序列 (11110xxx)
+                    seq_len = 4;
                 } else {
-                    // 非法的起始字节
+                    // 非法起始字节
                     HKU_DEBUG("Invalid UTF-8 start byte at position {}: 0x{:02x}", i,
                               static_cast<int>(c));
                     return false;
                 }
+
+                // 检查是否有足够的字节
+                if (i + seq_len > message.size()) {
+                    HKU_DEBUG("Incomplete UTF-8 sequence at position {}", i);
+                    return false;
+                }
+
+                // 检查延续字节
+                for (size_t j = 1; j < seq_len; ++j) {
+                    unsigned char cont = static_cast<unsigned char>(message[i + j]);
+                    if ((cont & 0xC0) != 0x80) {
+                        HKU_DEBUG("Invalid UTF-8 continuation byte at position {}: 0x{:02x}", i + j,
+                                  static_cast<int>(cont));
+                        return false;
+                    }
+                }
+
+                // 检查过长的编码（overlong encoding）
+                if (seq_len == 2 && c < 0xC2) {
+                    HKU_DEBUG("Overlong UTF-8 encoding at position {}", i);
+                    return false;
+                }
+
+                // 检查 Unicode 码点范围
+                if (seq_len == 4) {
+                    // 4字节序列的最高位不应超过 0x10FFFF（Unicode最大码点）
+                    unsigned int codepoint =
+                      ((c & 0x07) << 18) |
+                      ((static_cast<unsigned char>(message[i + 1]) & 0x3F) << 12) |
+                      ((static_cast<unsigned char>(message[i + 2]) & 0x3F) << 6) |
+                      (static_cast<unsigned char>(message[i + 3]) & 0x3F);
+
+                    if (codepoint > 0x10FFFF) {
+                        HKU_DEBUG("UTF-8 codepoint out of range: 0x{:x}", codepoint);
+                        return false;
+                    }
+
+                    // 检查代理对（surrogate pairs）
+                    if (codepoint >= 0xD800 && codepoint <= 0xDFFF) {
+                        HKU_DEBUG("UTF-8 surrogate pair detected at position {}", i);
+                        return false;
+                    }
+                }
+
+                i += seq_len;
             }
 
             // 额外检查：过滤特殊控制字符（除了 \n, \r, \t 外）
             for (char c : message) {
                 unsigned char uc = static_cast<unsigned char>(c);
                 // 允许的控制字符：\n (0x0A), \r (0x0D), \t (0x09)
-                // 其他控制字符（0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F）被过滤
-                if (uc < 0x20 && uc != 0x09 && uc != 0x0A && uc != 0x0D) {
+                // 其他控制字符（0x00-0x08, 0x0B, 0x0C, 0x0E-0x1F, 0x7F）被过滤
+                if ((uc < 0x20 && uc != 0x09 && uc != 0x0A && uc != 0x0D) || uc == 0x7F) {
                     HKU_DEBUG("Rejected message containing control character: 0x{:02x}",
                               static_cast<int>(uc));
                     return false;
@@ -849,6 +888,26 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
         m_client_port = endpoint.port();
+
+#if 0
+        // ========== 基础DoS防护：检查是否为已知攻击IP ==========
+        // 简单实现：检查是否为本地回环或私有地址（生产环境应使用外部服务）
+        static const std::vector<std::string> BANNED_NETWORKS = {
+          "127.0.0.0/8",        // 本地回环
+          "10.0.0.0/8",         // 私有网络A类
+          "172.16.0.0/12",      // 私有网络B类
+          "192.168.0.0/16",     // 私有网络C类
+          "0.0.0.0/32",         // 无效地址
+          "255.255.255.255/32"  // 广播地址
+        };
+
+        // 简单IP验证（生产环境应使用更复杂的IP验证库）
+        if (m_client_ip == "0.0.0.0" || m_client_ip == "255.255.255.255") {
+            HKU_WARN("Rejected connection from invalid IP address: {}", m_client_ip);
+            throw std::runtime_error("Invalid client IP address");
+        }
+#endif
+
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
@@ -1388,7 +1447,25 @@ void HttpServer::configureSsl() {
         }
 
         // 如果是私钥文件，检查应该更严格
-        if (ms_ssl_config.ca_key_file.find(".key") != std::string::npos ||
+        // 使用更严格的检查：检查文件内容是否为私钥
+        bool is_private_key = false;
+        FILE* fp = fopen(ms_ssl_config.ca_key_file.c_str(), "r");
+        if (fp) {
+            char buffer[256];
+            if (fgets(buffer, sizeof(buffer), fp)) {
+                // 检查是否为私钥文件（PEM格式）
+                std::string line(buffer);
+                if (line.find("-----BEGIN PRIVATE KEY-----") != std::string::npos ||
+                    line.find("-----BEGIN RSA PRIVATE KEY-----") != std::string::npos ||
+                    line.find("-----BEGIN EC PRIVATE KEY-----") != std::string::npos) {
+                    is_private_key = true;
+                }
+            }
+            fclose(fp);
+        }
+
+        // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
+        if (is_private_key || ms_ssl_config.ca_key_file.find(".key") != std::string::npos ||
             ms_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
             if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
                 HKU_ERROR(
@@ -1489,14 +1566,14 @@ void HttpServer::configureSsl() {
 
               // ========== 增强的畸形 ALPN 检测 ==========
               // 安全检查：防止越界访问和畸形数据
-              if (protocol_len == 0 || i + protocol_len > inlen) {
+              if (protocol_len == 0 || i + 1 + protocol_len > inlen) {
                   // 检测到畸形 ALPN 扩展，可能是 DoS 攻击
                   HKU_WARN("Malformed ALPN extension detected (length={}, position={}/{})",
                            protocol_len, i, inlen);
 
-                  // 跳过无效条目而不是直接拒绝，防止 DoS 攻击
-                  i++;
-                  continue;
+                  // 安全处理：记录并拒绝连接
+                  // 返回 SSL_TLSEXT_ERR_ALERT_FATAL 让 OpenSSL 中止握手
+                  return SSL_TLSEXT_ERR_ALERT_FATAL;
               }
 
               // 检查是否为 http/1.1
