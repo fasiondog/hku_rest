@@ -6,6 +6,10 @@ target("rest_server")
     
     add_deps("hku_httpd")
     add_packages("boost", "nlohmann_json", "fmt", "openssl3")
+
+    if is_plat("linux", "cross") then
+        add_cxflags("-fcoroutines")
+    end    
     
     -- 添加 OpenSSL 依赖（用于 TLS/SSL）
     if is_plat("macosx") then

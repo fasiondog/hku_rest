@@ -161,7 +161,11 @@ target("hku_httpd")
         end
     elseif is_kind("static") and not is_plat("windows") then
         add_cxflags("-fPIC", {force=true})
-    end    
+    end
+
+    if is_plat("linux", "cross") then
+        add_cxflags("-fcoroutines")
+    end
 
     if is_plat("windows") then
         add_cxflags("-wd4819")  
