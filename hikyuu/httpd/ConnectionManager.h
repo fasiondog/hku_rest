@@ -169,8 +169,6 @@ public:
 
         // 重置等待计数器
         m_waiting_count.store(0, std::memory_order_release);
-
-        HKU_INFO("Connection manager shutdown, all waiting connections notified");
     }
 
     /**

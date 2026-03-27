@@ -433,7 +433,7 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
         auto handler = m_ws_router->findHandler(path);
 
         if (!handler) {
-            HKU_INFO("WebSocket handler not found for path: {}", path);
+            HKU_TRACE("WebSocket handler not found for path: {}", path);
             // 发送 404 响应并关闭
             m_ws_stream->close(websocket::close_code::policy_error);
             close();
@@ -542,8 +542,8 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
                 co_await active_handle->onClose(static_cast<ws::close_code>(close_reason.code),
                                                 close_reason.reason);
 
-                HKU_INFO("WebSocket connection closed: code={}, reason={}",
-                         static_cast<int>(close_reason.code), close_reason.reason);
+                HKU_DEBUG("WebSocket connection closed: code={}, reason={}",
+                          static_cast<int>(close_reason.code), close_reason.reason);
             } catch (const std::exception& e) {
                 HKU_ERROR("onClose exception: {}", e.what());
             }
@@ -971,7 +971,7 @@ Connection::~Connection() {
 }
 
 void Connection::start() {
-    // HKU_INFO("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
+    // HKU_TRACE("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
     // 使用 shared_from_this 确保 Connection 对象在协程执行期间不会被销毁
     auto self = shared_from_this();
     net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
@@ -1026,8 +1026,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
             if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
-                HKU_INFO("Connection age limit reached, closing from {}:{}", m_client_ip,
-                         m_client_port);
+                HKU_TRACE("Connection age limit reached, closing from {}:{}", m_client_ip,
+                          m_client_port);
                 break;
             }
 
@@ -1215,7 +1215,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 检查 Keep-Alive 请求数限制（服务器端策略限制）
             if (HttpConfig::MAX_KEEPALIVE_REQUESTS > 0 &&
                 m_request_count >= HttpConfig::MAX_KEEPALIVE_REQUESTS) {
-                HKU_INFO(
+                HKU_TRACE(
                   "Keep-Alive limit reached ({} requests, age={}s), closing connection from {}:{}",
                   m_request_count,
                   std::chrono::duration_cast<std::chrono::seconds>(
@@ -1300,7 +1300,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
     if (!handler) {
         // 未找到路由，返回 404
-        HKU_INFO("not found: {}", target);
+        HKU_TRACE("not found: {}", target);
         context->res.result(http::status::not_found);
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":404, "errcode":404, "errmsg":"Not Found"})";
@@ -1884,63 +1884,45 @@ void HttpServer::stop() {
     SetConsoleOutputCP(g_old_cp);
 #endif
 
-    HKU_INFO("=== HttpServer::stop() ENTERED ===");
-
     if (ms_running.load()) {
         ms_running.store(false);
 
         // 1. 先关闭 acceptor，停止接受新连接
-        HKU_INFO("Step 1: Closing acceptor...");
         if (ms_acceptor) {
             ms_acceptor->cancel();
             ms_acceptor->close();
             delete ms_acceptor;
             ms_acceptor = nullptr;
-            HKU_INFO("Acceptor closed");
         }
 
         // 2. 【关键】通知 ConnectionManager 停止，唤醒所有等待的连接
-        HKU_INFO("Step 2: Shutting down ConnectionManager...");
         if (ms_connection_manager) {
-            HKU_INFO("Stopping connection manager, waking up all waiting connections...");
             ms_connection_manager->shutdown();
-            HKU_INFO("ConnectionManager shutdown complete");
         } else {
             HKU_WARN("ConnectionManager is null!");
         }
 
-        // 2.1 关闭 WebSocket 连接管理器
-        HKU_INFO("Step 2.1: Shutting down WebSocketConnectionManager...");
+        // 3 关闭 WebSocket 连接管理器
         if (ms_ws_connection_manager) {
-            HKU_INFO("Stopping WebSocket connection manager, waking up all waiting connections...");
             ms_ws_connection_manager->shutdown();
-            HKU_INFO("WebSocketConnectionManager shutdown complete");
         } else {
             HKU_DEBUG("WebSocketConnectionManager not configured");
         }
 
-        // 3. 【关键】不再等待活动连接，直接停止 io_context
-        // 原因：用户已按 Ctrl-C，应该立即退出
-        // 注意：这可能导致部分正在处理的请求被中断
-        HKU_INFO("Step 3: Forcing stop, stopping io_context immediately");
-
         // 4. 停止 io_context，取消所有待处理操作
-        HKU_INFO("Step 4: Stopping io_context...");
         if (ms_io_context) {
             ms_io_context->stop();
-            HKU_INFO("io_context stopped - this should unblock loop()");
         } else {
             HKU_WARN("io_context is null!");
         }
 
         // 5. 清理 SSL 上下文
-        HKU_INFO("Step 5: Cleaning up SSL context...");
         if (ms_ssl_context) {
             delete ms_ssl_context;
             ms_ssl_context = nullptr;
         }
 
-        // 5. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
+        // 6. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
         if (ms_io_context && !ms_use_external_io) {
             // 重要：等待一小段时间确保所有协程完成
             // 因为调用 stop() 后，异步操作可能仍在完成中
@@ -1948,9 +1930,6 @@ void HttpServer::stop() {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
             delete ms_io_context;
             ms_io_context = nullptr;
-            CLS_INFO("io_context deleted in stop()");
-        } else if (ms_io_context && ms_use_external_io) {
-            CLS_INFO("External io_context detected, skipping cleanup in stop()");
         }
 
         // 6. 清理 server 指针
@@ -1958,8 +1937,6 @@ void HttpServer::stop() {
             CLS_INFO("Quit Http server");
             ms_server = nullptr;
         }
-
-        HKU_INFO("=== HttpServer::stop() COMPLETED ===");
     }
 }
 
