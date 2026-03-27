@@ -32,6 +32,13 @@ using json = nlohmann::json;
 class QuotePushHandle : public WebSocketHandle {
     WS_HANDLE_IMP(QuotePushHandle)
 
+private:
+    // ========== 业务配置：分批推送参数 ==========
+    // 注意：这是业务层决策，不是 WebSocket 框架配置
+    // 根据网络带宽、客户端处理能力、数据量等因素综合决定
+    static constexpr std::size_t BATCH_SIZE = 500;                  // 每批 500 条行情数据
+    static constexpr std::chrono::milliseconds BATCH_INTERVAL{50};  // 批次间隔 50ms
+
 public:
     net::awaitable<void> onMessage(std::string_view message, bool is_text) override {
         // 解析客户端请求
@@ -95,11 +102,11 @@ private:
             messages.push_back(quote.dump());
         }
 
-        // 使用流式分批推送（使用 WebSocketConfig 配置）
-        bool success = co_await sendBatch(messages,                        // 消息列表
-                                          true,                            // 文本消息
-                                          WebSocketConfig::BATCH_SIZE,     // 每批 500 条
-                                          WebSocketConfig::BATCH_INTERVAL  // 批次间隔 50ms
+        // 使用流式分批推送（使用类配置常量）
+        bool success = co_await sendBatch(messages,       // 消息列表
+                                          true,           // 文本消息
+                                          BATCH_SIZE,     // 分批大小（业务配置）
+                                          BATCH_INTERVAL  // 分批间隔（业务配置）
         );
 
         // 推送完成通知
@@ -143,11 +150,11 @@ private:
             return quote.dump();
         };
 
-        // 使用生成器方式的流式分批推送（使用 WebSocketConfig 配置）
-        bool success = co_await sendBatch(generator,                       // 消息生成器
-                                          true,                            // 文本消息
-                                          WebSocketConfig::BATCH_SIZE,     // 每批 500 条
-                                          WebSocketConfig::BATCH_INTERVAL  // 批次间隔 50ms
+        // 使用生成器方式的流式分批推送（使用类配置常量）
+        bool success = co_await sendBatch(generator,      // 消息生成器
+                                          true,           // 文本消息
+                                          BATCH_SIZE,     // 分批大小（业务配置）
+                                          BATCH_INTERVAL  // 分批间隔（业务配置）
         );
 
         // 推送完成通知

@@ -135,16 +135,16 @@ protected:
 
     /**
      * @brief 流式分批发送消息（适用于大批量数据推送）
-     * 
+     *
      * 将大数据集分割成多个小批次依次发送，避免一次性推送造成的网络拥塞
      * 典型应用场景：推送 10000 只股票的行情数据
-     * 
+     *
      * @param messages 待发送的消息列表（每个元素为一条完整的消息）
      * @param is_text true 表示文本消息，false 表示二进制消息
      * @param batchSize 每批发送的消息数量，默认 500 条/批
      * @param batchIntervalMs 批次间的时间间隔（毫秒），默认 50ms
      * @return true 全部发送成功，false 中途失败
-     * 
+     *
      * @note 总消息数超过 batchSize 时自动启用流式模式
      * @note 预计总耗时 = (messages.size() / batchSize) * batchIntervalMs
      * @example
@@ -152,23 +152,22 @@ protected:
      * std::vector<std::string> quotes = generateQuoteData(10000);
      * co_await sendBatch(quotes, true, 500, 50);
      */
-    virtual net::awaitable<bool> sendBatch(const std::vector<std::string>& messages,
-                                          bool is_text = true,
-                                          std::size_t batchSize = WebSocketConfig::BATCH_SIZE,
-                                          std::chrono::milliseconds batchInterval = 
-                                            std::chrono::milliseconds(WebSocketConfig::BATCH_INTERVAL));
+    virtual net::awaitable<bool> sendBatch(
+      const std::vector<std::string>& messages, bool is_text = true,
+      std::size_t batchSize = 500,                                               // 默认 500 条/批
+      std::chrono::milliseconds batchInterval = std::chrono::milliseconds(50));  // 默认 50ms 间隔
 
     /**
      * @brief 流式分批发送消息（自定义数据生成器）
-     * 
+     *
      * 通过生成器函数动态产生消息内容，适合内存敏感场景
-     * 
+     *
      * @param generator 消息生成器函数，返回 std::optional<std::string>，空值表示结束
      * @param is_text true 表示文本消息，false 表示二进制消息
      * @param batchSize 每批发送的消息数量，默认 500 条/批
      * @param batchIntervalMs 批次间的时间间隔（毫秒），默认 50ms
      * @return true 全部发送成功，false 中途失败
-     * 
+     *
      * @note 生成器应返回 std::nullopt 表示数据结束
      * @example
      * // 从数据库流式读取并推送
@@ -181,11 +180,9 @@ protected:
      * co_await sendBatch(generator, true, 500, 50);
      */
     virtual net::awaitable<bool> sendBatch(
-        std::function<std::optional<std::string>()> generator,
-        bool is_text = true,
-        std::size_t batchSize = WebSocketConfig::BATCH_SIZE,
-        std::chrono::milliseconds batchInterval = 
-          std::chrono::milliseconds(WebSocketConfig::BATCH_INTERVAL));
+      std::function<std::optional<std::string>()> generator, bool is_text = true,
+      std::size_t batchSize = 500,                                               // 默认 500 条/批
+      std::chrono::milliseconds batchInterval = std::chrono::milliseconds(50));  // 默认 50ms 间隔
 
     /**
      * 获取客户端 IP 地址

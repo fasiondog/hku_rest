@@ -85,11 +85,6 @@ struct WebSocketConfig {
     // ========== 连接管理 ==========
     // WebSocket 为长连接，无请求次数限制，依赖心跳检测维持连接
     static constexpr int MAX_CONNECTIONS = 1000;  // 单实例最大连接数：1000（合理并发）
-
-    // ========== 流式分批推送机制 ==========
-    static constexpr std::size_t BATCH_SIZE = 500;  // 分批大小：500 只/批（10000/500=20 批次）
-    static constexpr std::chrono::milliseconds BATCH_INTERVAL{
-      50};  // 分批间隔：50ms（总耗时约 1 秒完成）
 };
 
 }  // namespace hku

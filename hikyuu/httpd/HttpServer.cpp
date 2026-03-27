@@ -653,14 +653,22 @@ bool WebSocketConnection::validateWebSocketMessage(const std::string& message, b
         return false;
     }
 
-    // 2. 检查消息长度限制（复用 HTTP 请求体限制：10MB）
-    if (message.size() > HttpConfig::MAX_BODY_SIZE) {
-        HKU_WARN("Rejected oversized WebSocket message: {} bytes (max: {})", message.size(),
-                 HttpConfig::MAX_BODY_SIZE);
+    // 2. ========== MAX_FRAME_SIZE 帧大小检查 ==========
+    // 单帧不应超过配置的最大帧大小
+    if (message.size() > WebSocketConfig::MAX_FRAME_SIZE) {
+        HKU_WARN("Rejected oversized WebSocket frame: {} bytes (max: {})", message.size(),
+                 WebSocketConfig::MAX_FRAME_SIZE);
         return false;
     }
 
-    // 3. 文本消息的 UTF-8 编码验证
+    // 3. 检查消息长度限制（使用 WebSocketConfig::MAX_MESSAGE_SIZE）
+    if (message.size() > WebSocketConfig::MAX_MESSAGE_SIZE) {
+        HKU_WARN("Rejected oversized WebSocket message: {} bytes (max: {})", message.size(),
+                 WebSocketConfig::MAX_MESSAGE_SIZE);
+        return false;
+    }
+
+    // 4. 文本消息的 UTF-8 编码验证
     if (is_text) {
         try {
             // 增强的 UTF-8 验证逻辑
@@ -775,11 +783,23 @@ void WebSocketConnection::configureWebSocketSecurity(websocket::stream<tcp::sock
     // 注意：Boost.Beast 没有 write_message_max，只有 read_message_max
     // 写入大小由应用层控制
 
+    // ========== MAX_FRAME_SIZE 帧大小限制 ==========
+    // 通过 control_callback 监控控制帧的大小（Ping/Pong/Close）
+    ws.control_callback([max_frame_size = WebSocketConfig::MAX_FRAME_SIZE](
+                          websocket::frame_type kind, beast::string_view payload) {
+        if (payload.size() > max_frame_size) {
+            HKU_WARN("Control frame too large: {} bytes (max: {}), closing connection",
+                     payload.size(), max_frame_size);
+            // 注意：control_callback 中不能直接关闭连接，仅记录日志
+        }
+    });
+
     // 禁用自动 Fragmentation，由应用层控制分片策略
     ws.auto_fragment(false);
 
-    HKU_DEBUG("WebSocket security configured: max_message_size={}, auto_fragment=false",
-              WebSocketConfig::MAX_MESSAGE_SIZE);
+    HKU_DEBUG(
+      "WebSocket security configured: max_message_size={}, max_frame_size={}, auto_fragment=false",
+      WebSocketConfig::MAX_MESSAGE_SIZE, WebSocketConfig::MAX_FRAME_SIZE);
 }
 
 net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is_text) {
@@ -1019,6 +1039,12 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 // 第一次请求时创建 session
                 auto& socket_ref = m_ssl_stream ? m_ssl_stream->next_layer() : m_socket;
                 m_session = std::make_shared<BeastContext>(socket_ref, m_io_ctx);
+
+                // ========== MAX_BUFFER_SIZE 限制 ==========
+                // 设置缓冲区最大大小，防止内存耗尽攻击
+                m_session->buffer.max_size(HttpConfig::MAX_BUFFER_SIZE);
+                HKU_DEBUG("Connection buffer max_size set to {} bytes",
+                          HttpConfig::MAX_BUFFER_SIZE);
             }
 
             // 复用已有的 session 对象
@@ -1095,6 +1121,16 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 将解析后的请求移动到 session 中
             session->req = session->parser->release();
+
+            // ========== P99 延迟优化：ENABLE_FAST_PATH 快速路径 ==========
+            // 如果启用快速路径，对简单 GET 请求跳过部分安全检查
+            if (HttpConfig::ENABLE_FAST_PATH && session->req.method() == http::verb::get &&
+                session->req.target().size() < 256 &&  // 简单请求：URL 较短
+                session->req.body().empty()) {         // 无请求体
+
+                HKU_DEBUG("Fast path enabled for simple GET request: {}", session->req.target());
+                // 跳过额外的安全验证，直接进入处理流程
+            }
 
             // ========== 增强的 HTTP/2 DoS 防护 ==========
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）

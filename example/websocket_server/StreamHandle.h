@@ -154,27 +154,40 @@ public:
 
         HKU_INFO("Exporting CSV data");
 
+        // ========== 批量响应模式检测 ==========
+        // 如果启用了批量响应且数据量超过阈值，自动切换到流式导出
+        constexpr std::size_t TOTAL_RECORDS = 10000;
+        if (HttpConfig::ENABLE_BATCH_RESPONSE && TOTAL_RECORDS >= HttpConfig::BATCH_THRESHOLD) {
+            HKU_DEBUG(
+              "Batch response mode enabled: {} records >= threshold {}, using streaming export",
+              TOTAL_RECORDS, HttpConfig::BATCH_THRESHOLD);
+            // 自动启用分块传输
+            enableChunkedTransfer();
+        }
+
         // 设置 CSV 响应头
         ctx->res.result(http::status::ok);
         ctx->res.set(http::field::content_type, "text/csv; charset=utf-8");
         ctx->res.set(http::field::content_disposition, "attachment; filename=\"export.csv\"");
 
-        // 启用分块传输
-        enableChunkedTransfer();
+        // 启用分块传输（如果还未启用）
+        if (!isChunkedTransferEnabled()) {
+            enableChunkedTransfer();
+        }
 
         // 发送 CSV 头部
         std::string header = "symbol,name,price,change,volume\n";
         co_await writeChunk(header);
 
-        // 模拟生成 10000 条数据
-        constexpr std::size_t BATCH_SIZE = 500;  // 每批 500 条
+        // 模拟生成 10000 条数据（分批发送）
+        constexpr std::size_t BATCH_SIZE = 500;  // 每批 500 条（业务层决策）
         std::ostringstream batch;
 
-        for (int i = 0; i < 10000; ++i) {
+        for (int i = 0; i < TOTAL_RECORDS; ++i) {
             batch << fmt::format("SH{:06d},Stock{},{:.2f},{:.2f},{}\n", i, i,
                                  10.0 + (i % 100) * 0.1, (i % 10) * 0.01, 1000000 + i * 1000);
 
-            // 每 500 条发送一批
+            // 每达到 BATCH_SIZE 条发送一批
             if ((i + 1) % BATCH_SIZE == 0) {
                 if (!co_await writeChunk(batch.str())) {
                     HKU_ERROR("Failed to write CSV batch");
@@ -197,7 +210,7 @@ public:
         // 完成分块传输
         co_await finishChunkedTransfer();
 
-        HKU_INFO("CSV export completed: 10000 records");
+        HKU_INFO("CSV export completed: {} records", TOTAL_RECORDS);
     }
 };
 
