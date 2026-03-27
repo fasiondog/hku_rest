@@ -18,8 +18,8 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
-#include <WS2tcpnip.h>
-#include <Ws2ipdef.h>
+// #include <WS2tcpnip.h>
+// #include <Ws2ipdef.h>
 #else
 #include <arpa/inet.h>
 #endif
