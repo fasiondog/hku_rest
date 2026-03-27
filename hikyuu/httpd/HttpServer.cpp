@@ -61,8 +61,9 @@ net::io_context* HttpServer::ms_io_context = nullptr;
 tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::atomic<bool> HttpServer::ms_running{false};
 size_t HttpServer::ms_io_thread_count = 0;
-std::atomic<int> HttpServer::ms_active_connections{0};
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
+std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
+  nullptr};  // WebSocket 连接管理器
 Router HttpServer::ms_router;
 WebSocketRouter HttpServer::ms_ws_router;
 bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
@@ -248,35 +249,23 @@ WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* 
         m_ssl_stream = std::make_unique<ssl::stream<tcp::socket&>>(m_socket, *ssl_ctx);
     }
 
-    // 全局连接池管理：检查并增加连接计数（使用 acquire-release 语义）
-    int expected = HttpServer::ms_active_connections.load(std::memory_order_acquire);
-    while (expected < HttpConfig::MAX_CONNECTIONS) {
-        if (HttpServer::ms_active_connections.compare_exchange_weak(
-              expected, expected + 1, std::memory_order_acq_rel, std::memory_order_acquire)) {
-            break;
-        }
-    }
+    // 注意：不在构造函数中获取许可，避免阻塞 IO 线程
+    // 许可将在 readLoop 协程中异步获取（支持等待队列）
 
-    if (expected >= HttpConfig::MAX_CONNECTIONS) {
-        HKU_WARN("Global connection limit reached ({}), rejecting connection",
-                 HttpConfig::MAX_CONNECTIONS);
-        throw std::runtime_error("Connection limit reached");
+    // 保存已有的 HTTP 请求（如果有），用于 WebSocket 升级
+    if (existing_req) {
+        m_existing_req = *existing_req;
     }
 
     // 获取客户端地址
     try {
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
-
+        m_client_port = endpoint.port();
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
         m_client_port = 0;
-    }
-
-    // 保存已有的 HTTP 请求（如果有）
-    if (existing_req) {
-        m_existing_req = *existing_req;
     }
 }
 
@@ -289,8 +278,12 @@ WebSocketConnection::~WebSocketConnection() {
         m_ws_ctx->timer.cancel();
     }
 
-    // 全局连接池管理：减少连接计数
-    HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
+    // ========== 释放 WebSocket 连接许可 ==========
+    // 通过 WebSocketConnectionManager 来释放
+    auto ws_conn_mgr = HttpServer::get_websocket_connection_manager();
+    if (ws_conn_mgr && m_ws_permit) {
+        ws_conn_mgr->release(m_ws_permit.getId());
+    }
 }
 
 void WebSocketConnection::start() {
@@ -888,26 +881,6 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
         m_client_port = endpoint.port();
-
-#if 0
-        // ========== 基础DoS防护：检查是否为已知攻击IP ==========
-        // 简单实现：检查是否为本地回环或私有地址（生产环境应使用外部服务）
-        static const std::vector<std::string> BANNED_NETWORKS = {
-          "127.0.0.0/8",        // 本地回环
-          "10.0.0.0/8",         // 私有网络A类
-          "172.16.0.0/12",      // 私有网络B类
-          "192.168.0.0/16",     // 私有网络C类
-          "0.0.0.0/32",         // 无效地址
-          "255.255.255.255/32"  // 广播地址
-        };
-
-        // 简单IP验证（生产环境应使用更复杂的IP验证库）
-        if (m_client_ip == "0.0.0.0" || m_client_ip == "255.255.255.255") {
-            HKU_WARN("Rejected connection from invalid IP address: {}", m_client_ip);
-            throw std::runtime_error("Invalid client IP address");
-        }
-#endif
-
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
@@ -925,11 +898,6 @@ Connection::~Connection() {
             HKU_WARN("Failed to release permit {}: {}", m_permit.getId(), e.what());
         }
     }
-
-    // 减少全局连接计数
-    // 设计说明：每个 Connection 对象在构造时（TCP 连接建立）就会增加计数
-    // 所以析构时必须减少计数，确保资源正确释放
-    HttpServer::ms_active_connections.fetch_sub(1, std::memory_order_relaxed);
 }
 
 void Connection::start() {
@@ -1653,6 +1621,32 @@ void HttpServer::start() {
     CLS_INFO("HttpServer::start() begin");
 
     try {
+        // ========== 初始化连接管理器（如果未配置） ==========
+        // 如果用户未显式配置 ConnectionManager，创建默认实例
+        if (!ms_connection_manager) {
+            size_t max_conns = HttpConfig::MAX_CONNECTIONS;
+            // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
+            size_t timeout_ms = 60000;  // 默认 60 秒超时
+            ms_connection_manager = std::make_shared<ConnectionManager>(max_conns, timeout_ms);
+            CLS_INFO("Default ConnectionManager created: max={}, timeout={}s", max_conns,
+                     timeout_ms / 1000);
+        } else {
+            CLS_INFO("Using pre-configured ConnectionManager");
+        }
+
+        // 如果用户未显式配置 WebSocketConnectionManager，创建默认实例
+        if (!ms_ws_connection_manager && ms_websocket_enabled) {
+            size_t max_ws_conns = WebSocketConfig::MAX_CONNECTIONS;
+            // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
+            size_t timeout_ms = 60000;  // 默认 60 秒超时
+            ms_ws_connection_manager =
+              std::make_shared<WebSocketConnectionManager>(max_ws_conns, timeout_ms);
+            CLS_INFO("Default WebSocketConnectionManager created: max={}, timeout={}s",
+                     max_ws_conns, timeout_ms / 1000);
+        } else if (ms_websocket_enabled) {
+            CLS_INFO("Using pre-configured WebSocketConnectionManager");
+        }
+
         // 如果未绑定外部 io_context，则自行创建
         if (!ms_use_external_io) {
             CLS_INFO("Creating io_context...");
@@ -1820,16 +1814,20 @@ void HttpServer::stop() {
             HKU_WARN("ConnectionManager is null!");
         }
 
+        // 2.1 关闭 WebSocket 连接管理器
+        HKU_INFO("Step 2.1: Shutting down WebSocketConnectionManager...");
+        if (ms_ws_connection_manager) {
+            HKU_INFO("Stopping WebSocket connection manager, waking up all waiting connections...");
+            ms_ws_connection_manager->shutdown();
+            HKU_INFO("WebSocketConnectionManager shutdown complete");
+        } else {
+            HKU_DEBUG("WebSocketConnectionManager not configured");
+        }
+
         // 3. 【关键】不再等待活动连接，直接停止 io_context
         // 原因：用户已按 Ctrl-C，应该立即退出
         // 注意：这可能导致部分正在处理的请求被中断
-        size_t active_conns = ms_active_connections.load(std::memory_order_acquire);
-        HKU_INFO("Step 3: Forcing stop, active connections: {}", active_conns);
-
-        if (active_conns > 0) {
-            HKU_WARN("Forcefully stopping {} active connections (may cause resource leak)",
-                     active_conns);
-        }
+        HKU_INFO("Step 3: Forcing stop, stopping io_context immediately");
 
         // 4. 停止 io_context，取消所有待处理操作
         HKU_INFO("Step 4: Stopping io_context...");

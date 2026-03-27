@@ -38,6 +38,9 @@ void signal_handle(int signal) {
  */
 int main(int argc, char* argv[]) {
     try {
+        // 忽略 SIGPIPE 信号，防止客户端断开连接时服务器异常退出
+        std::signal(SIGPIPE, SIG_IGN);
+
         std::signal(SIGINT, signal_handle);
         std::signal(SIGTERM, signal_handle);
         std::signal(SIGABRT, signal_handle);
@@ -126,6 +129,14 @@ int main(int argc, char* argv[]) {
         // ========== 启用 WebSocket 支持（必须显式启用） ==========
         // WebSocket 功能默认禁用，只有显式启用后才会处理 WebSocket 升级请求
         server->enableWebSocket(true);
+
+        // ========== 配置连接管理器（可选） ==========
+        // 如果不配置，将使用默认配置创建 ConnectionManager
+        // server->set_max_concurrent_connections(1000, 30000);  // 自定义配置时取消注释
+
+        // ========== 配置 WebSocket 连接管理器（可选） ==========
+        // 如果不配置，将使用默认配置创建 WebSocketConnectionManager
+        // server->set_max_concurrent_websocket_connections(1000, 30000);  // 自定义配置时取消注释
 
         // ========== 注册 WebSocket Handle ==========
 
