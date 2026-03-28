@@ -251,7 +251,19 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const {
     }
 
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
-    const char* url = ctx->req.target().data();
+    std::string_view target = ctx->req.target();
+
+    // 长度限制，防止超长 URL 攻击
+    constexpr std::size_t MAX_URL_LENGTH = 8192;
+    if (target.size() > MAX_URL_LENGTH) {
+        HKU_WARN("URL length exceeds limit (max={}, actual={}, client={}:{})", MAX_URL_LENGTH,
+                 target.size(), getClientIp(), getClientPort());
+        throw HttpBadRequestError(
+          BadRequestErrorCode::TOO_LONG_URL,
+          fmt::format("URL too long (maximum {} characters)", MAX_URL_LENGTH));
+    }
+
+    const char* url = target.data();
     CLS_IF_RETURN(!url, false);
 
     const char* p = strchr(url, '?');
@@ -269,7 +281,7 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const {
     int key_len = 0;
     int value_len = 0;
 
-    // IMP-001: URL 参数数量限制，防止哈希碰撞 DoS 攻击
+    // URL 参数数量限制，防止哈希碰撞 DoS 攻击
     constexpr std::size_t MAX_QUERY_PARAMS = 100;  // 最大允许 100 个查询参数
     std::size_t param_count = 0;
 
