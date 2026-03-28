@@ -22,9 +22,8 @@ struct HttpConfig {
     // ========== 请求大小限制 ==========
     static constexpr std::size_t MAX_BUFFER_SIZE =
       2 * 1024 * 1024;  // 2MB - 读取缓冲区最大大小（生产环境标准）
-    static constexpr std::size_t MAX_BODY_SIZE =
-      20 * 1024 * 1024;  // 20MB - 请求体最大大小（支持大批量订阅请求）
-    static constexpr std::size_t MAX_HEADER_SIZE = 8192;  // 8KB - 请求头最大大小
+    static constexpr std::size_t MAX_BODY_SIZE = 10 * 1024 * 1024;  // 10MB - 请求体最大大小
+    static constexpr std::size_t MAX_HEADER_SIZE = 8192;            // 8KB - 请求头最大大小
 
     // ========== 超时控制 (针对高频低延迟场景优化) ==========
     // 注意：超时时间过短会导致频繁的定时器检查和连接重建，反而增加延迟
