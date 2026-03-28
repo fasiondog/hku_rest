@@ -1239,6 +1239,32 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 break;
             }
 
+            // ========== 速率限制检查 ==========
+            // 在调用处理器之前检查速率限制
+            std::string target = std::string(session->req.target());
+            std::string method = std::string(session->req.method_string());
+
+            if (m_server->checkRateLimit(m_client_ip, target, method)) {
+                // 请求被允许，继续处理
+                HKU_TRACE("Rate limit passed for {}:{} -> {} {}", m_client_ip, m_client_port,
+                          method, target);
+            } else {
+                // 速率限制拒绝请求，返回429 Too Many Requests
+                HKU_WARN("Rate limit exceeded for {}:{} -> {} {}", m_client_ip, m_client_port,
+                         method, target);
+
+                session->res.result(http::status::too_many_requests);
+                session->res.set(http::field::content_type, "application/json");
+                session->res.body() = R"({"error": "Rate limit exceeded", "code": 429})";
+                session->res.prepare_payload();
+
+                // 添加Retry-After头（推荐1秒后重试）
+                session->res.set(http::field::retry_after, "1");
+
+                co_await writeResponse(session);
+                continue;  // 继续处理下一个请求（Keep-Alive连接）
+            }
+
             // 请求读取完成后，处理该请求（调用 Handle）
             co_await processHandle(session);
 
@@ -2076,6 +2102,115 @@ void HttpServer::denyIPs(const std::vector<std::string>& ips) {
 
 bool HttpServer::isIpAllowed(const std::string& ip) const {
     return m_access_control.isIpAllowed(ip);
+}
+
+// ============================================================================
+// HttpServer 速率限制接口实现
+// ============================================================================
+
+void HttpServer::setRateLimit(const RateLimitConfig& config) {
+    m_rate_limiter.updateConfig(config);
+    HKU_INFO("Rate limit configured: enabled={}, rps={}, burst={}, per_ip={}, per_endpoint={}",
+             config.enabled, config.requests_per_second, config.burst_size, config.per_ip,
+             config.per_endpoint);
+}
+
+void HttpServer::enableGlobalRateLimit(uint32_t rps, uint32_t burst) {
+    setRateLimit(RateLimitConfig::globalLimit(rps, burst));
+    HKU_INFO("Global rate limit enabled: {} requests/second, burst size: {}", rps, burst);
+}
+
+void HttpServer::enablePerIpRateLimit(uint32_t rps, uint32_t burst) {
+    auto config = RateLimitConfig::perIpLimit(rps, burst);
+    setRateLimit(config);
+    HKU_INFO("Per-IP rate limit enabled: {} requests/second, burst size: {}", rps, burst);
+}
+
+void HttpServer::disableRateLimit() {
+    setRateLimit(RateLimitConfig::disable());
+    HKU_INFO("Rate limit disabled");
+}
+
+void HttpServer::addRateLimitIpWhitelist(const std::string& ip) {
+    // 获取当前配置
+    auto config = m_rate_limiter.getConfig();
+
+    // 添加IP到白名单（如果尚未存在）
+    bool already_exists = false;
+    for (const auto& existing_ip : config.ip_whitelist) {
+        if (existing_ip == ip) {
+            already_exists = true;
+            break;
+        }
+    }
+
+    if (!already_exists) {
+        config.ip_whitelist.push_back(ip);
+        m_rate_limiter.updateConfigPreserveWhitelist(config);
+        HKU_INFO("IP added to rate limit whitelist: {}", ip);
+    } else {
+        HKU_DEBUG("IP already in rate limit whitelist: {}", ip);
+    }
+}
+
+void HttpServer::addRateLimitIpWhitelist(const std::vector<std::string>& ips) {
+    // 获取当前配置
+    auto config = m_rate_limiter.getConfig();
+
+    size_t added_count = 0;
+    for (const auto& ip : ips) {
+        // 检查是否已存在
+        bool already_exists = false;
+        for (const auto& existing_ip : config.ip_whitelist) {
+            if (existing_ip == ip) {
+                already_exists = true;
+                break;
+            }
+        }
+
+        if (!already_exists) {
+            config.ip_whitelist.push_back(ip);
+            added_count++;
+        }
+    }
+
+    if (added_count > 0) {
+        m_rate_limiter.updateConfigPreserveWhitelist(config);
+        HKU_INFO("{} IPs added to rate limit whitelist", added_count);
+    } else {
+        HKU_DEBUG("All IPs already in rate limit whitelist");
+    }
+}
+
+void HttpServer::addRateLimitEndpointWhitelist(const std::string& endpoint) {
+    // 获取当前配置
+    auto config = m_rate_limiter.getConfig();
+
+    // 添加端点到白名单（如果尚未存在）
+    bool already_exists = false;
+    for (const auto& existing_endpoint : config.endpoint_whitelist) {
+        if (existing_endpoint == endpoint) {
+            already_exists = true;
+            break;
+        }
+    }
+
+    if (!already_exists) {
+        config.endpoint_whitelist.push_back(endpoint);
+        m_rate_limiter.updateConfigPreserveWhitelist(config);
+        HKU_INFO("Endpoint added to rate limit whitelist: {}", endpoint);
+    } else {
+        HKU_DEBUG("Endpoint already in rate limit whitelist: {}", endpoint);
+    }
+}
+
+bool HttpServer::checkRateLimit(const std::string& client_ip, const std::string& endpoint,
+                                const std::string& method) {
+    return m_rate_limiter.allowRequest(client_ip, endpoint, method);
+}
+
+RateLimitStats HttpServer::getRateLimitStats() const {
+    return m_rate_limiter.getStats();
 }
 
 }  // namespace hku

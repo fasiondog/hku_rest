@@ -32,6 +32,7 @@
 #include "HttpConfig.h"
 #include "ConnectionManager.h"
 #include "WebSocketConnectionManager.h"
+#include "RateLimit.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
@@ -498,6 +499,65 @@ public:
      */
     bool isIpAllowed(const std::string& ip) const;
 
+    /**
+     * @brief 配置速率限制
+     * @param config 速率限制配置对象
+     */
+    void setRateLimit(const RateLimitConfig& config);
+
+    /**
+     * @brief 快速配置：启用全局速率限制
+     * @param rps 每秒请求数（默认10）
+     * @param burst 突发流量大小（默认20）
+     */
+    void enableGlobalRateLimit(uint32_t rps = 10, uint32_t burst = 20);
+
+    /**
+     * @brief 快速配置：启用每IP速率限制
+     * @param rps 每秒请求数（默认5）
+     * @param burst 突发流量大小（默认10）
+     */
+    void enablePerIpRateLimit(uint32_t rps = 5, uint32_t burst = 10);
+
+    /**
+     * @brief 禁用速率限制
+     */
+    void disableRateLimit();
+
+    /**
+     * @brief 添加IP到速率限制白名单
+     * @param ip IP地址
+     */
+    void addRateLimitIpWhitelist(const std::string& ip);
+
+    /**
+     * @brief 添加IP列表到速率限制白名单
+     * @param ips IP地址列表
+     */
+    void addRateLimitIpWhitelist(const std::vector<std::string>& ips);
+
+    /**
+     * @brief 添加端点到速率限制白名单
+     * @param endpoint 端点路径（支持通配符*结尾，如 "/api/&#42;"）
+     */
+    void addRateLimitEndpointWhitelist(const std::string& endpoint);
+
+    /**
+     * @brief 检查请求是否受速率限制影响
+     * @param client_ip 客户端IP地址
+     * @param endpoint 请求端点
+     * @param method HTTP方法
+     * @return 如果允许请求返回true
+     */
+    bool checkRateLimit(const std::string& client_ip, const std::string& endpoint,
+                        const std::string& method);
+
+    /**
+     * @brief 获取速率限制统计信息
+     * @return RateLimitStats 统计信息
+     */
+    RateLimitStats getRateLimitStats() const;
+
     // 全局连接池管理接口（public）
     /**
      * @brief 获取连接管理器实例
@@ -603,6 +663,7 @@ private:
     uint16_t m_port{80};
     CorsConfig m_cors_config;              // CORS 配置
     AccessControlConfig m_access_control;  // IP访问控制配置
+    RateLimiter m_rate_limiter;            // 速率限制器
     Router m_router;
     WebSocketRouter m_ws_router;  // WebSocket 路由器
 
