@@ -1795,30 +1795,15 @@ void HttpServer::start() {
 
     try {
         // ========== 初始化连接管理器（如果未配置） ==========
-        // 如果用户未显式配置 ConnectionManager，创建默认实例
-        if (!m_connection_manager) {
-            size_t max_conns = HttpConfig::MAX_CONNECTIONS;
-            // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
-            size_t timeout_ms = 60000;  // 默认 60 秒超时
-            m_connection_manager = std::make_shared<ConnectionManager>(max_conns, timeout_ms);
-            CLS_INFO("Default ConnectionManager created: max={}, timeout={}s", max_conns,
-                     timeout_ms / 1000);
-        } else {
-            CLS_INFO("Using pre-configured ConnectionManager");
-        }
+        m_connection_manager =
+          std::make_shared<ConnectionManager>(m_max_concurrent_connections, m_wait_timeout_ms);
+        CLS_INFO("Default ConnectionManager created: max={}, timeout={}s",
+                 m_max_concurrent_connections, m_wait_timeout_ms / 1000);
 
-        // 如果用户未显式配置 WebSocketConnectionManager，创建默认实例
-        if (!m_ws_connection_manager && m_websocket_enabled) {
-            size_t max_ws_conns = WebSocketConfig::MAX_CONNECTIONS;
-            // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
-            size_t timeout_ms = 60000;  // 默认 60 秒超时
-            m_ws_connection_manager =
-              std::make_shared<WebSocketConnectionManager>(max_ws_conns, timeout_ms);
-            CLS_INFO("Default WebSocketConnectionManager created: max={}, timeout={}s",
-                     max_ws_conns, timeout_ms / 1000);
-        } else if (m_websocket_enabled) {
-            CLS_INFO("Using pre-configured WebSocketConnectionManager");
-        }
+        m_ws_connection_manager = std::make_shared<WebSocketConnectionManager>(
+          m_ws_max_concurrent_connections, m_ws_wait_timeout_ms);
+        CLS_INFO("Default WebSocketConnectionManager created: max={}, timeout={}s",
+                 m_ws_max_concurrent_connections, m_ws_wait_timeout_ms / 1000);
 
         // 如果未绑定外部 io_context，则自行创建
         if (!m_use_external_io) {
@@ -1862,7 +1847,6 @@ void HttpServer::start() {
         g_old_cp = GetConsoleOutputCP();
         SetConsoleOutputCP(CP_UTF8);
 #endif
-
     } catch (std::exception& e) {
         CLS_FATAL("Failed to start server: {}", e.what());
         CLS_FATAL("Exception type: {}", typeid(e).name());

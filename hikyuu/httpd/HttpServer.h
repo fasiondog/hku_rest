@@ -618,7 +618,8 @@ public:
      * @param wait_timeout_ms 等待超时时间（毫秒），0 表示无限等待
      */
     void set_max_concurrent_connections(size_t max_concurrent, size_t wait_timeout_ms = 30000) {
-        m_connection_manager = std::make_shared<ConnectionManager>(max_concurrent, wait_timeout_ms);
+        m_max_concurrent_connections = max_concurrent;
+        m_wait_timeout_ms = wait_timeout_ms;
     }
 
     /**
@@ -628,8 +629,8 @@ public:
      */
     void set_max_concurrent_websocket_connections(size_t max_concurrent,
                                                   size_t wait_timeout_ms = 30000) {
-        m_ws_connection_manager =
-          std::make_shared<WebSocketConnectionManager>(max_concurrent, wait_timeout_ms);
+        m_ws_max_concurrent_connections = max_concurrent;
+        m_ws_wait_timeout_ms = wait_timeout_ms;
     }
 
 public:
@@ -718,6 +719,12 @@ private:
 
     std::shared_ptr<ConnectionManager> m_connection_manager;              // 连接管理器
     std::shared_ptr<WebSocketConnectionManager> m_ws_connection_manager;  // WebSocket 连接管理器
+
+    size_t m_max_concurrent_connections{128};  // 默认最大并发连接数
+    size_t m_wait_timeout_ms{5000};            // 默认等待超时时间（毫秒）
+
+    size_t m_ws_max_concurrent_connections{128};  // 默认 WebSocket 最大并发连接数
+    size_t m_ws_wait_timeout_ms{5000};            // 默认 WebSocket 等待超时时间（毫秒）
 
 private:
     // 静态成员变量在 HttpServer.cpp 中定义
