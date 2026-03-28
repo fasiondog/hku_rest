@@ -138,6 +138,7 @@ private:
     // 关闭连接
     void close();
 
+private:
     tcp::socket m_socket;
     WebSocketRouter* m_ws_router;
     std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
@@ -168,15 +169,15 @@ private:
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
-                                              net::io_context& io_ctx,
-                                              ssl::context* ssl_ctx = nullptr);
+                                              net::io_context& io_ctx, ssl::context* ssl_ctx,
+                                              bool enable_websocket);
     ~Connection();
 
     void start();
 
 private:
-    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx,
-               ssl::context* ssl_ctx);
+    Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx,
+               bool enable_websocket);
 
     // 读取循环（根据 m_ssl_stream 是否为 nullptr 选择不同路径）
     net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
@@ -193,6 +194,7 @@ private:
     // 关闭连接
     void close();
 
+private:
     tcp::socket m_socket;
     Router* m_router;
 
@@ -202,6 +204,8 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
+
+    bool m_enable_websocket{false};
 
     // Keep-Alive 连接安全限制
     int m_request_count = 0;                                   // 当前连接已处理请求数
@@ -296,6 +300,8 @@ struct CorsConfig {
  */
 class HKU_HTTPD_API HttpServer {
     CLASS_LOGGER_IMP(HttpServer)
+    friend class Connection;
+    friend class WebSocketConnection;
 
 public:
     using HttpHandleFactory = std::function<net::awaitable<void>(void*)>;
@@ -390,7 +396,7 @@ public:
      *   server->enableWebSocket(false);
      */
     void enableWebSocket(bool enable = true) {
-        ms_websocket_enabled = enable;
+        m_websocket_enabled = enable;
     }
 
     /**
@@ -398,7 +404,7 @@ public:
      * @return true-已启用，false-未启用
      */
     bool isWebSocketEnabled() const {
-        return ms_websocket_enabled;
+        return m_websocket_enabled;
     }
 
     /**
@@ -519,9 +525,6 @@ public:
     static WebSocketRouter ms_ws_router;  // WebSocket 路由器
     static ssl::context* ms_ssl_context;  // SSL 上下文
 
-    // WebSocket 功能开关（全局控制）
-    static bool ms_websocket_enabled;  // WebSocket 功能是否已启用（默认 false）
-
 private:
     std::string m_root_url;
     std::string m_host;
@@ -530,16 +533,18 @@ private:
     SslConfig m_ssl_config;
     Router m_router;
 
-    size_t m_io_thread_count{0};  // 改为静态成员变量
-
     std::atomic<bool> m_running{false};
-    bool m_use_external_io{false};  // 是否使用外部 io_context（静态）
 
     tcp::acceptor* m_acceptor{nullptr};
+
+    size_t m_io_thread_count{0};
     net::io_context* m_io_context{nullptr};
+    bool m_use_external_io{false};  // 是否使用外部 io_context
 
+    bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
+
+private:
     // 静态成员变量在 HttpServer.cpp 中定义
-
     static HttpServer* ms_server;
 };
 

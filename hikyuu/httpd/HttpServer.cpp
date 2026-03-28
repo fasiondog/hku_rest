@@ -60,10 +60,6 @@ std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
 WebSocketRouter HttpServer::ms_ws_router;
-bool HttpServer::ms_websocket_enabled{false};  // WebSocket 功能默认禁用
-
-// 信号处理防重入标志
-std::atomic<bool> g_signal_handling{false};
 
 #if defined(_WIN32)
 static UINT g_old_cp;
@@ -510,6 +506,7 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
 
             } catch (const beast::system_error& e) {
                 if (e.code() == websocket::error::closed || e.code() == net::error::eof ||
+                    e.code() == net::error::operation_aborted ||
                     e.code() == beast::errc::connection_reset) {
                     HKU_DEBUG("Client disconnected: {}:{} - {}", m_client_ip, m_client_port,
                               e.code().message());
@@ -912,21 +909,23 @@ void WebSocketConnection::close() {
 // ============================================================================
 
 std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* router,
-                                               net::io_context& io_ctx, ssl::context* ssl_ctx) {
+                                               net::io_context& io_ctx, ssl::context* ssl_ctx,
+                                               bool enable_websocket) {
     if (ssl_ctx) {
         return std::shared_ptr<Connection>(
-          new Connection(std::move(socket), router, io_ctx, ssl_ctx));
+          new Connection(std::move(socket), router, io_ctx, ssl_ctx, enable_websocket));
     } else {
         return std::shared_ptr<Connection>(
-          new Connection(std::move(socket), router, io_ctx, nullptr));
+          new Connection(std::move(socket), router, io_ctx, nullptr, enable_websocket));
     }
 }
 
 Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx,
-                       ssl::context* ssl_ctx)
+                       ssl::context* ssl_ctx, bool enable_websocket)
 : m_socket(std::move(socket)),
   m_router(router),
   m_io_ctx(io_ctx),
+  m_enable_websocket(enable_websocket),
   m_connection_start(std::chrono::steady_clock::now()),
   m_permit() {  // 初始化为无效许可
     // 如果提供了 SSL 上下文，初始化 SSL 流
@@ -1159,15 +1158,14 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 4. Connection: Upgrade
             // 5. Sec-WebSocket-Key (握手密钥)
             // 6. Sec-WebSocket-Version: 13
-            bool is_websocket =
-              HttpServer::ms_websocket_enabled &&  // 检查 WebSocket 功能是否已启用
-              session->req.method() == http::verb::get &&
-              session->req.find(http::field::upgrade) != session->req.end() &&
-              beast::iequals(session->req[http::field::upgrade], "websocket") &&
-              session->req.find(http::field::connection) != session->req.end() &&
-              beast::iequals(session->req[http::field::connection], "Upgrade") &&
-              !session->req["Sec-WebSocket-Key"].empty() &&
-              session->req["Sec-WebSocket-Version"] == "13";
+            bool is_websocket = m_enable_websocket &&  // 检查 WebSocket 功能是否已启用
+                                session->req.method() == http::verb::get &&
+                                session->req.find(http::field::upgrade) != session->req.end() &&
+                                beast::iequals(session->req[http::field::upgrade], "websocket") &&
+                                session->req.find(http::field::connection) != session->req.end() &&
+                                beast::iequals(session->req[http::field::connection], "Upgrade") &&
+                                !session->req["Sec-WebSocket-Key"].empty() &&
+                                session->req["Sec-WebSocket-Version"] == "13";
 
             if (is_websocket) {
                 HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,
@@ -1673,8 +1671,8 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
         }
 
         // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
-        auto connection =
-          Connection::create(std::move(socket), &m_router, *m_io_context, ms_ssl_context);
+        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context,
+                                             ms_ssl_context, m_websocket_enabled);
         connection->start();
     }
 
@@ -1704,7 +1702,7 @@ void HttpServer::start() {
         }
 
         // 如果用户未显式配置 WebSocketConnectionManager，创建默认实例
-        if (!ms_ws_connection_manager && ms_websocket_enabled) {
+        if (!ms_ws_connection_manager && m_websocket_enabled) {
             size_t max_ws_conns = WebSocketConfig::MAX_CONNECTIONS;
             // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
             size_t timeout_ms = 60000;  // 默认 60 秒超时
@@ -1712,7 +1710,7 @@ void HttpServer::start() {
               std::make_shared<WebSocketConnectionManager>(max_ws_conns, timeout_ms);
             CLS_INFO("Default WebSocketConnectionManager created: max={}, timeout={}s",
                      max_ws_conns, timeout_ms / 1000);
-        } else if (ms_websocket_enabled) {
+        } else if (m_websocket_enabled) {
             CLS_INFO("Using pre-configured WebSocketConnectionManager");
         }
 
@@ -1786,7 +1784,8 @@ net::awaitable<void> HttpServer::doAccept() {
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
-        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context, nullptr);
+        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context, nullptr,
+                                             m_websocket_enabled);
         connection->start();
     }
 
