@@ -36,7 +36,7 @@ struct HttpConfig {
       180};  // 总处理超时：180s (支持复杂批量操作)
 
     // ========== 连接管理 (针对高频短连接优化) ==========
-    static constexpr int MAX_KEEPALIVE_REQUESTS = 10000;  // 10K 次请求后关闭连接（防止资源泄漏）
+    static constexpr int MAX_KEEPALIVE_REQUESTS = 100000;  // 10K 次请求后关闭连接（防止资源泄漏）
     static constexpr std::chrono::minutes MAX_CONNECTION_AGE{
       5};                                          // 连接最大存活时间：5 分钟（快速轮换）
     static constexpr int MAX_CONNECTIONS = 10000;  // 服务器最大连接数：10K（防资源耗尽）

@@ -20,19 +20,19 @@
 #include <boost/asio/awaitable.hpp>
 
 #include <hikyuu/utilities/Log.h>
-#include "HttpWebSocketConfig.h"
+#include "HttpConfig.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
+
+namespace hku {
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
 namespace net = boost::asio;
 namespace ws = websocket;
 using tcp = net::ip::tcp;
-
-namespace hku {
 
 /**
  * WebSocket 上下文 - 封装 WebSocket 连接的状态

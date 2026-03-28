@@ -11,7 +11,7 @@
 #include "HttpError.h"
 #include "hikyuu/utilities/Log.h"
 #include "hikyuu/httpd/pod/MOHelper.h"
-#include "HttpWebSocketConfig.h"
+#include "HttpConfig.h"
 
 #include <string>
 #include <memory>

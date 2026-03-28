@@ -10,7 +10,6 @@
 #include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
 #include "WebSocketHandle.h"
-#include "HttpWebSocketConfig.h"
 
 #if HKU_OS_WINDOWS
 #include <Windows.h>
