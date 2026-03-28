@@ -1438,23 +1438,6 @@ void Connection::close() {
 // HttpServer 实现 - 使用协程 + SSL/TLS
 // ============================================================================
 
-void HttpServer::http_exit() {
-    stop();
-    exit(0);
-}
-
-void HttpServer::signal_handler(int signal) {
-    // 防重入保护：确保信号处理函数只执行一次
-    if (g_signal_handling.exchange(true)) {
-        // 已经在处理中，直接返回
-        return;
-    }
-
-    if (signal == SIGINT || signal == SIGTERM) {
-        http_exit();
-    }
-}
-
 HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(port) {
     HKU_CHECK(ms_server == nullptr, "Can only one server!");
     ms_server = this;
@@ -1785,10 +1768,10 @@ void HttpServer::start() {
     } catch (std::exception& e) {
         CLS_FATAL("Failed to start server: {}", e.what());
         CLS_FATAL("Exception type: {}", typeid(e).name());
-        http_exit();
+        stop();
     } catch (...) {
         CLS_FATAL("Unknown exception occurred during server start");
-        http_exit();
+        stop();
     }
 }
 

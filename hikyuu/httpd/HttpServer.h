@@ -305,6 +305,8 @@ public:
     virtual ~HttpServer();
 
     void start();
+    static void loop();
+    static void stop();
 
     /**
      * @brief 设置 IO 工作线程数（可选）
@@ -328,11 +330,6 @@ public:
      * @return net::io_context* io_context 指针，如果尚未初始化则返回 nullptr
      */
     static net::io_context* get_io_context();
-
-    static void loop();
-    static void stop();
-    static void http_exit();
-    static void signal_handler(int signal);
 
     /**
      * @brief 配置 CORS (跨域资源共享)
