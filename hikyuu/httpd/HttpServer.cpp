@@ -1799,6 +1799,10 @@ net::awaitable<void> HttpServer::doAccept() {
 
 void HttpServer::loop() {
     HKU_ASSERT(ms_server);
+    ms_server->_loop();
+}
+
+void HttpServer::_loop() {
     CLS_INFO("HttpServer::loop() called, ms_running={}, ms_io_context={}", ms_running.load(),
              (void*)ms_io_context);
 
@@ -1848,6 +1852,11 @@ void HttpServer::loop() {
 }
 
 void HttpServer::stop() {
+    HKU_ASSERT(ms_server);
+    ms_server->_stop();
+}
+
+void HttpServer::_stop() {
 #if defined(_WIN32)
     SetConsoleOutputCP(g_old_cp);
 #endif

@@ -498,6 +498,9 @@ public:
     }
 
 private:
+    void _loop();
+    void _stop();
+
     using HandlerFunc = std::function<net::awaitable<void>(void*)>;
     void configureSsl();
     net::awaitable<void> doAccept();
