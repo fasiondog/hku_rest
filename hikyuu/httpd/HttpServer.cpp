@@ -1661,8 +1661,8 @@ void HttpServer::start() {
         // 创建 acceptor
         CLS_INFO("Creating acceptor on {}:{}", m_host, m_port);
         auto addr = net::ip::make_address(m_host.c_str());
-        m_acceptor = new tcp::acceptor(*m_io_context, {addr, m_port});
-        CLS_INFO("Acceptor created: {}", (void*)m_acceptor);
+        m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, tcp::endpoint{addr, m_port});
+        CLS_INFO("Acceptor created: {}", (void*)m_acceptor.get());
 
         // 配置 SSL（如果启用）
         if (m_ssl_config.enabled) {
@@ -1794,33 +1794,25 @@ void HttpServer::_stop() {
     if (m_running.load()) {
         m_running.store(false);
 
-        // 1. 先关闭 acceptor，停止接受新连接
+        // 1. 先关闭 acceptor，停止接受新连接（unique_ptr 会自动管理内存，但需显式 cancel/close）
         if (m_acceptor) {
             m_acceptor->cancel();
             m_acceptor->close();
-            delete m_acceptor;
-            m_acceptor = nullptr;
         }
 
         // 2. 【关键】通知 ConnectionManager 停止，唤醒所有等待的连接
         if (m_connection_manager) {
             m_connection_manager->shutdown();
-        } else {
-            HKU_WARN("ConnectionManager is null!");
         }
 
         // 3 关闭 WebSocket 连接管理器
         if (m_ws_connection_manager) {
             m_ws_connection_manager->shutdown();
-        } else {
-            HKU_DEBUG("WebSocketConnectionManager not configured");
         }
 
         // 4. 停止 io_context，取消所有待处理操作
         if (m_io_context) {
             m_io_context->stop();
-        } else {
-            HKU_WARN("io_context is null!");
         }
 
         // 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）

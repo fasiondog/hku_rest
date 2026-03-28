@@ -481,15 +481,13 @@ private:
     SslConfig m_ssl_config;
     std::unique_ptr<ssl::context> m_ssl_context;  // SSL 上下文
 
-    std::atomic<bool> m_running{false};
-
-    tcp::acceptor* m_acceptor{nullptr};
+    std::unique_ptr<tcp::acceptor> m_acceptor;  // TCP 接收器
 
     size_t m_io_thread_count{0};
     net::io_context* m_io_context{nullptr};
-    bool m_use_external_io{false};  // 是否使用外部 io_context
-
+    bool m_use_external_io{false};    // 是否使用外部 io_context
     bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
+    std::atomic<bool> m_running{false};
 
     std::shared_ptr<ConnectionManager> m_connection_manager;              // 连接管理器
     std::shared_ptr<WebSocketConnectionManager> m_ws_connection_manager;  // WebSocket 连接管理器
