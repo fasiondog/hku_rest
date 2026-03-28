@@ -355,8 +355,8 @@ public:
      * @brief 获取当前服务器实例的 CORS 配置
      * @return CorsConfig 指针，如果未启用则返回 nullptr
      */
-    static CorsConfig* getCorsConfig() {
-        return ms_server ? &ms_server->m_cors_config : nullptr;
+    const CorsConfig& getCorsConfig() const noexcept {
+        return m_cors_config;
     }
 
     /**

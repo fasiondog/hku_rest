@@ -85,7 +85,7 @@ static UINT g_old_cp;
  * @param cors_config CORS 配置对象 (可选)
  */
 template <typename ResponseType>
-static void setResponseHeaders(ResponseType& response, const CorsConfig* cors_config = nullptr) {
+static void setResponseHeaders(ResponseType& response, const CorsConfig& cors_config) {
     // 设置安全响应头
     response.set(http::field::strict_transport_security, "max-age=31536000; includeSubDomains");
     response.set(http::field::x_content_type_options, "nosniff");
@@ -100,8 +100,8 @@ static void setResponseHeaders(ResponseType& response, const CorsConfig* cors_co
     response.set(http::field::cache_control, "no-store, no-cache, must-revalidate, max-age=0");
 
     // 设置 CORS 头 (如果提供了配置且已启用)
-    if (cors_config && cors_config->enabled) {
-        setCorsHeaders(response, *cors_config);
+    if (cors_config.enabled) {
+        setCorsHeaders(response, cors_config);
     }
 }
 
@@ -1264,7 +1264,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 设置响应头 (安全头 + CORS)
-        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig());
 
         co_return;
     }
@@ -1273,13 +1273,12 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto handler = m_router->findHandler(method, target);
 
     // 处理 CORS 预检请求 (OPTIONS)
-    if (method == "OPTIONS" && HttpServer::getCorsConfig() &&
-        HttpServer::getCorsConfig()->enabled) {
+    if (method == "OPTIONS" && m_server->getCorsConfig().enabled) {
         HKU_DEBUG("Handling CORS preflight request for: {}", target);
         context->res.result(http::status::no_content);
 
         // 设置 CORS 响应头
-        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig());
 
         context->res.prepare_payload();
         co_return;
@@ -1294,7 +1293,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 设置响应头 (安全头 + CORS)
-        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig());
 
         co_return;
     }
@@ -1318,7 +1317,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         });
 
         // 统一添加响应头 (安全头 + CORS，在 handler 执行前设置，确保所有响应都包含)
-        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig());
 
         // 执行业务处理（绑定取消令牌到协程）
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
@@ -1347,7 +1346,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 异常时也要设置响应头（安全头 + CORS）
-        setResponseHeaders(context->res, HttpServer::getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig());
     }
 }
 
