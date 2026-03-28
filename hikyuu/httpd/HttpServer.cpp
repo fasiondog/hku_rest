@@ -69,9 +69,6 @@ WebSocketRouter HttpServer::ms_ws_router;
 bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
 bool HttpServer::ms_websocket_enabled{false};  // WebSocket 功能默认禁用
 
-// HTTP 错误消息映射
-static std::unordered_map<int16_t, std::string> g_error_messages;
-
 // 信号处理防重入标志
 std::atomic<bool> g_signal_handling{false};
 
