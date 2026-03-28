@@ -217,15 +217,8 @@ public:
      * 用于大文件下载、SSE、大数据量导出等场景
      *
      * @note 必须在设置响应体之前调用
-     * @note 如果 ENABLE_CHUNKED_TRANSFER 配置为 false，则此方法无效
      */
     void enableChunkedTransfer() {
-        // 检查全局配置开关
-        if (!HttpConfig::ENABLE_CHUNKED_TRANSFER) {
-            HKU_DEBUG("Chunked transfer encoding is disabled by configuration");
-            return;
-        }
-
         m_chunked_transfer = true;
         m_headers_sent = false;  // 重置标志
         if (m_beast_context) {

@@ -49,9 +49,8 @@ struct HttpConfig {
     static constexpr std::size_t BUFFER_MIN_CAPACITY = 4 * 1024;  // 保留 4KB 基础容量（适应大负载）
 
     // ========== 分块传输与批量响应 ==========
-    static constexpr bool ENABLE_CHUNKED_TRANSFER = true;  // 启用分块传输编码
-    static constexpr std::size_t CHUNK_SIZE = 32 * 1024;   // 推荐分块大小：32KB
-    static constexpr bool ENABLE_BATCH_RESPONSE = true;    // 启用批量响应模式
+    static constexpr std::size_t CHUNK_SIZE = 32 * 1024;  // 推荐分块大小：32KB
+    static constexpr bool ENABLE_BATCH_RESPONSE = true;   // 启用批量响应模式
     static constexpr std::size_t BATCH_THRESHOLD = 5000;  // 批量阈值：5000 条记录自动分页或流式响应
 };
 
