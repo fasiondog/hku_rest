@@ -18,6 +18,8 @@
 
 #if !HKU_OS_WINDOWS
 #include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 // Boost.beast 相关头文件
@@ -1405,48 +1407,59 @@ void HttpServer::configureSsl() {
 
     // 检查证书文件权限（仅类 Unix 系统）
 #if !HKU_OS_WINDOWS
-    struct stat st;
-    if (stat(m_ssl_config.ca_key_file.c_str(), &st) == 0) {
-        // 检查文件权限是否为 600（-rw-------）或更严格
-        mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
-        if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
-            HKU_WARN(
-              "Certificate file '{}' has insecure permissions: {:o}. "
-              "Recommended: 600 (-rw-------)",
-              m_ssl_config.ca_key_file, perms);
-        }
+    // 使用 open() 而不是 stat() + fopen() 组合，避免 TOCTOU 漏洞
+    int fd = open(m_ssl_config.ca_key_file.c_str(), O_RDONLY);
+    if (fd >= 0) {
+        struct stat st;
+        if (fstat(fd, &st) == 0) {
+            // 检查文件权限是否为 600（-rw-------）或更严格
+            mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+            if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+                HKU_WARN(
+                  "Certificate file '{}' has insecure permissions: {:o}. "
+                  "Recommended: 600 (-rw-------)",
+                  m_ssl_config.ca_key_file, perms);
+            }
 
-        // 如果是私钥文件，检查应该更严格
-        // 使用更严格的检查：检查文件内容是否为私钥
-        bool is_private_key = false;
-        FILE* fp = fopen(m_ssl_config.ca_key_file.c_str(), "r");
-        if (fp) {
-            char buffer[256];
-            if (fgets(buffer, sizeof(buffer), fp)) {
-                // 检查是否为私钥文件（PEM格式）
-                std::string line(buffer);
-                if (line.find("-----BEGIN PRIVATE KEY-----") != std::string::npos ||
-                    line.find("-----BEGIN RSA PRIVATE KEY-----") != std::string::npos ||
-                    line.find("-----BEGIN EC PRIVATE KEY-----") != std::string::npos) {
-                    is_private_key = true;
+            // 如果是私钥文件，检查应该更严格
+            // 使用更严格的检查：检查文件内容是否为私钥
+            bool is_private_key = false;
+
+            // 使用 fdopen() 而不是 fopen()，确保使用同一文件描述符
+            FILE* fp = fdopen(fd, "r");
+            if (fp) {
+                char buffer[256];
+                if (fgets(buffer, sizeof(buffer), fp)) {
+                    // 检查是否为私钥文件（PEM格式）
+                    std::string line(buffer);
+                    if (line.find("-----BEGIN PRIVATE KEY-----") != std::string::npos ||
+                        line.find("-----BEGIN RSA PRIVATE KEY-----") != std::string::npos ||
+                        line.find("-----BEGIN EC PRIVATE KEY-----") != std::string::npos) {
+                        is_private_key = true;
+                    }
+                }
+                fclose(fp);  // fclose() 也会关闭底层的 fd
+            } else {
+                close(fd);  // fdopen 失败时关闭 fd
+            }
+
+            // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
+            if (is_private_key || m_ssl_config.ca_key_file.find(".key") != std::string::npos ||
+                m_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
+                if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+                    HKU_ERROR(
+                      "Private key file '{}' has world/group readable permissions! "
+                      "This is a security risk. Please set permissions to 600",
+                      m_ssl_config.ca_key_file);
+                    throw std::runtime_error("Insecure private key file permissions");
                 }
             }
-            fclose(fp);
-        }
-
-        // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
-        if (is_private_key || m_ssl_config.ca_key_file.find(".key") != std::string::npos ||
-            m_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
-            if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
-                HKU_ERROR(
-                  "Private key file '{}' has world/group readable permissions! "
-                  "This is a security risk. Please set permissions to 600",
-                  m_ssl_config.ca_key_file);
-                throw std::runtime_error("Insecure private key file permissions");
-            }
+        } else {
+            close(fd);
+            HKU_WARN("Failed to fstat certificate file: {}", m_ssl_config.ca_key_file);
         }
     } else {
-        HKU_WARN("Failed to stat certificate file: {}", m_ssl_config.ca_key_file);
+        HKU_WARN("Failed to open certificate file: {}", m_ssl_config.ca_key_file);
     }
 #else
     // Windows 系统：检查文件是否存在即可，Windows 使用 ACL 而非 POSIX 权限
