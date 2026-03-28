@@ -532,13 +532,14 @@ private:
 
     size_t m_io_thread_count{0};  // 改为静态成员变量
 
+    std::atomic<bool> m_running{false};
+
     // 静态成员变量在 HttpServer.cpp 中定义
     static bool ms_use_external_io;  // 是否使用外部 io_context（静态）
 
     static HttpServer* ms_server;
     static net::io_context* ms_io_context;
     static tcp::acceptor* ms_acceptor;
-    static std::atomic<bool> ms_running;
 };
 
 #define HTTP_HANDLE_IMP(cls) \

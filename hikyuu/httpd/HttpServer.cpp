@@ -58,7 +58,6 @@ HttpServer* HttpServer::ms_server = nullptr;
 ssl::context* HttpServer::ms_ssl_context = nullptr;
 net::io_context* HttpServer::ms_io_context = nullptr;
 tcp::acceptor* HttpServer::ms_acceptor = nullptr;
-std::atomic<bool> HttpServer::ms_running{false};
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
@@ -1662,7 +1661,7 @@ void HttpServer::configureSsl() {
 }
 
 net::awaitable<void> HttpServer::doAcceptSsl() {
-    while (ms_running.load()) {
+    while (m_running.load()) {
         beast::error_code ec;
 
         // 异步接受新连接
@@ -1686,7 +1685,7 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
 }
 
 void HttpServer::start() {
-    if (ms_running.load()) {
+    if (m_running.load()) {
         CLS_WARN("Server is already running");
         return;
     }
@@ -1753,8 +1752,8 @@ void HttpServer::start() {
             net::co_spawn(*ms_io_context, doAccept(), net::detached);
         }
 
-        CLS_INFO("Setting ms_running = true");
-        ms_running.store(true);
+        CLS_INFO("Setting m_running = true");
+        m_running.store(true);
         CLS_INFO("Server start completed successfully");
 
 #if defined(_WIN32)
@@ -1774,7 +1773,7 @@ void HttpServer::start() {
 }
 
 net::awaitable<void> HttpServer::doAccept() {
-    while (ms_running.load()) {
+    while (m_running.load()) {
         beast::error_code ec;
 
         // 异步接受新连接
@@ -1803,10 +1802,10 @@ void HttpServer::loop() {
 }
 
 void HttpServer::_loop() {
-    CLS_INFO("HttpServer::loop() called, ms_running={}, ms_io_context={}", ms_running.load(),
+    CLS_INFO("HttpServer::loop() called, m_running={}, ms_io_context={}", m_running.load(),
              (void*)ms_io_context);
 
-    if (ms_io_context && ms_running.load()) {
+    if (ms_io_context && m_running.load()) {
         // 确定线程数：如果未设置或设置为 0，使用硬件并发数
         size_t thread_count = ms_server->m_io_thread_count;
         if (thread_count == 0) {
@@ -1846,8 +1845,8 @@ void HttpServer::_loop() {
         }
 
     } else {
-        CLS_WARN("HttpServer::loop() skipped: ms_io_context={}, ms_running={}",
-                 (void*)ms_io_context, ms_running.load());
+        CLS_WARN("HttpServer::loop() skipped: ms_io_context={}, m_running={}", (void*)ms_io_context,
+                 m_running.load());
     }
 }
 
@@ -1861,8 +1860,8 @@ void HttpServer::_stop() {
     SetConsoleOutputCP(g_old_cp);
 #endif
 
-    if (ms_running.load()) {
-        ms_running.store(false);
+    if (m_running.load()) {
+        m_running.store(false);
 
         // 1. 先关闭 acceptor，停止接受新连接
         if (ms_acceptor) {
