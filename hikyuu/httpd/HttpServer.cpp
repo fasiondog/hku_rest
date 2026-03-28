@@ -20,6 +20,9 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
 #endif
 
 // Boost.beast 相关头文件
@@ -35,21 +38,106 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/awaitable.hpp>
 
+namespace hku {
+
 namespace beast = boost::beast;
 namespace http = beast::http;
 namespace net = boost::asio;
 namespace ssl = net::ssl;
 using tcp = net::ip::tcp;
 
-// SSL 配置结构
-struct SslConfig {
-    std::string ca_key_file;
-    std::string password;
-    int verify_mode{0};  // 0: none, 1: optional, 2: required
-    bool enabled{false};
-};
+// ============================================================================
+// IP地址处理辅助函数
+// ============================================================================
 
-namespace hku {
+/**
+ * @brief 将IP地址字符串转换为整数形式
+ * @param ip IP地址字符串
+ * @return IP地址的整数形式，如果无效返回0
+ */
+static uint32_t ipToUint32(const std::string& ip) {
+    struct in_addr addr;
+    if (inet_pton(AF_INET, ip.c_str(), &addr) == 1) {
+        return ntohl(addr.s_addr);
+    }
+    return 0;
+}
+
+/**
+ * @brief 将CIDR表示法解析为网络地址和掩码
+ * @param cidr CIDR表示法，如 "192.168.1.0/24"
+ * @param network 输出的网络地址（整数形式）
+ * @param mask 输出的网络掩码（整数形式）
+ * @return 解析成功返回true
+ */
+static bool parseCidr(const std::string& cidr, uint32_t& network, uint32_t& mask) {
+    size_t slash_pos = cidr.find('/');
+    if (slash_pos == std::string::npos) {
+        return false;
+    }
+
+    std::string network_str = cidr.substr(0, slash_pos);
+    std::string prefix_str = cidr.substr(slash_pos + 1);
+
+    network = ipToUint32(network_str);
+    if (network == 0) {
+        return false;
+    }
+
+    try {
+        int prefix_len = std::stoi(prefix_str);
+        if (prefix_len < 0 || prefix_len > 32) {
+            return false;
+        }
+
+        if (prefix_len == 32) {
+            mask = 0xFFFFFFFF;
+        } else {
+            mask = (0xFFFFFFFF << (32 - prefix_len)) & 0xFFFFFFFF;
+        }
+
+        // 验证网络地址的有效性（网络地址部分必须全为0）
+        if ((network & ~mask) != 0) {
+            // 自动校正网络地址
+            network &= mask;
+        }
+
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+/**
+ * @brief 检查IP是否在子网内
+ * @param ip IP地址（整数形式）
+ * @param network 网络地址（整数形式）
+ * @param mask 网络掩码（整数形式）
+ * @return 如果在子网内返回true
+ */
+static bool isIpInNetwork(uint32_t ip, uint32_t network, uint32_t mask) {
+    return (ip & mask) == network;
+}
+
+/**
+ * @brief 检查IP地址字符串是否在CIDR子网内
+ * @param ip IP地址字符串
+ * @param cidr CIDR表示法
+ * @return 如果在子网内返回true
+ */
+static bool isIpInCidr(const std::string& ip, const std::string& cidr) {
+    uint32_t ip_uint = ipToUint32(ip);
+    if (ip_uint == 0) {
+        return false;
+    }
+
+    uint32_t network, mask;
+    if (!parseCidr(cidr, network, mask)) {
+        return false;
+    }
+
+    return isIpInNetwork(ip_uint, network, mask);
+}
 
 // ============================================================================
 // 静态成员初始化
@@ -188,6 +276,20 @@ WebSocketConnection::WebSocketConnection(HttpServer* server, tcp::socket&& socke
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
         m_client_port = endpoint.port();
+
+        // ========== IP访问控制检查 ==========
+        if (!m_server->isIpAllowed(m_client_ip)) {
+            HKU_WARN("Rejected WebSocket connection from unauthorized IP address: {}:{}",
+                     m_client_ip, m_client_port);
+
+            // 立即关闭连接
+            beast::error_code ec;
+            m_socket.shutdown(tcp::socket::shutdown_both, ec);
+            m_socket.close(ec);
+
+            throw std::runtime_error("Unauthorized IP address for WebSocket");
+        }
+
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
@@ -881,6 +983,20 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
         auto endpoint = m_socket.remote_endpoint();
         m_client_ip = endpoint.address().to_string();
         m_client_port = endpoint.port();
+
+        // ========== IP访问控制检查 ==========
+        if (!m_server->isIpAllowed(m_client_ip)) {
+            HKU_WARN("Rejected connection from unauthorized IP address: {}:{}", m_client_ip,
+                     m_client_port);
+
+            // 立即关闭连接
+            beast::error_code ec;
+            m_socket.shutdown(tcp::socket::shutdown_both, ec);
+            m_socket.close(ec);
+
+            throw std::runtime_error("Unauthorized IP address");
+        }
+
     } catch (const std::exception& e) {
         HKU_WARN("Failed to get remote endpoint: {}, setting default values", e.what());
         m_client_ip = "unknown";
@@ -1870,4 +1986,96 @@ void HttpServer::setTls(const char* ca_key_file, const char* password, int mode)
     m_ssl_config.verify_mode = mode;
     m_ssl_config.enabled = true;
 }
+
+// SubnetConfig 方法实现
+bool SubnetConfig::isIpInSubnet(const std::string& ip) const {
+    if (!cidr_notation.empty()) {
+        return isIpInCidr(ip, cidr_notation);
+    }
+
+    // 使用 network_address 和 subnet_mask
+    uint32_t ip_uint = ipToUint32(ip);
+    uint32_t network_uint = ipToUint32(network_address);
+    uint32_t mask_uint = ipToUint32(subnet_mask);
+
+    if (ip_uint == 0 || network_uint == 0 || mask_uint == 0) {
+        return false;
+    }
+
+    return isIpInNetwork(ip_uint, network_uint, mask_uint);
+}
+
+// AccessControlConfig 方法实现
+bool AccessControlConfig::isIpAllowed(const std::string& ip) const {
+    if (!enabled) {
+        return true;  // 未启用访问控制，允许所有
+    }
+
+    // 检查单个IP列表
+    for (const auto& allowed_ip : allowed_ips) {
+        if (ip == allowed_ip) {
+            return strict_mode;  // 严格模式：在列表中->允许，否则拒绝
+        }
+    }
+
+    // 检查子网列表
+    for (const auto& subnet : allowed_subnets) {
+        if (subnet.isIpInSubnet(ip)) {
+            return strict_mode;  // 严格模式：在子网中->允许，否则拒绝
+        }
+    }
+
+    // 不在任何列表中
+    return !strict_mode;  // 严格模式：不在列表中->拒绝，否则允许
+}
+
+// HttpServer 访问控制方法实现
+void HttpServer::setAccessControl(const AccessControlConfig& config) {
+    m_access_control = config;
+    HKU_INFO(
+      "Access control configured: enabled={}, strict_mode={}, allowed_subnets={}, allowed_ips={}",
+      config.enabled, config.strict_mode, config.allowed_subnets.size(), config.allowed_ips.size());
+}
+
+void HttpServer::allowAllIPs() {
+    m_access_control = AccessControlConfig::allowAll();
+    HKU_INFO("Access control configured to allow all IPs");
+}
+
+void HttpServer::allowSubnets(const std::vector<std::string>& subnets) {
+    m_access_control = AccessControlConfig::allowSubnets(subnets);
+    HKU_INFO("Access control configured to allow {} subnets", subnets.size());
+}
+
+void HttpServer::allowIPs(const std::vector<std::string>& ips) {
+    m_access_control = AccessControlConfig::allowIPs(ips);
+    HKU_INFO("Access control configured to allow {} IPs", ips.size());
+}
+
+void HttpServer::denySubnets(const std::vector<std::string>& subnets) {
+    AccessControlConfig config;
+    config.enabled = true;
+    config.default_allow = true;
+    config.strict_mode = false;  // 黑名单模式
+    for (const auto& subnet : subnets) {
+        config.allowed_subnets.emplace_back(subnet);
+    }
+    m_access_control = config;
+    HKU_INFO("Access control configured to deny {} subnets (blacklist mode)", subnets.size());
+}
+
+void HttpServer::denyIPs(const std::vector<std::string>& ips) {
+    AccessControlConfig config;
+    config.enabled = true;
+    config.default_allow = true;
+    config.strict_mode = false;  // 黑名单模式
+    config.allowed_ips = ips;
+    m_access_control = config;
+    HKU_INFO("Access control configured to deny {} IPs (blacklist mode)", ips.size());
+}
+
+bool HttpServer::isIpAllowed(const std::string& ip) const {
+    return m_access_control.isIpAllowed(ip);
+}
+
 }  // namespace hku

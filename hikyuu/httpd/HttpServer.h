@@ -189,6 +189,91 @@ struct SslConfig {
 };
 
 /**
+ * @brief IP 子网配置结构
+ */
+struct SubnetConfig {
+    std::string network_address;  // 网络地址，如 "192.168.1.0"
+    std::string subnet_mask;      // 子网掩码，如 "255.255.255.0"
+    std::string cidr_notation;    // CIDR表示法，如 "192.168.1.0/24"
+
+    SubnetConfig() = default;
+
+    SubnetConfig(const std::string& network, const std::string& mask)
+    : network_address(network), subnet_mask(mask), cidr_notation("") {}
+
+    SubnetConfig(const std::string& cidr)
+    : network_address(""), subnet_mask(""), cidr_notation(cidr) {}
+
+    /**
+     * @brief 检查IP是否在子网内
+     * @param ip 要检查的IP地址
+     * @return 如果在子网内返回true
+     */
+    bool isIpInSubnet(const std::string& ip) const;
+};
+
+/**
+ * @brief IP访问控制列表配置
+ */
+struct AccessControlConfig {
+    bool enabled{false};                        // 是否启用访问控制
+    std::vector<SubnetConfig> allowed_subnets;  // 允许的子网列表
+    std::vector<std::string> allowed_ips;       // 允许的单个IP列表
+    bool default_allow{false};                  // 默认是否允许（当列表为空时）
+    bool strict_mode{true};  // 严格模式：true=只允许列表中的IP，false=拒绝列表中的IP
+
+    AccessControlConfig() = default;
+
+    /**
+     * @brief 快速配置允许所有IP（默认）
+     * @return AccessControlConfig 引用
+     */
+    static AccessControlConfig allowAll() {
+        AccessControlConfig config;
+        config.enabled = false;
+        config.default_allow = true;
+        return config;
+    }
+
+    /**
+     * @brief 配置仅允许特定子网
+     * @param subnets 允许的子网列表
+     * @return AccessControlConfig 引用
+     */
+    static AccessControlConfig allowSubnets(const std::vector<std::string>& subnets) {
+        AccessControlConfig config;
+        config.enabled = true;
+        config.default_allow = false;
+        config.strict_mode = true;
+        for (const auto& subnet : subnets) {
+            config.allowed_subnets.emplace_back(subnet);
+        }
+        return config;
+    }
+
+    /**
+     * @brief 配置仅允许特定IP
+     * @param ips 允许的IP列表
+     * @return AccessControlConfig 引用
+     */
+    static AccessControlConfig allowIPs(const std::vector<std::string>& ips) {
+        AccessControlConfig config;
+        config.enabled = true;
+        config.default_allow = false;
+        config.strict_mode = true;
+        config.allowed_ips = ips;
+        return config;
+    }
+
+    /**
+     * @brief 检查IP是否被允许访问
+     * @param ip 要检查的IP地址
+     * @return 如果允许访问返回true
+     */
+    bool isIpAllowed(const std::string& ip) const;
+};
+
+/**
  * @brief CORS (跨域资源共享) 配置结构
  */
 struct CorsConfig {
@@ -371,6 +456,48 @@ public:
      */
     void setTls(const char* ca_key_file, const char* password = "", int mode = 0);
 
+    /**
+     * @brief 设置IP访问控制配置
+     * @param config 访问控制配置
+     */
+    void setAccessControl(const AccessControlConfig& config);
+
+    /**
+     * @brief 快速设置：允许所有IP访问（默认）
+     */
+    void allowAllIPs();
+
+    /**
+     * @brief 快速设置：仅允许指定子网的IP访问
+     * @param subnets CIDR表示法的子网列表，如 {"192.168.1.0/24", "10.0.0.0/8"}
+     */
+    void allowSubnets(const std::vector<std::string>& subnets);
+
+    /**
+     * @brief 快速设置：仅允许指定单个IP访问
+     * @param ips IP地址列表，如 {"192.168.1.100", "10.0.0.1"}
+     */
+    void allowIPs(const std::vector<std::string>& ips);
+
+    /**
+     * @brief 快速设置：拒绝指定子网的IP访问（黑名单模式）
+     * @param subnets CIDR表示法的子网列表
+     */
+    void denySubnets(const std::vector<std::string>& subnets);
+
+    /**
+     * @brief 快速设置：拒绝指定单个IP访问（黑名单模式）
+     * @param ips IP地址列表
+     */
+    void denyIPs(const std::vector<std::string>& ips);
+
+    /**
+     * @brief 检查IP是否被允许访问
+     * @param ip IP地址
+     * @return 如果允许访问返回true
+     */
+    bool isIpAllowed(const std::string& ip) const;
+
     // 全局连接池管理接口（public）
     /**
      * @brief 获取连接管理器实例
@@ -474,7 +601,8 @@ private:
     std::string m_root_url;
     std::string m_host;
     uint16_t m_port{80};
-    CorsConfig m_cors_config;  // CORS 配置
+    CorsConfig m_cors_config;              // CORS 配置
+    AccessControlConfig m_access_control;  // IP访问控制配置
     Router m_router;
     WebSocketRouter m_ws_router;  // WebSocket 路由器
 
