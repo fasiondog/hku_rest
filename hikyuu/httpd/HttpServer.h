@@ -91,11 +91,13 @@ private:
     std::vector<std::pair<std::string, HandleFactory>> m_routes;
 };
 
+class HKU_HTTPD_API HttpServer;
+
 // WebSocket 连接处理器 - 管理 WebSocket 连接的生命周期
 class WebSocketConnection : public std::enable_shared_from_this<WebSocketConnection> {
 public:
     static std::shared_ptr<WebSocketConnection> create(
-      tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
+      HttpServer* server, tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
       ssl::context* ssl_ctx = nullptr,
       const http::request<http::string_body>* existing_req = nullptr);  // 已有的 HTTP 请求（可选）
     ~WebSocketConnection();
@@ -103,8 +105,8 @@ public:
     void start();
 
 private:
-    WebSocketConnection(tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
-                        ssl::context* ssl_ctx,
+    WebSocketConnection(HttpServer* server, tcp::socket&& socket, WebSocketRouter* ws_router,
+                        net::io_context& io_ctx, ssl::context* ssl_ctx,
                         const http::request<http::string_body>* existing_req);
 
     // SSL 握手（仅当 m_ssl_stream != nullptr 时调用）
@@ -139,6 +141,7 @@ private:
     void close();
 
 private:
+    HttpServer* m_server{nullptr};
     tcp::socket m_socket;
     WebSocketRouter* m_ws_router;
     std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
@@ -163,8 +166,6 @@ private:
     // ========== 写队列管理 ==========
     std::atomic<std::size_t> m_write_queue_size{0};  // 当前待发送消息数
 };
-
-class HKU_HTTPD_API HttpServer;
 
 // HTTP 连接处理器 - 管理 HTTP/HTTPS TCP 连接
 // 支持 SSL/TLS 和非 SSL 两种模式，通过 m_ssl_stream 是否为 nullptr 区分
@@ -421,16 +422,16 @@ public:
      * @brief 获取连接管理器实例
      * @return ConnectionManager* 连接管理器指针
      */
-    static ConnectionManager* get_connection_manager() {
-        return ms_connection_manager.get();
+    std::shared_ptr<ConnectionManager> get_connection_manager() const noexcept {
+        return m_connection_manager;
     }
 
     /**
      * @brief 获取 WebSocket 连接管理器实例
      * @return WebSocketConnectionManager* WebSocket 连接管理器指针
      */
-    static WebSocketConnectionManager* get_websocket_connection_manager() {
-        return ms_ws_connection_manager.get();
+    std::shared_ptr<WebSocketConnectionManager> get_websocket_connection_manager() const noexcept {
+        return m_ws_connection_manager;
     }
 
     /**
@@ -439,8 +440,7 @@ public:
      * @param wait_timeout_ms 等待超时时间（毫秒），0 表示无限等待
      */
     void set_max_concurrent_connections(size_t max_concurrent, size_t wait_timeout_ms = 30000) {
-        ms_connection_manager =
-          std::make_shared<ConnectionManager>(max_concurrent, wait_timeout_ms);
+        m_connection_manager = std::make_shared<ConnectionManager>(max_concurrent, wait_timeout_ms);
     }
 
     /**
@@ -450,7 +450,7 @@ public:
      */
     void set_max_concurrent_websocket_connections(size_t max_concurrent,
                                                   size_t wait_timeout_ms = 30000) {
-        ms_ws_connection_manager =
+        m_ws_connection_manager =
           std::make_shared<WebSocketConnectionManager>(max_concurrent, wait_timeout_ms);
     }
 
@@ -515,12 +515,6 @@ private:
 
 public:
     // 全局连接池管理字段（public static）
-    // 智能连接管理器（替代简单的计数限流）
-    static std::shared_ptr<ConnectionManager> ms_connection_manager;  // 连接管理器
-
-    // WebSocket 连接管理器
-    static std::shared_ptr<WebSocketConnectionManager>
-      ms_ws_connection_manager;  // WebSocket 连接管理器
 
 private:
     std::string m_root_url;
@@ -542,6 +536,9 @@ private:
     bool m_use_external_io{false};  // 是否使用外部 io_context
 
     bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
+
+    std::shared_ptr<ConnectionManager> m_connection_manager;              // 连接管理器
+    std::shared_ptr<WebSocketConnectionManager> m_ws_connection_manager;  // WebSocket 连接管理器
 
 private:
     // 静态成员变量在 HttpServer.cpp 中定义

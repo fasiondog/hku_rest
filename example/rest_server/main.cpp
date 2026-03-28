@@ -94,7 +94,7 @@ int main(int argc, char* argv[]) {
         // Prometheus 监控系统集成
         // =====================================================================
         // 创建连接监控器（自动注册所有指标）
-        auto conn_monitor = std::make_shared<ConnectionMonitor>(HttpServer::ms_connection_manager,
+        auto conn_monitor = std::make_shared<ConnectionMonitor>(server.get_connection_manager(),
                                                                 1000  // 采样间隔 1 秒
         );
 
@@ -150,7 +150,7 @@ int main(int argc, char* argv[]) {
             while (!g_shutdown_flag.load()) {
                 std::this_thread::sleep_for(std::chrono::seconds(5));
 
-                auto mgr = HttpServer::get_connection_manager();
+                auto mgr = server.get_connection_manager();
                 if (mgr) {
                     HKU_INFO("=== Connection Manager Stats ===");
                     HKU_INFO("Active Connections: {}/{}", mgr->getCurrentCount(),

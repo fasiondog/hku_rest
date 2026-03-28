@@ -55,10 +55,6 @@ namespace hku {
 
 HttpServer* HttpServer::ms_server = nullptr;
 
-std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
-std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
-  nullptr};  // WebSocket 连接管理器
-
 #if defined(_WIN32)
 static UINT g_old_cp;
 #endif
@@ -210,21 +206,23 @@ WebSocketRouter::HandleFactory WebSocketRouter::findHandler(const std::string& p
 // ============================================================================
 
 std::shared_ptr<WebSocketConnection> WebSocketConnection::create(
-  tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx, ssl::context* ssl_ctx,
-  const http::request<http::string_body>* existing_req) {
+  HttpServer* server, tcp::socket&& socket, WebSocketRouter* ws_router, net::io_context& io_ctx,
+  ssl::context* ssl_ctx, const http::request<http::string_body>* existing_req) {
     if (ssl_ctx) {
-        return std::shared_ptr<WebSocketConnection>(
-          new WebSocketConnection(std::move(socket), ws_router, io_ctx, ssl_ctx, existing_req));
+        return std::shared_ptr<WebSocketConnection>(new WebSocketConnection(
+          server, std::move(socket), ws_router, io_ctx, ssl_ctx, existing_req));
     } else {
-        return std::shared_ptr<WebSocketConnection>(
-          new WebSocketConnection(std::move(socket), ws_router, io_ctx, nullptr, existing_req));
+        return std::shared_ptr<WebSocketConnection>(new WebSocketConnection(
+          server, std::move(socket), ws_router, io_ctx, nullptr, existing_req));
     }
 }
 
-WebSocketConnection::WebSocketConnection(tcp::socket&& socket, WebSocketRouter* ws_router,
-                                         net::io_context& io_ctx, ssl::context* ssl_ctx,
+WebSocketConnection::WebSocketConnection(HttpServer* server, tcp::socket&& socket,
+                                         WebSocketRouter* ws_router, net::io_context& io_ctx,
+                                         ssl::context* ssl_ctx,
                                          const http::request<http::string_body>* existing_req)
-: m_socket(std::move(socket)),
+: m_server(server),
+  m_socket(std::move(socket)),
   m_ws_router(ws_router),
   m_io_ctx(io_ctx),
   m_connection_start(std::chrono::steady_clock::now()) {
@@ -265,7 +263,7 @@ WebSocketConnection::~WebSocketConnection() {
 
     // ========== 释放 WebSocket 连接许可 ==========
     // 通过 WebSocketConnectionManager 来释放
-    auto ws_conn_mgr = HttpServer::get_websocket_connection_manager();
+    auto ws_conn_mgr = m_server->get_websocket_connection_manager();
     if (ws_conn_mgr && m_ws_permit) {
         ws_conn_mgr->release(m_ws_permit.getId());
     }
@@ -948,9 +946,9 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
 
 Connection::~Connection() {
     // ========== 智能连接管理：释放连接许可（RAII） ==========
-    if (m_permit && HttpServer::ms_connection_manager) {
+    if (m_permit && m_server->m_connection_manager) {
         try {
-            HttpServer::ms_connection_manager->release(m_permit.getId());
+            m_server->m_connection_manager->release(m_permit.getId());
             HKU_DEBUG("Connection {} released", m_permit.getId());
         } catch (const std::exception& e) {
             HKU_WARN("Failed to release permit {}: {}", m_permit.getId(), e.what());
@@ -998,17 +996,13 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
         // ========== 智能连接管理：异步获取连接许可 ==========
         // 使用协程版本的 acquire()，支持等待队列和超时控制
         // 如果达到最大并发数，会进入 FIFO 等待队列而不是直接拒绝
-        m_permit = co_await HttpServer::ms_connection_manager->acquire();
+        m_permit = co_await m_server->m_connection_manager->acquire();
 
         if (!m_permit) {
             // 等待超时，返回无效许可
             HKU_WARN("Connection acquire timeout from {}:{}", m_client_ip, m_client_port);
             co_return;
         }
-
-        HKU_DEBUG("Connection {} acquired: active={}, waiting={}", m_permit.getId(),
-                  HttpServer::get_active_connections(),
-                  HttpServer::ms_connection_manager->getWaitingCount());
 
         while (true) {
             // 检查连接最大存活时间
@@ -1174,7 +1168,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
                 // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
                 auto ws_connection = WebSocketConnection::create(
-                  std::move(socket_ref), &(m_server->m_ws_router), m_io_ctx,
+                  m_server, std::move(socket_ref), &(m_server->m_ws_router), m_io_ctx,
                   m_ssl_stream ? m_server->m_ssl_context : nullptr,
                   &session->req);  // 传递已读取的请求
 
@@ -1687,11 +1681,11 @@ void HttpServer::start() {
     try {
         // ========== 初始化连接管理器（如果未配置） ==========
         // 如果用户未显式配置 ConnectionManager，创建默认实例
-        if (!ms_connection_manager) {
+        if (!m_connection_manager) {
             size_t max_conns = HttpConfig::MAX_CONNECTIONS;
             // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
             size_t timeout_ms = 60000;  // 默认 60 秒超时
-            ms_connection_manager = std::make_shared<ConnectionManager>(max_conns, timeout_ms);
+            m_connection_manager = std::make_shared<ConnectionManager>(max_conns, timeout_ms);
             CLS_INFO("Default ConnectionManager created: max={}, timeout={}s", max_conns,
                      timeout_ms / 1000);
         } else {
@@ -1699,11 +1693,11 @@ void HttpServer::start() {
         }
 
         // 如果用户未显式配置 WebSocketConnectionManager，创建默认实例
-        if (!ms_ws_connection_manager && m_websocket_enabled) {
+        if (!m_ws_connection_manager && m_websocket_enabled) {
             size_t max_ws_conns = WebSocketConfig::MAX_CONNECTIONS;
             // 使用 READ_TIMEOUT 作为 acquire 超时（60 秒 = 60000 毫秒）
             size_t timeout_ms = 60000;  // 默认 60 秒超时
-            ms_ws_connection_manager =
+            m_ws_connection_manager =
               std::make_shared<WebSocketConnectionManager>(max_ws_conns, timeout_ms);
             CLS_INFO("Default WebSocketConnectionManager created: max={}, timeout={}s",
                      max_ws_conns, timeout_ms / 1000);
@@ -1865,15 +1859,15 @@ void HttpServer::_stop() {
         }
 
         // 2. 【关键】通知 ConnectionManager 停止，唤醒所有等待的连接
-        if (ms_connection_manager) {
-            ms_connection_manager->shutdown();
+        if (m_connection_manager) {
+            m_connection_manager->shutdown();
         } else {
             HKU_WARN("ConnectionManager is null!");
         }
 
         // 3 关闭 WebSocket 连接管理器
-        if (ms_ws_connection_manager) {
-            ms_ws_connection_manager->shutdown();
+        if (m_ws_connection_manager) {
+            m_ws_connection_manager->shutdown();
         } else {
             HKU_DEBUG("WebSocketConnectionManager not configured");
         }
