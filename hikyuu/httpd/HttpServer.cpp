@@ -59,7 +59,6 @@ ssl::context* HttpServer::ms_ssl_context = nullptr;
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
-WebSocketRouter HttpServer::ms_ws_router;
 
 #if defined(_WIN32)
 static UINT g_old_cp;
@@ -910,22 +909,22 @@ void WebSocketConnection::close() {
 
 std::shared_ptr<Connection> Connection::create(tcp::socket&& socket, Router* router,
                                                net::io_context& io_ctx, ssl::context* ssl_ctx,
-                                               bool enable_websocket) {
+                                               HttpServer* server) {
     if (ssl_ctx) {
         return std::shared_ptr<Connection>(
-          new Connection(std::move(socket), router, io_ctx, ssl_ctx, enable_websocket));
+          new Connection(std::move(socket), router, io_ctx, ssl_ctx, server));
     } else {
         return std::shared_ptr<Connection>(
-          new Connection(std::move(socket), router, io_ctx, nullptr, enable_websocket));
+          new Connection(std::move(socket), router, io_ctx, nullptr, server));
     }
 }
 
 Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx,
-                       ssl::context* ssl_ctx, bool enable_websocket)
+                       ssl::context* ssl_ctx, HttpServer* server)
 : m_socket(std::move(socket)),
   m_router(router),
+  m_server(server),
   m_io_ctx(io_ctx),
-  m_enable_websocket(enable_websocket),
   m_connection_start(std::chrono::steady_clock::now()),
   m_permit() {  // 初始化为无效许可
     // 如果提供了 SSL 上下文，初始化 SSL 流
@@ -1158,7 +1157,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 4. Connection: Upgrade
             // 5. Sec-WebSocket-Key (握手密钥)
             // 6. Sec-WebSocket-Version: 13
-            bool is_websocket = m_enable_websocket &&  // 检查 WebSocket 功能是否已启用
+            bool is_websocket = m_server->m_websocket_enabled &&  // 检查 WebSocket 功能是否已启用
                                 session->req.method() == http::verb::get &&
                                 session->req.find(http::field::upgrade) != session->req.end() &&
                                 beast::iequals(session->req[http::field::upgrade], "websocket") &&
@@ -1176,7 +1175,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
                 // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
                 auto ws_connection = WebSocketConnection::create(
-                  std::move(socket_ref), &HttpServer::ms_ws_router, m_io_ctx,
+                  std::move(socket_ref), &(m_server->m_ws_router), m_io_ctx,
                   m_ssl_stream ? HttpServer::ms_ssl_context : nullptr,
                   &session->req);  // 传递已读取的请求
 
@@ -1671,8 +1670,8 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
         }
 
         // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
-        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context,
-                                             ms_ssl_context, m_websocket_enabled);
+        auto connection =
+          Connection::create(std::move(socket), &m_router, *m_io_context, ms_ssl_context, this);
         connection->start();
     }
 
@@ -1784,8 +1783,8 @@ net::awaitable<void> HttpServer::doAccept() {
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
-        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context, nullptr,
-                                             m_websocket_enabled);
+        auto connection =
+          Connection::create(std::move(socket), &m_router, *m_io_context, nullptr, this);
         connection->start();
     }
 
@@ -1923,7 +1922,7 @@ void HttpServer::registerHttpHandle(const char* method, const char* path,
 }
 
 void HttpServer::registerWsHandle(const std::string& path, WsHandleFactory handler) {
-    ms_ws_router.registerHandler(path, std::move(handler));
+    m_ws_router.registerHandler(path, std::move(handler));
 }
 
 void HttpServer::registerWsHandle(const char* path, WsHandleFactory handler) {

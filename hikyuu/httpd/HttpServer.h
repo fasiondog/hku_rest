@@ -164,20 +164,22 @@ private:
     std::atomic<std::size_t> m_write_queue_size{0};  // 当前待发送消息数
 };
 
+class HKU_HTTPD_API HttpServer;
+
 // HTTP 连接处理器 - 管理 HTTP/HTTPS TCP 连接
 // 支持 SSL/TLS 和非 SSL 两种模式，通过 m_ssl_stream 是否为 nullptr 区分
 class Connection : public std::enable_shared_from_this<Connection> {
 public:
     static std::shared_ptr<Connection> create(tcp::socket&& socket, Router* router,
                                               net::io_context& io_ctx, ssl::context* ssl_ctx,
-                                              bool enable_websocket);
+                                              HttpServer* server);
     ~Connection();
 
     void start();
 
 private:
     Connection(tcp::socket&& socket, Router* router, net::io_context& io_ctx, ssl::context* ssl_ctx,
-               bool enable_websocket);
+               HttpServer* m_server);
 
     // 读取循环（根据 m_ssl_stream 是否为 nullptr 选择不同路径）
     net::awaitable<void> readLoop(std::shared_ptr<Connection> self);
@@ -197,6 +199,7 @@ private:
 private:
     tcp::socket m_socket;
     Router* m_router;
+    HttpServer* m_server;
 
     // SSL 流（仅在 SSL 模式下初始化，通过是否为 nullptr 判断连接类型）
     std::unique_ptr<ssl::stream<tcp::socket&>> m_ssl_stream;
@@ -204,8 +207,6 @@ private:
     net::io_context& m_io_ctx;
     std::string m_client_ip;
     uint16_t m_client_port = 0;
-
-    bool m_enable_websocket{false};
 
     // Keep-Alive 连接安全限制
     int m_request_count = 0;                                   // 当前连接已处理请求数
@@ -522,7 +523,6 @@ public:
       ms_ws_connection_manager;  // WebSocket 连接管理器
 
     // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
-    static WebSocketRouter ms_ws_router;  // WebSocket 路由器
     static ssl::context* ms_ssl_context;  // SSL 上下文
 
 private:
@@ -532,6 +532,7 @@ private:
     CorsConfig m_cors_config;  // CORS 配置
     SslConfig m_ssl_config;
     Router m_router;
+    WebSocketRouter m_ws_router;  // WebSocket 路由器
 
     std::atomic<bool> m_running{false};
 
