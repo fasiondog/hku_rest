@@ -7,6 +7,7 @@
 
 #include <csignal>
 #include <thread>
+#include <memory>
 #include <hikyuu/utilities/os.h>
 #include "HttpServer.h"
 #include "WebSocketHandle.h"
@@ -1110,7 +1111,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
                 auto ws_connection = WebSocketConnection::create(
                   m_server, std::move(socket_ref), &(m_server->m_ws_router), m_io_ctx,
-                  m_ssl_stream ? m_server->m_ssl_context : nullptr,
+                  m_ssl_stream ? m_server->m_ssl_context.get() : nullptr,
                   &session->req);  // 传递已读取的请求
 
                 ws_connection->start();
@@ -1454,7 +1455,7 @@ void HttpServer::configureSsl() {
 #endif
 
     // 创建 SSL 上下文（使用 TLS 1.2）
-    m_ssl_context = new ssl::context(ssl::context::tlsv12_server);
+    m_ssl_context = std::make_unique<ssl::context>(ssl::context::tlsv12_server);
 
     // 设置安全选项 - 禁用不安全的协议版本和特性
     m_ssl_context->set_options(
@@ -1604,9 +1605,9 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
             continue;
         }
 
-        // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
-        auto connection =
-          Connection::create(std::move(socket), &m_router, *m_io_context, m_ssl_context, this);
+        // 为 SSL 连接创建处理器并启动协程（传入 SSL 上下文）
+        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context,
+                                             m_ssl_context.get(), this);
         connection->start();
     }
 
@@ -1822,13 +1823,7 @@ void HttpServer::_stop() {
             HKU_WARN("io_context is null!");
         }
 
-        // 5. 清理 SSL 上下文
-        if (m_ssl_context) {
-            delete m_ssl_context;
-            m_ssl_context = nullptr;
-        }
-
-        // 6. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
+        // 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
         if (m_io_context && !m_use_external_io) {
             // 重要：等待一小段时间确保所有协程完成
             // 因为调用 stop() 后，异步操作可能仍在完成中
@@ -1838,7 +1833,7 @@ void HttpServer::_stop() {
             m_io_context = nullptr;
         }
 
-        // 6. 清理 server 指针
+        // 7. 清理 server 指针
         if (ms_server) {
             CLS_INFO("Quit Http server");
             ms_server = nullptr;

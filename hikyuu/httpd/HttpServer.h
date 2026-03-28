@@ -479,7 +479,7 @@ private:
     WebSocketRouter m_ws_router;  // WebSocket 路由器
 
     SslConfig m_ssl_config;
-    ssl::context* m_ssl_context{nullptr};  // SSL 上下文
+    std::unique_ptr<ssl::context> m_ssl_context;  // SSL 上下文
 
     std::atomic<bool> m_running{false};
 
