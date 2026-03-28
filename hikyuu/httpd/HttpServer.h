@@ -329,7 +329,7 @@ public:
      *
      * @return net::io_context* io_context 指针，如果尚未初始化则返回 nullptr
      */
-    static net::io_context* get_io_context();
+    net::io_context* get_io_context();
 
     /**
      * @brief 配置 CORS (跨域资源共享)
@@ -533,13 +533,14 @@ private:
     size_t m_io_thread_count{0};  // 改为静态成员变量
 
     std::atomic<bool> m_running{false};
+    bool m_use_external_io{false};  // 是否使用外部 io_context（静态）
+
+    tcp::acceptor* m_acceptor{nullptr};
+    net::io_context* m_io_context{nullptr};
 
     // 静态成员变量在 HttpServer.cpp 中定义
-    static bool ms_use_external_io;  // 是否使用外部 io_context（静态）
 
     static HttpServer* ms_server;
-    static net::io_context* ms_io_context;
-    static tcp::acceptor* ms_acceptor;
 };
 
 #define HTTP_HANDLE_IMP(cls) \

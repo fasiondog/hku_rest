@@ -56,13 +56,10 @@ namespace hku {
 HttpServer* HttpServer::ms_server = nullptr;
 
 ssl::context* HttpServer::ms_ssl_context = nullptr;
-net::io_context* HttpServer::ms_io_context = nullptr;
-tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
 WebSocketRouter HttpServer::ms_ws_router;
-bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
 bool HttpServer::ms_websocket_enabled{false};  // WebSocket 功能默认禁用
 
 // 信号处理防重入标志
@@ -1449,17 +1446,17 @@ void HttpServer::set_io_thread_count(size_t thread_count) {
 }
 
 void HttpServer::bind_io_context(net::io_context& io_ctx) {
-    if (ms_io_context) {
+    if (m_io_context) {
         CLS_WARN("io_context already bound, ignoring bind_io_context call");
         return;
     }
-    ms_io_context = &io_ctx;
-    ms_use_external_io = true;
+    m_io_context = &io_ctx;
+    m_use_external_io = true;
     CLS_INFO("Bound to external io_context at {}", static_cast<void*>(&io_ctx));
 }
 
 net::io_context* HttpServer::get_io_context() {
-    return ms_io_context;
+    return m_io_context;
 }
 
 void HttpServer::setCors(const CorsConfig& config) {
@@ -1665,7 +1662,7 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
         beast::error_code ec;
 
         // 异步接受新连接
-        tcp::socket socket = co_await ms_acceptor->async_accept(net::use_awaitable);
+        tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
 
         if (ec) {
             if (ec == net::error::operation_aborted) {
@@ -1677,7 +1674,7 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
 
         // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
         auto connection =
-          Connection::create(std::move(socket), &m_router, *ms_io_context, ms_ssl_context);
+          Connection::create(std::move(socket), &m_router, *m_io_context, ms_ssl_context);
         connection->start();
     }
 
@@ -1720,10 +1717,10 @@ void HttpServer::start() {
         }
 
         // 如果未绑定外部 io_context，则自行创建
-        if (!ms_use_external_io) {
+        if (!m_use_external_io) {
             CLS_INFO("Creating io_context...");
-            ms_io_context = new net::io_context();
-            CLS_INFO("io_context created: {}", (void*)ms_io_context);
+            m_io_context = new net::io_context();
+            CLS_INFO("io_context created: {}", (void*)m_io_context);
         } else {
             CLS_INFO("Using externally bound io_context");
         }
@@ -1731,8 +1728,8 @@ void HttpServer::start() {
         // 创建 acceptor
         CLS_INFO("Creating acceptor on {}:{}", m_host, m_port);
         auto addr = net::ip::make_address(m_host.c_str());
-        ms_acceptor = new tcp::acceptor(*ms_io_context, {addr, m_port});
-        CLS_INFO("Acceptor created: {}", (void*)ms_acceptor);
+        m_acceptor = new tcp::acceptor(*m_io_context, {addr, m_port});
+        CLS_INFO("Acceptor created: {}", (void*)m_acceptor);
 
         // 配置 SSL（如果启用）
         if (m_ssl_config.enabled) {
@@ -1743,13 +1740,13 @@ void HttpServer::start() {
 
             // 使用协程开始接受 SSL 连接
             CLS_INFO("Spawning doAcceptSsl coroutine...");
-            net::co_spawn(*ms_io_context, doAcceptSsl(), net::detached);
+            net::co_spawn(*m_io_context, doAcceptSsl(), net::detached);
         } else {
             CLS_INFO("HTTP Server started on {}:{}", m_host, m_port);
 
             // 使用协程开始接受连接
             CLS_INFO("Spawning doAccept coroutine...");
-            net::co_spawn(*ms_io_context, doAccept(), net::detached);
+            net::co_spawn(*m_io_context, doAccept(), net::detached);
         }
 
         CLS_INFO("Setting m_running = true");
@@ -1777,7 +1774,7 @@ net::awaitable<void> HttpServer::doAccept() {
         beast::error_code ec;
 
         // 异步接受新连接
-        tcp::socket socket = co_await ms_acceptor->async_accept(net::use_awaitable);
+        tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
 
         if (ec) {
             if (ec == net::error::operation_aborted) {
@@ -1789,7 +1786,7 @@ net::awaitable<void> HttpServer::doAccept() {
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
-        auto connection = Connection::create(std::move(socket), &m_router, *ms_io_context, nullptr);
+        auto connection = Connection::create(std::move(socket), &m_router, *m_io_context, nullptr);
         connection->start();
     }
 
@@ -1802,10 +1799,10 @@ void HttpServer::loop() {
 }
 
 void HttpServer::_loop() {
-    CLS_INFO("HttpServer::loop() called, m_running={}, ms_io_context={}", m_running.load(),
-             (void*)ms_io_context);
+    CLS_INFO("HttpServer::loop() called, m_running={}, m_io_context={}", m_running.load(),
+             (void*)m_io_context);
 
-    if (ms_io_context && m_running.load()) {
+    if (m_io_context && m_running.load()) {
         // 确定线程数：如果未设置或设置为 0，使用硬件并发数
         size_t thread_count = ms_server->m_io_thread_count;
         if (thread_count == 0) {
@@ -1815,7 +1812,7 @@ void HttpServer::_loop() {
         // 如果只有 1 个线程，直接运行
         if (thread_count <= 1) {
             CLS_INFO("Running io_context with single thread");
-            ms_io_context->run();
+            m_io_context->run();
             return;
         }
 
@@ -1826,9 +1823,9 @@ void HttpServer::_loop() {
 
         // 启动工作线程
         for (size_t i = 0; i < thread_count; ++i) {
-            threads.emplace_back([]() {
+            threads.emplace_back([this]() {
                 try {
-                    ms_io_context->run();
+                    m_io_context->run();
                 } catch (const std::exception& e) {
                     CLS_ERROR("Thread exception: {}", e.what());
                 } catch (...) {
@@ -1845,7 +1842,7 @@ void HttpServer::_loop() {
         }
 
     } else {
-        CLS_WARN("HttpServer::loop() skipped: ms_io_context={}, m_running={}", (void*)ms_io_context,
+        CLS_WARN("HttpServer::loop() skipped: m_io_context={}, m_running={}", (void*)m_io_context,
                  m_running.load());
     }
 }
@@ -1864,11 +1861,11 @@ void HttpServer::_stop() {
         m_running.store(false);
 
         // 1. 先关闭 acceptor，停止接受新连接
-        if (ms_acceptor) {
-            ms_acceptor->cancel();
-            ms_acceptor->close();
-            delete ms_acceptor;
-            ms_acceptor = nullptr;
+        if (m_acceptor) {
+            m_acceptor->cancel();
+            m_acceptor->close();
+            delete m_acceptor;
+            m_acceptor = nullptr;
         }
 
         // 2. 【关键】通知 ConnectionManager 停止，唤醒所有等待的连接
@@ -1886,8 +1883,8 @@ void HttpServer::_stop() {
         }
 
         // 4. 停止 io_context，取消所有待处理操作
-        if (ms_io_context) {
-            ms_io_context->stop();
+        if (m_io_context) {
+            m_io_context->stop();
         } else {
             HKU_WARN("io_context is null!");
         }
@@ -1899,13 +1896,13 @@ void HttpServer::_stop() {
         }
 
         // 6. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）
-        if (ms_io_context && !ms_use_external_io) {
+        if (m_io_context && !m_use_external_io) {
             // 重要：等待一小段时间确保所有协程完成
             // 因为调用 stop() 后，异步操作可能仍在完成中
             // 直接删除 io_context 可能导致未定义行为
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
-            delete ms_io_context;
-            ms_io_context = nullptr;
+            delete m_io_context;
+            m_io_context = nullptr;
         }
 
         // 6. 清理 server 指针
