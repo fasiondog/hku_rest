@@ -53,7 +53,6 @@ namespace hku {
 // 静态成员初始化
 // ============================================================================
 
-HttpServer* g_http_server = nullptr;
 HttpServer* HttpServer::ms_server = nullptr;
 SslConfig HttpServer::ms_ssl_config;
 ssl::context* HttpServer::ms_ssl_context = nullptr;
