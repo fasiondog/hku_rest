@@ -353,8 +353,8 @@ public:
     virtual ~HttpServer();
 
     void start();
-    static void loop();
-    static void stop();
+    void loop();
+    void stop();
 
     /**
      * @brief 设置 IO 工作线程数（可选）
@@ -684,9 +684,6 @@ public:
     }
 
 private:
-    void _loop();
-    void _stop();
-
     using HandlerFunc = std::function<net::awaitable<void>(void*)>;
     void configureSsl();
     net::awaitable<void> doAccept();
@@ -725,10 +722,6 @@ private:
 
     size_t m_ws_max_concurrent_connections{128};  // 默认 WebSocket 最大并发连接数
     size_t m_ws_wait_timeout_ms{5000};            // 默认 WebSocket 等待超时时间（毫秒）
-
-private:
-    // 静态成员变量在 HttpServer.cpp 中定义
-    static HttpServer* ms_server;
 };
 
 #define HTTP_HANDLE_IMP(cls) \

@@ -43,9 +43,6 @@ void signal_handle(int signal) {
     HKU_INFO("Step 2: Stopping Pod...");
     hku::pod::quit();
 
-    // 3. 再停止 HttpServer（最多 3 秒）
-    HKU_INFO("Step 3: Stopping HttpServer...");
-    HttpServer::stop();
     HKU_INFO("Quit");
 
     exit(0);

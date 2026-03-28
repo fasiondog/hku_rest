@@ -139,12 +139,6 @@ static bool isIpInCidr(const std::string& ip, const std::string& cidr) {
     return isIpInNetwork(ip_uint, network, mask);
 }
 
-// ============================================================================
-// 静态成员初始化
-// ============================================================================
-
-HttpServer* HttpServer::ms_server = nullptr;
-
 #if defined(_WIN32)
 static UINT g_old_cp;
 #endif
@@ -1523,15 +1517,11 @@ void Connection::close() {
 // HttpServer 实现 - 使用协程 + SSL/TLS
 // ============================================================================
 
-HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(port) {
-    HKU_CHECK(ms_server == nullptr, "Can only one server!");
-    ms_server = this;
-
-    m_root_url = fmt::format("{}:{}", m_host, m_port);
-}
+HttpServer::HttpServer(const char* host, uint16_t port)
+: m_root_url(fmt::format("{}:{}", host, port)), m_host(host), m_port(port) {}
 
 HttpServer::~HttpServer() {
-    _stop();
+    stop();
 }
 
 void HttpServer::set_io_thread_count(size_t thread_count) {
@@ -1785,6 +1775,31 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
     co_return;
 }
 
+net::awaitable<void> HttpServer::doAccept() {
+    while (m_running.load()) {
+        beast::error_code ec;
+
+        // 异步接受新连接
+        tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
+
+        if (ec) {
+            if (ec == net::error::operation_aborted) {
+                co_return;
+            }
+            CLS_ERROR("Accept error: {}", ec.message());
+            continue;
+        }
+
+        // 为新连接创建处理器并启动协程（非 SSL 模式）
+        // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
+        auto connection =
+          Connection::create(std::move(socket), &m_router, *m_io_context, nullptr, this);
+        connection->start();
+    }
+
+    co_return;
+}
+
 void HttpServer::start() {
     if (m_running.load()) {
         CLS_WARN("Server is already running");
@@ -1857,43 +1872,13 @@ void HttpServer::start() {
     }
 }
 
-net::awaitable<void> HttpServer::doAccept() {
-    while (m_running.load()) {
-        beast::error_code ec;
-
-        // 异步接受新连接
-        tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
-
-        if (ec) {
-            if (ec == net::error::operation_aborted) {
-                co_return;
-            }
-            CLS_ERROR("Accept error: {}", ec.message());
-            continue;
-        }
-
-        // 为新连接创建处理器并启动协程（非 SSL 模式）
-        // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
-        auto connection =
-          Connection::create(std::move(socket), &m_router, *m_io_context, nullptr, this);
-        connection->start();
-    }
-
-    co_return;
-}
-
 void HttpServer::loop() {
-    HKU_ASSERT(ms_server);
-    ms_server->_loop();
-}
-
-void HttpServer::_loop() {
     CLS_INFO("HttpServer::loop() called, m_running={}, m_io_context={}", m_running.load(),
              (void*)m_io_context);
 
     if (m_io_context && m_running.load()) {
         // 确定线程数：如果未设置或设置为 0，使用硬件并发数
-        size_t thread_count = ms_server->m_io_thread_count;
+        size_t thread_count = m_io_thread_count;
         if (thread_count == 0) {
             thread_count = std::thread::hardware_concurrency();
         }
@@ -1937,11 +1922,6 @@ void HttpServer::_loop() {
 }
 
 void HttpServer::stop() {
-    HKU_ASSERT(ms_server);
-    ms_server->_stop();
-}
-
-void HttpServer::_stop() {
 #if defined(_WIN32)
     SetConsoleOutputCP(g_old_cp);
 #endif
@@ -1980,11 +1960,7 @@ void HttpServer::_stop() {
             m_io_context = nullptr;
         }
 
-        // 7. 清理 server 指针
-        if (ms_server) {
-            CLS_INFO("Quit Http server");
-            ms_server = nullptr;
-        }
+        fmt::print("Quit Http server\n");
     }
 }
 

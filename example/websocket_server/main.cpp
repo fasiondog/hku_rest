@@ -24,7 +24,7 @@ void signal_handle(int signal) {
 
     HKU_INFO("Shutdown now ...");
     hku::pod::quit();
-    HttpServer::stop();
+    HKU_INFO("Quit");
     exit(0);  // 直接退出，不再返回 main 函数
 }
 
@@ -195,7 +195,7 @@ int main(int argc, char* argv[]) {
         std::cout << "Server started. Press Ctrl+C to stop." << std::endl;
 
         // 运行事件循环
-        HttpServer::loop();
+        server->loop();
 
     } catch (const std::exception& e) {
         std::cerr << "Server error: " << e.what() << std::endl;
