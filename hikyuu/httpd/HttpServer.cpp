@@ -1164,13 +1164,15 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 将解析后的请求移动到 session 中
             session->req = session->parser->release();
 
-            // ========== P99 延迟优化：ENABLE_FAST_PATH 快速路径 ==========
+            // ========== P99 延迟优化：快速路径 ==========
             // 如果启用快速路径，对简单 GET 请求跳过部分安全检查
-            if (HttpConfig::ENABLE_FAST_PATH && session->req.method() == http::verb::get &&
+            bool fast_path_enabled = false;
+            if (m_server->isFastPathEnabled() && session->req.method() == http::verb::get &&
                 session->req.target().size() < 256 &&  // 简单请求：URL 较短
                 session->req.body().empty()) {         // 无请求体
 
                 HKU_DEBUG("Fast path enabled for simple GET request: {}", session->req.target());
+                fast_path_enabled = true;
                 // 跳过额外的安全验证，直接进入处理流程
             }
 
@@ -1178,7 +1180,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 检查是否为 HTTP/2 连接尝试（HTTP/2 Connection Preface）
             // HTTP/2 客户端会先发送 "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
             // 增强检测：不仅检查方法，还要验证目标和版本号
-            if (session->req.method_string() == "PRI") {
+            // 快速路径：如果是GET请求，跳过HTTP/2检查（HTTP/2连接总是使用PRI方法）
+            if (!fast_path_enabled && session->req.method_string() == "PRI") {
                 HKU_DEBUG("HTTP/2 connection attempt detected on HTTP/1.1 server");
 
                 // 进一步验证：检查目标是否为 "*" 且版本是否为 "HTTP/2.0"
@@ -1210,14 +1213,20 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 4. Connection: Upgrade
             // 5. Sec-WebSocket-Key (握手密钥)
             // 6. Sec-WebSocket-Version: 13
-            bool is_websocket = m_server->m_websocket_enabled &&  // 检查 WebSocket 功能是否已启用
-                                session->req.method() == http::verb::get &&
-                                session->req.find(http::field::upgrade) != session->req.end() &&
-                                beast::iequals(session->req[http::field::upgrade], "websocket") &&
-                                session->req.find(http::field::connection) != session->req.end() &&
-                                beast::iequals(session->req[http::field::connection], "Upgrade") &&
-                                !session->req["Sec-WebSocket-Key"].empty() &&
-                                session->req["Sec-WebSocket-Version"] == "13";
+
+            // 快速路径优化：如果没有Upgrade头部，快速跳过WebSocket检测
+            bool is_websocket = false;
+            if (!fast_path_enabled ||
+                session->req.find(http::field::upgrade) != session->req.end()) {
+                is_websocket = m_server->m_websocket_enabled &&  // 检查 WebSocket 功能是否已启用
+                               session->req.method() == http::verb::get &&
+                               session->req.find(http::field::upgrade) != session->req.end() &&
+                               beast::iequals(session->req[http::field::upgrade], "websocket") &&
+                               session->req.find(http::field::connection) != session->req.end() &&
+                               beast::iequals(session->req[http::field::connection], "Upgrade") &&
+                               !session->req["Sec-WebSocket-Key"].empty() &&
+                               session->req["Sec-WebSocket-Version"] == "13";
+            }
 
             if (is_websocket) {
                 HKU_DEBUG("WebSocket upgrade request detected from {}:{}", m_client_ip,
@@ -1241,28 +1250,35 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // ========== 速率限制检查 ==========
             // 在调用处理器之前检查速率限制
-            std::string target = std::string(session->req.target());
-            std::string method = std::string(session->req.method_string());
+            // 如果速率限制未启用，则跳过整个检查流程
+            if (m_server->isRateLimitEnabled()) {
+                std::string target = std::string(session->req.target());
+                std::string method = std::string(session->req.method_string());
 
-            if (m_server->checkRateLimit(m_client_ip, target, method)) {
-                // 请求被允许，继续处理
-                HKU_TRACE("Rate limit passed for {}:{} -> {} {}", m_client_ip, m_client_port,
-                          method, target);
+                if (m_server->checkRateLimit(m_client_ip, target, method)) {
+                    // 请求被允许，继续处理
+                    HKU_TRACE("Rate limit passed for {}:{} -> {} {}", m_client_ip, m_client_port,
+                              method, target);
+                } else {
+                    // 速率限制拒绝请求，返回429 Too Many Requests
+                    HKU_WARN("Rate limit exceeded for {}:{} -> {} {}", m_client_ip, m_client_port,
+                             method, target);
+
+                    session->res.result(http::status::too_many_requests);
+                    session->res.set(http::field::content_type, "application/json");
+                    session->res.body() = R"({"error": "Rate limit exceeded", "code": 429})";
+                    session->res.prepare_payload();
+
+                    // 添加Retry-After头（推荐1秒后重试）
+                    session->res.set(http::field::retry_after, "1");
+
+                    co_await writeResponse(session);
+                    continue;  // 继续处理下一个请求（Keep-Alive连接）
+                }
             } else {
-                // 速率限制拒绝请求，返回429 Too Many Requests
-                HKU_WARN("Rate limit exceeded for {}:{} -> {} {}", m_client_ip, m_client_port,
-                         method, target);
-
-                session->res.result(http::status::too_many_requests);
-                session->res.set(http::field::content_type, "application/json");
-                session->res.body() = R"({"error": "Rate limit exceeded", "code": 429})";
-                session->res.prepare_payload();
-
-                // 添加Retry-After头（推荐1秒后重试）
-                session->res.set(http::field::retry_after, "1");
-
-                co_await writeResponse(session);
-                continue;  // 继续处理下一个请求（Keep-Alive连接）
+                // 速率限制未启用，跳过检查
+                HKU_TRACE("Rate limit disabled, skipping check for {}:{}", m_client_ip,
+                          m_client_port);
             }
 
             // 请求读取完成后，处理该请求（调用 Handle）

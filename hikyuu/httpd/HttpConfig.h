@@ -40,10 +40,6 @@ struct HttpConfig {
       5};                                          // 连接最大存活时间：5 分钟（快速轮换）
     static constexpr int MAX_CONNECTIONS = 10000;  // 服务器最大连接数：10K（防资源耗尽）
 
-    // ========== P99 延迟优化配置 ==========
-    // 启用快速路径：对于简单请求跳过部分安全检查
-    static constexpr bool ENABLE_FAST_PATH = true;
-
     // 缓冲区复用策略：保留最小容量避免频繁分配
     static constexpr std::size_t BUFFER_MIN_CAPACITY = 4 * 1024;  // 保留 4KB 基础容量（适应大负载）
 

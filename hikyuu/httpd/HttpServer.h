@@ -450,6 +450,35 @@ public:
     }
 
     /**
+     * @brief 启用或禁用快速路径（P99 延迟优化）
+     * @param enable true-启用快速路径，false-禁用快速路径
+     *
+     * 快速路径功能会跳过一些不必要的安全检查，以提高简单GET请求的处理性能。
+     * 仅对以下请求启用：
+     * 1. GET方法
+     * 2. URL长度小于256字符
+     * 3. 无请求体
+     *
+     * 示例:
+     *   // 启用快速路径（默认）
+     *   server->enableFastPath(true);
+     *
+     *   // 禁用快速路径（所有请求都进行完整安全检查）
+     *   server->enableFastPath(false);
+     */
+    void enableFastPath(bool enable = true) {
+        m_enable_fast_path = enable;
+    }
+
+    /**
+     * @brief 检查是否启用了快速路径
+     * @return true-已启用，false-未启用
+     */
+    bool isFastPathEnabled() const {
+        return m_enable_fast_path;
+    }
+
+    /**
      * @brief 配置 SSL/TLS(同时作用于 HTTP 和 WebSocket)
      * @param ca_key_file CA 证书和私钥文件 (PEM 格式)
      * @param password 私钥密码 (可为空)
@@ -523,6 +552,14 @@ public:
      * @brief 禁用速率限制
      */
     void disableRateLimit();
+
+    /**
+     * @brief 检查速率限制是否已启用
+     * @return true-已启用，false-未启用
+     */
+    bool isRateLimitEnabled() const noexcept {
+        return m_rate_limiter.isEnabled();
+    }
 
     /**
      * @brief 添加IP到速率限制白名单
@@ -676,6 +713,7 @@ private:
     net::io_context* m_io_context{nullptr};
     bool m_use_external_io{false};    // 是否使用外部 io_context
     bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
+    bool m_enable_fast_path{true};    // 是否启用快速路径（P99 延迟优化）
     std::atomic<bool> m_running{false};
 
     std::shared_ptr<ConnectionManager> m_connection_manager;              // 连接管理器

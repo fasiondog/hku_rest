@@ -115,6 +115,10 @@ public:
       m_tokens(config.burst_size),
       m_last_update(std::chrono::steady_clock::now()) {}
 
+    bool isEnabled() const noexcept {
+        return m_config.enabled;
+    }
+
     /**
      * @brief 检查是否允许请求
      * @param client_ip 客户端IP地址
