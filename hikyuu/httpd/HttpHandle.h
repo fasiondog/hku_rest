@@ -170,8 +170,9 @@ public:
      * 获取 query 参数
      * @param query_params [out] 输出 query 参数
      * @return true | false 获取或解析失败
+     * @throws HttpBadRequestError 当参数数量超过最大限制时抛出异常
      */
-    bool getQueryParams(QueryParams& query_params) const noexcept;
+    bool getQueryParams(QueryParams& query_params) const;
 
     void setResHeader(const char* key, const char* val) {
         // 直接写入 BeastContext，避免中间存储

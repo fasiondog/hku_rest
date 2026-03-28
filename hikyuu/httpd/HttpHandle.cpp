@@ -245,7 +245,7 @@ bool HttpHandle::haveQueryParams() const noexcept {
     return target.find('?') != std::string_view::npos;
 }
 
-bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
+bool HttpHandle::getQueryParams(QueryParams& query_params) const {
     if (!m_beast_context) {
         return false;
     }
@@ -268,9 +268,23 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
     const char* value = NULL;
     int key_len = 0;
     int value_len = 0;
+
+    // IMP-001: URL 参数数量限制，防止哈希碰撞 DoS 攻击
+    constexpr std::size_t MAX_QUERY_PARAMS = 100;  // 最大允许 100 个查询参数
+    std::size_t param_count = 0;
+
     while (*p != '\0') {
         if (*p == '&') {
             if (key_len && value_len) {
+                // IMP-001: 检查参数数量是否超过限制
+                if (++param_count > MAX_QUERY_PARAMS) {
+                    HKU_WARN("Query parameters exceed limit (max={}, client={}:{})",
+                             MAX_QUERY_PARAMS, getClientIp(), getClientPort());
+                    throw HttpBadRequestError(
+                      BadRequestErrorCode::TOO_MANY_QUERY_PARAMS,
+                      fmt::format("Too many query parameters (maximum {})", MAX_QUERY_PARAMS));
+                }
+
                 std::string strkey = std::string(key, key_len);
                 std::string strvalue = std::string(value, value_len);
                 query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
@@ -287,6 +301,15 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const noexcept {
         ++p;
     }
     if (key_len && value_len) {
+        // IMP-001: 检查最后一个参数
+        if (++param_count > MAX_QUERY_PARAMS) {
+            HKU_WARN("Query parameters exceed limit (max={}, client={}:{})", MAX_QUERY_PARAMS,
+                     getClientIp(), getClientPort());
+            throw HttpBadRequestError(
+              BadRequestErrorCode::TOO_MANY_QUERY_PARAMS,
+              fmt::format("Too many query parameters (maximum {})", MAX_QUERY_PARAMS));
+        }
+
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
         query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
