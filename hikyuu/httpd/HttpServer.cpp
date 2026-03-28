@@ -55,7 +55,6 @@ namespace hku {
 
 HttpServer* HttpServer::ms_server = nullptr;
 
-ssl::context* HttpServer::ms_ssl_context = nullptr;
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
@@ -1176,7 +1175,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 // 创建 WebSocket 连接处理器，并传递已读取的 HTTP 请求
                 auto ws_connection = WebSocketConnection::create(
                   std::move(socket_ref), &(m_server->m_ws_router), m_io_ctx,
-                  m_ssl_stream ? HttpServer::ms_ssl_context : nullptr,
+                  m_ssl_stream ? m_server->m_ssl_context : nullptr,
                   &session->req);  // 传递已读取的请求
 
                 ws_connection->start();
@@ -1519,10 +1518,10 @@ void HttpServer::configureSsl() {
 #endif
 
     // 创建 SSL 上下文（使用 TLS 1.2）
-    ms_ssl_context = new ssl::context(ssl::context::tlsv12_server);
+    m_ssl_context = new ssl::context(ssl::context::tlsv12_server);
 
     // 设置安全选项 - 禁用不安全的协议版本和特性
-    ms_ssl_context->set_options(
+    m_ssl_context->set_options(
       ssl::context::default_workarounds |  // OpenSSL 工作区
       ssl::context::no_sslv2 |             // 禁用 SSLv2（已废弃）
       ssl::context::no_sslv3 |             // 禁用 SSLv3（POODLE 漏洞）
@@ -1533,7 +1532,7 @@ void HttpServer::configureSsl() {
 
     // 设置密码套件（强加密算法）
     // TLS 1.2 密码套件 - 按优先级排序
-    SSL_CTX_set_cipher_list(ms_ssl_context->native_handle(),
+    SSL_CTX_set_cipher_list(m_ssl_context->native_handle(),
                             // GCM 模式（认证加密，优先使用）
                             "ECDHE-RSA-AES256-GCM-SHA384:"
                             "ECDHE-RSA-AES128-GCM-SHA256:"
@@ -1547,7 +1546,7 @@ void HttpServer::configureSsl() {
 
 // TLS 1.3 密码套件（如果 OpenSSL 版本支持）
 #if OPENSSL_VERSION_NUMBER >= 0x10101000L
-    SSL_CTX_set_ciphersuites(ms_ssl_context->native_handle(),
+    SSL_CTX_set_ciphersuites(m_ssl_context->native_handle(),
                              "TLS_AES_256_GCM_SHA384:"
                              "TLS_CHACHA20_POLY1305_SHA256:"
                              "TLS_AES_128_GCM_SHA256");
@@ -1558,16 +1557,16 @@ void HttpServer::configureSsl() {
 #if OPENSSL_VERSION_NUMBER >= 0x10002000L
     // ECDH auto is deprecated in newer OpenSSL versions, but we keep it for compatibility
     // Return value is intentionally ignored as it's always successful on modern systems
-    (void)SSL_CTX_set_ecdh_auto(ms_ssl_context->native_handle(), 1);
+    (void)SSL_CTX_set_ecdh_auto(m_ssl_context->native_handle(), 1);
 #endif
 
     // 加载证书和私钥
-    ms_ssl_context->use_certificate_chain_file(m_ssl_config.ca_key_file);
-    ms_ssl_context->use_private_key_file(m_ssl_config.ca_key_file, ssl::context::pem);
+    m_ssl_context->use_certificate_chain_file(m_ssl_config.ca_key_file);
+    m_ssl_context->use_private_key_file(m_ssl_config.ca_key_file, ssl::context::pem);
 
     // 如果有密码
     if (!m_ssl_config.password.empty()) {
-        ms_ssl_context->set_password_callback(
+        m_ssl_context->set_password_callback(
           [pwd = m_ssl_config.password](
             std::size_t max_length, ssl::context_base::password_purpose purpose) { return pwd; });
     }
@@ -1575,13 +1574,13 @@ void HttpServer::configureSsl() {
     // 设置客户端验证模式
     switch (m_ssl_config.verify_mode) {
         case 0:  // 无需客户端认证
-            ms_ssl_context->set_verify_mode(ssl::verify_none);
+            m_ssl_context->set_verify_mode(ssl::verify_none);
             break;
         case 1:  // 客户端认证可选
-            ms_ssl_context->set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
+            m_ssl_context->set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
             break;
         case 2:  // 需客户端认证
-            ms_ssl_context->set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
+            m_ssl_context->set_verify_mode(ssl::verify_peer | ssl::verify_fail_if_no_peer_cert);
             break;
     }
 
@@ -1589,7 +1588,7 @@ void HttpServer::configureSsl() {
     // 禁用 HTTP/2 (ALPN)，强制使用 HTTP/1.1
     // 当前实现仅支持 HTTP/1.1，待后续集成 nghttp2 支持 HTTP/2
     SSL_CTX_set_alpn_select_cb(
-      ms_ssl_context->native_handle(),
+      m_ssl_context->native_handle(),
       [](SSL* ssl, const unsigned char** out, unsigned char* outlen, const unsigned char* in,
          unsigned int inlen, void* /*arg*/) -> int {
           // 遍历客户端提供的协议列表
@@ -1671,7 +1670,7 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
 
         // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
         auto connection =
-          Connection::create(std::move(socket), &m_router, *m_io_context, ms_ssl_context, this);
+          Connection::create(std::move(socket), &m_router, *m_io_context, m_ssl_context, this);
         connection->start();
     }
 
@@ -1888,9 +1887,9 @@ void HttpServer::_stop() {
         }
 
         // 5. 清理 SSL 上下文
-        if (ms_ssl_context) {
-            delete ms_ssl_context;
-            ms_ssl_context = nullptr;
+        if (m_ssl_context) {
+            delete m_ssl_context;
+            m_ssl_context = nullptr;
         }
 
         // 6. 最后清理 io_context 对象（如果使用的是外部 io_context 则不清理）

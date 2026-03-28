@@ -522,17 +522,16 @@ public:
     static std::shared_ptr<WebSocketConnectionManager>
       ms_ws_connection_manager;  // WebSocket 连接管理器
 
-    // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
-    static ssl::context* ms_ssl_context;  // SSL 上下文
-
 private:
     std::string m_root_url;
     std::string m_host;
     uint16_t m_port{80};
     CorsConfig m_cors_config;  // CORS 配置
-    SslConfig m_ssl_config;
     Router m_router;
     WebSocketRouter m_ws_router;  // WebSocket 路由器
+
+    SslConfig m_ssl_config;
+    ssl::context* m_ssl_context{nullptr};  // SSL 上下文
 
     std::atomic<bool> m_running{false};
 
