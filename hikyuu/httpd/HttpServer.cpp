@@ -59,11 +59,9 @@ ssl::context* HttpServer::ms_ssl_context = nullptr;
 net::io_context* HttpServer::ms_io_context = nullptr;
 tcp::acceptor* HttpServer::ms_acceptor = nullptr;
 std::atomic<bool> HttpServer::ms_running{false};
-size_t HttpServer::ms_io_thread_count = 0;
 std::shared_ptr<ConnectionManager> HttpServer::ms_connection_manager{nullptr};  // 连接管理器
 std::shared_ptr<WebSocketConnectionManager> HttpServer::ms_ws_connection_manager{
   nullptr};  // WebSocket 连接管理器
-Router HttpServer::ms_router;
 WebSocketRouter HttpServer::ms_ws_router;
 bool HttpServer::ms_use_external_io{false};    // 初始化静态成员
 bool HttpServer::ms_websocket_enabled{false};  // WebSocket 功能默认禁用
@@ -1448,7 +1446,7 @@ HttpServer::HttpServer(const char* host, uint16_t port) : m_host(host), m_port(p
 HttpServer::~HttpServer() {}
 
 void HttpServer::set_io_thread_count(size_t thread_count) {
-    ms_io_thread_count = thread_count;
+    m_io_thread_count = thread_count;
 }
 
 void HttpServer::bind_io_context(net::io_context& io_ctx) {
@@ -1680,7 +1678,7 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
 
         // 为 SSL连接创建处理器并启动协程（传入 SSL 上下文）
         auto connection =
-          Connection::create(std::move(socket), &ms_router, *ms_io_context, ms_ssl_context);
+          Connection::create(std::move(socket), &m_router, *ms_io_context, ms_ssl_context);
         connection->start();
     }
 
@@ -1792,8 +1790,7 @@ net::awaitable<void> HttpServer::doAccept() {
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
-        auto connection =
-          Connection::create(std::move(socket), &ms_router, *ms_io_context, nullptr);
+        auto connection = Connection::create(std::move(socket), &m_router, *ms_io_context, nullptr);
         connection->start();
     }
 
@@ -1801,12 +1798,13 @@ net::awaitable<void> HttpServer::doAccept() {
 }
 
 void HttpServer::loop() {
+    HKU_ASSERT(ms_server);
     CLS_INFO("HttpServer::loop() called, ms_running={}, ms_io_context={}", ms_running.load(),
              (void*)ms_io_context);
 
     if (ms_io_context && ms_running.load()) {
         // 确定线程数：如果未设置或设置为 0，使用硬件并发数
-        size_t thread_count = ms_io_thread_count;
+        size_t thread_count = ms_server->m_io_thread_count;
         if (thread_count == 0) {
             thread_count = std::thread::hardware_concurrency();
         }
@@ -1912,7 +1910,7 @@ void HttpServer::stop() {
 
 void HttpServer::registerHttpHandle(const std::string& method, const std::string& path,
                                     HttpHandleFactory handler) {
-    ms_router.registerHandler(method, path, handler);
+    m_router.registerHandler(method, path, handler);
 }
 
 void HttpServer::registerHttpHandle(const char* method, const char* path,

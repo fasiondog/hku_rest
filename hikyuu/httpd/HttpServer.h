@@ -447,22 +447,7 @@ public:
           std::make_shared<WebSocketConnectionManager>(max_concurrent, wait_timeout_ms);
     }
 
-    // 全局连接池管理字段（public static）
 public:
-    // 智能连接管理器（替代简单的计数限流）
-    static std::shared_ptr<ConnectionManager> ms_connection_manager;  // 连接管理器
-
-    // WebSocket 连接管理器
-    static std::shared_ptr<WebSocketConnectionManager>
-      ms_ws_connection_manager;  // WebSocket 连接管理器
-
-    // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
-    static WebSocketRouter ms_ws_router;  // WebSocket 路由器
-    static ssl::context* ms_ssl_context;  // SSL 上下文
-
-    // WebSocket 功能开关（全局控制）
-    static bool ms_websocket_enabled;  // WebSocket 功能是否已启用（默认 false）
-
     // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
     void GET(const char* path) {
@@ -518,19 +503,36 @@ private:
     net::awaitable<void> doAccept();
     net::awaitable<void> doAcceptSsl();
 
+public:
+    // 全局连接池管理字段（public static）
+    // 智能连接管理器（替代简单的计数限流）
+    static std::shared_ptr<ConnectionManager> ms_connection_manager;  // 连接管理器
+
+    // WebSocket 连接管理器
+    static std::shared_ptr<WebSocketConnectionManager>
+      ms_ws_connection_manager;  // WebSocket 连接管理器
+
+    // WebSocket 和 SSL 相关的静态成员（需要被 WebSocketConnection 访问）
+    static WebSocketRouter ms_ws_router;  // WebSocket 路由器
+    static ssl::context* ms_ssl_context;  // SSL 上下文
+
+    // WebSocket 功能开关（全局控制）
+    static bool ms_websocket_enabled;  // WebSocket 功能是否已启用（默认 false）
+
 private:
     std::string m_root_url;
     std::string m_host;
     uint16_t m_port{80};
     CorsConfig m_cors_config;  // CORS 配置
     SslConfig m_ssl_config;
+    Router m_router;
+
+    size_t m_io_thread_count{0};  // 改为静态成员变量
 
     // 静态成员变量在 HttpServer.cpp 中定义
-    static size_t ms_io_thread_count;  // 改为静态成员变量
-    static bool ms_use_external_io;    // 是否使用外部 io_context（静态）
+    static bool ms_use_external_io;  // 是否使用外部 io_context（静态）
 
     static HttpServer* ms_server;
-    static Router ms_router;
     static net::io_context* ms_io_context;
     static tcp::acceptor* ms_acceptor;
     static std::atomic<bool> ms_running;
