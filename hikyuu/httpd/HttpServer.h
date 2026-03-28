@@ -522,17 +522,18 @@ private:
     std::string m_root_url;
     std::string m_host;
     uint16_t m_port{80};
-    static size_t ms_io_thread_count;  // 改为静态成员变量
-    CorsConfig m_cors_config;          // CORS 配置
-    static bool ms_use_external_io;    // 是否使用外部 io_context（静态）
+    CorsConfig m_cors_config;  // CORS 配置
+    SslConfig m_ssl_config;
 
     // 静态成员变量在 HttpServer.cpp 中定义
+    static size_t ms_io_thread_count;  // 改为静态成员变量
+    static bool ms_use_external_io;    // 是否使用外部 io_context（静态）
+
     static HttpServer* ms_server;
     static Router ms_router;
     static net::io_context* ms_io_context;
     static tcp::acceptor* ms_acceptor;
     static std::atomic<bool> ms_running;
-    static SslConfig ms_ssl_config;
 };
 
 #define HTTP_HANDLE_IMP(cls) \

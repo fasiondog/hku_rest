@@ -54,7 +54,7 @@ namespace hku {
 // ============================================================================
 
 HttpServer* HttpServer::ms_server = nullptr;
-SslConfig HttpServer::ms_ssl_config;
+
 ssl::context* HttpServer::ms_ssl_context = nullptr;
 net::io_context* HttpServer::ms_io_context = nullptr;
 tcp::acceptor* HttpServer::ms_acceptor = nullptr;
@@ -1472,27 +1472,27 @@ void HttpServer::setCors(const CorsConfig& config) {
 }
 
 void HttpServer::configureSsl() {
-    HKU_CHECK(!ms_ssl_config.ca_key_file.empty(), "SSL CA file not specified");
-    HKU_CHECK(existFile(ms_ssl_config.ca_key_file), "Not exist ca file: {}",
-              ms_ssl_config.ca_key_file);
+    HKU_CHECK(!m_ssl_config.ca_key_file.empty(), "SSL CA file not specified");
+    HKU_CHECK(existFile(m_ssl_config.ca_key_file), "Not exist ca file: {}",
+              m_ssl_config.ca_key_file);
 
     // 检查证书文件权限（仅类 Unix 系统）
 #if !HKU_OS_WINDOWS
     struct stat st;
-    if (stat(ms_ssl_config.ca_key_file.c_str(), &st) == 0) {
+    if (stat(m_ssl_config.ca_key_file.c_str(), &st) == 0) {
         // 检查文件权限是否为 600（-rw-------）或更严格
         mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
         if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
             HKU_WARN(
               "Certificate file '{}' has insecure permissions: {:o}. "
               "Recommended: 600 (-rw-------)",
-              ms_ssl_config.ca_key_file, perms);
+              m_ssl_config.ca_key_file, perms);
         }
 
         // 如果是私钥文件，检查应该更严格
         // 使用更严格的检查：检查文件内容是否为私钥
         bool is_private_key = false;
-        FILE* fp = fopen(ms_ssl_config.ca_key_file.c_str(), "r");
+        FILE* fp = fopen(m_ssl_config.ca_key_file.c_str(), "r");
         if (fp) {
             char buffer[256];
             if (fgets(buffer, sizeof(buffer), fp)) {
@@ -1508,23 +1508,23 @@ void HttpServer::configureSsl() {
         }
 
         // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
-        if (is_private_key || ms_ssl_config.ca_key_file.find(".key") != std::string::npos ||
-            ms_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
+        if (is_private_key || m_ssl_config.ca_key_file.find(".key") != std::string::npos ||
+            m_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
             if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
                 HKU_ERROR(
                   "Private key file '{}' has world/group readable permissions! "
                   "This is a security risk. Please set permissions to 600",
-                  ms_ssl_config.ca_key_file);
+                  m_ssl_config.ca_key_file);
                 throw std::runtime_error("Insecure private key file permissions");
             }
         }
     } else {
-        HKU_WARN("Failed to stat certificate file: {}", ms_ssl_config.ca_key_file);
+        HKU_WARN("Failed to stat certificate file: {}", m_ssl_config.ca_key_file);
     }
 #else
     // Windows 系统：检查文件是否存在即可，Windows 使用 ACL 而非 POSIX 权限
     HKU_DEBUG("Running on Windows, skipping POSIX permission check for '{}'",
-              ms_ssl_config.ca_key_file);
+              m_ssl_config.ca_key_file);
 #endif
 
     // 创建 SSL 上下文（使用 TLS 1.2）
@@ -1571,18 +1571,18 @@ void HttpServer::configureSsl() {
 #endif
 
     // 加载证书和私钥
-    ms_ssl_context->use_certificate_chain_file(ms_ssl_config.ca_key_file);
-    ms_ssl_context->use_private_key_file(ms_ssl_config.ca_key_file, ssl::context::pem);
+    ms_ssl_context->use_certificate_chain_file(m_ssl_config.ca_key_file);
+    ms_ssl_context->use_private_key_file(m_ssl_config.ca_key_file, ssl::context::pem);
 
     // 如果有密码
-    if (!ms_ssl_config.password.empty()) {
+    if (!m_ssl_config.password.empty()) {
         ms_ssl_context->set_password_callback(
-          [pwd = ms_ssl_config.password](
+          [pwd = m_ssl_config.password](
             std::size_t max_length, ssl::context_base::password_purpose purpose) { return pwd; });
     }
 
     // 设置客户端验证模式
-    switch (ms_ssl_config.verify_mode) {
+    switch (m_ssl_config.verify_mode) {
         case 0:  // 无需客户端认证
             ms_ssl_context->set_verify_mode(ssl::verify_none);
             break;
@@ -1660,7 +1660,7 @@ void HttpServer::configureSsl() {
       nullptr);
 
     CLS_INFO("SSL configured with CA file: {} (HTTP/2 disabled, using HTTP/1.1)",
-             ms_ssl_config.ca_key_file);
+             m_ssl_config.ca_key_file);
 }
 
 net::awaitable<void> HttpServer::doAcceptSsl() {
@@ -1738,7 +1738,7 @@ void HttpServer::start() {
         CLS_INFO("Acceptor created: {}", (void*)ms_acceptor);
 
         // 配置 SSL（如果启用）
-        if (ms_ssl_config.enabled) {
+        if (m_ssl_config.enabled) {
             CLS_INFO("Configuring SSL...");
             configureSsl();
 
@@ -1929,9 +1929,9 @@ void HttpServer::registerWsHandle(const char* path, WsHandleFactory handler) {
 }
 
 void HttpServer::setTls(const char* ca_key_file, const char* password, int mode) {
-    ms_ssl_config.ca_key_file = ca_key_file;
-    ms_ssl_config.password = password ? password : "";
-    ms_ssl_config.verify_mode = mode;
-    ms_ssl_config.enabled = true;
+    m_ssl_config.ca_key_file = ca_key_file;
+    m_ssl_config.password = password ? password : "";
+    m_ssl_config.verify_mode = mode;
+    m_ssl_config.enabled = true;
 }
 }  // namespace hku
