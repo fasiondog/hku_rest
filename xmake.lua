@@ -35,7 +35,7 @@ if get_config("use_hikyuu") then
         stacktrace = has_config("stacktrace")
     }})
 else
-    add_requires("hku_utils >1.3.4", 
+    add_requires("hku_utils >=1.3.6", 
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,
