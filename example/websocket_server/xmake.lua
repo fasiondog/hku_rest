@@ -1,4 +1,4 @@
-target("rest_server")
+target("websocket_server")
     set_kind("binary")
     set_default(false)
 
@@ -11,7 +11,7 @@ target("rest_server")
         add_cxflags("-fcoroutines")
     end    
     
-    -- 添加 OpenSSL 依赖（用于 TLS/SSL）
+    -- 添加 OpenSSL 依赖 (用于 TLS/SSL)
     if is_plat("macosx") then
         add_syslinks("ssl", "crypto")
         add_frameworks("CoreFoundation", "Security")
@@ -26,7 +26,7 @@ target("rest_server")
     end
 
     add_includedirs("$(projectdir)")
-    add_files("**.cpp")
+    add_files("*.cpp")
 
     before_build(function(target)
         if is_plat("windows") then
@@ -36,8 +36,3 @@ target("rest_server")
             end
         end
     end)
-
-    before_run(function(target)
-        os.cp("$(projectdir)/example/rest_server/rest_server.ini", "$(builddir)/$(mode)/$(plat)/$(arch)/lib/")
-    end)
-target_end()

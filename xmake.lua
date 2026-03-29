@@ -1,10 +1,10 @@
 set_xmakever("3.0.0")
 set_project("hku_rest")
 
-set_version("1.1.1", {build="%Y%m%d%H%M"})
+set_version("1.1.3", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
-set_languages("cxx17", "c99")
+set_languages("c++20")
 
 option("mysql", {description = "Enable sqlite driver.", default = true})
 option("sqlite", {description = "Enable sqlite.", default = false})
@@ -34,7 +34,7 @@ if get_config("use_hikyuu") then
         stacktrace = has_config("stacktrace")
     }})
 else
-    add_requires("hku_utils", 
+    add_requires("hku_utils >1.3.4", 
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,
@@ -65,7 +65,7 @@ if is_plat("windows") then
     add_defines("NOCRYPT", "NOGDI")
     add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
     add_cxflags("-wd4819") -- template dll export warning
-    add_defines("WIN32_LEAN_AND_MEAN")
+    add_defines("WIN32_LEAN_AND_MEAN", "_WIN32_WINNT=0x0601")
     if is_mode("debug") then
         add_cxflags("-Gs", "-RTC1", "/bigobj")
     end
@@ -85,6 +85,8 @@ if is_plat("windows") then
             serialization = get_config("serialize"),
             system = true,
             python = false,
+            asio = true,
+            beast = true,
             cmake = false,
     }}
 else
@@ -106,11 +108,11 @@ else
             atomic = true,
             container = true,
             math = true,
-            locale = true,
-            icu = true,
             regex = true,
             random = true,
             thread = true,
+            asio = true,  
+            beast = true,
             cmake = true,
     }}
 end
@@ -130,6 +132,12 @@ if get_config("leak_check") then
     -- set_policy("build.sanitizer.thread", true)
 end
 
+if is_plat("linux") then
+  add_requires("apt::libssl-dev", {alias="openssl3"})
+else
+  add_requires("openssl3")
+end
+
 target("hku_httpd")
     set_kind("$(kind)")
 
@@ -139,6 +147,8 @@ target("hku_httpd")
 
     set_configvar("HKU_HTTPD_POD_USE_SQLITE", has_config("sqlite") and 1 or 0)
     set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
+
+    add_packages("openssl3")
     
     add_includedirs(".")
 
@@ -151,7 +161,11 @@ target("hku_httpd")
         end
     elseif is_kind("static") and not is_plat("windows") then
         add_cxflags("-fPIC", {force=true})
-    end    
+    end
+
+    if is_plat("linux", "cross") then
+        add_cxflags("-fcoroutines")
+    end
 
     if is_plat("windows") then
         add_cxflags("-wd4819")  
@@ -228,3 +242,4 @@ target_end()
 
 includes("example/rest_server")
 includes("example/node_server")
+includes("example/websocket_server")

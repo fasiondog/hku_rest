@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <nlohmann/json.hpp>
 #include <stdlib.h>
 #include <string_view>
 #include <string>
@@ -20,29 +21,21 @@
 
 namespace hku {
 
-class RestHandle : public HttpHandle {
+using json = nlohmann::json;                  // 不保持插入排序
+using ordered_json = nlohmann::ordered_json;  // 保持插入排序
+
+class HKU_HTTPD_API RestHandle : public HttpHandle {
     CLASS_LOGGER_IMP(RestHandle)
 
 public:
-    explicit RestHandle(nng_aio *aio) : HttpHandle(aio) {
+    explicit RestHandle(void* beast_context) : HttpHandle(beast_context) {
         // addFilter(AuthorizeFilter);
     }
 
-    virtual ~RestHandle() {}
+    virtual ~RestHandle() override = default;
 
-    virtual void before_run() override {
-        setResHeader("Content-Type", "application/json; charset=UTF-8");
-        req = getReqJson();
-    }
-
-    virtual void after_run() override {
-        // 强制关闭连接，即仅有短连接
-        // nng_http_res_set_status(m_nng_res, NNG_HTTP_STATUS_OK);
-        json new_res;
-        new_res["ret"] = 0;
-        new_res["data"] = std::move(res);
-        setResData(new_res);
-    }
+    virtual net::awaitable<void> before_run() override;
+    virtual net::awaitable<void> after_run() override;
 
 protected:
     void check_missing_param(std::string_view param) {
@@ -52,19 +45,19 @@ protected:
         }
     }
 
-    void check_missing_param(const std::vector<std::string> &params) {
-        for (auto &param : params) {
+    void check_missing_param(const std::vector<std::string>& params) {
+        for (auto& param : params) {
             check_missing_param(param);
         }
     }
 
 protected:
-    json req;  // 子类在 run 方法中，直接使用次req
+    json req;  // 子类在 run 方法中，直接使用此 req
     json res;
 };
 
 #define REST_HANDLE_IMP(cls) \
 public:                      \
-    cls(nng_aio *aio) : RestHandle(aio) {}
+    explicit cls(void* beast_context) : RestHandle(beast_context) {}
 
 }  // namespace hku
