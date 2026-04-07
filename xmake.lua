@@ -140,6 +140,8 @@ else
   add_requires("openssl3")
 end
 
+add_requires("async_mqtt")
+
 target("hku_httpd")
     set_kind("$(kind)")
 
@@ -151,6 +153,7 @@ target("hku_httpd")
     set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
 
     add_packages("openssl3")
+    add_packages("async_mqtt")
     
     add_includedirs(".")
 
@@ -201,10 +204,12 @@ target("hku_httpd")
     end
 
     add_headerfiles("$(projectdir)/(hikyuu/httpd/**.h)")
+    add_headerfiles("$(projectdir)/(hikyuu/mqtt/**.h)")
     
     -- add files
     add_files("hikyuu/httpd/*.cpp")
     add_files("hikyuu/httpd/pod/*.cpp")
+    add_files("hikyuu/mqtt/*.cpp")
 
     if has_config("sqlite") then
         add_files("hikyuu/httpd/pod/sqlite/*.cpp")
@@ -245,3 +250,4 @@ target_end()
 includes("example/rest_server")
 includes("example/node_server")
 includes("example/websocket_server")
+includes("example/mqtt_broker")
