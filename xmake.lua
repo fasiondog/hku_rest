@@ -12,6 +12,7 @@ option("stacktrace", {description = "Enable check/assert with stack trace info."
 option("log_level", {description = "set log level.", default = 2, values = {1, 2, 3, 4, 5, 6}})
 option("async_log", {description = "Use async log.", default = false})
 option("leak_check", {description = "Enable leak check for test", default = false})
+option("mqtt", {description = "Enable mqtt broker support.", default = true})
 
 option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
@@ -84,7 +85,8 @@ if is_plat("windows") then
             multi = true,
             date_time = true,
             filesystem = false,
-            serialization = get_config("serialize"),
+            property_tree= true, --mqtt need
+            serialization = true,
             system = true,
             python = false,
             asio = true,
@@ -140,7 +142,7 @@ else
   add_requires("openssl3")
 end
 
-add_requires("async_mqtt")
+add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
 
 target("hku_httpd")
     set_kind("$(kind)")
@@ -204,12 +206,15 @@ target("hku_httpd")
     end
 
     add_headerfiles("$(projectdir)/(hikyuu/httpd/**.h)")
-    add_headerfiles("$(projectdir)/(hikyuu/mqtt/**.h)")
     
     -- add files
     add_files("hikyuu/httpd/*.cpp")
     add_files("hikyuu/httpd/pod/*.cpp")
-    add_files("hikyuu/mqtt/*.cpp")
+
+    if has_config("mqtt") then
+        add_headerfiles("$(projectdir)/(hikyuu/mqtt/**.h)")
+        add_files("hikyuu/mqtt/*.cpp")
+    end
 
     if has_config("sqlite") then
         add_files("hikyuu/httpd/pod/sqlite/*.cpp")

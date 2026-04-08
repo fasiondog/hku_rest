@@ -17,7 +17,7 @@ namespace hku {
 
 /**
  * @brief MQTT Broker 服务器
- * 
+ *
  * 基于 async_mqtt 实现的 MQTT 代理服务器，支持：
  * - MQTT over TCP
  * - MQTT over WebSocket (可选)
@@ -25,7 +25,7 @@ namespace hku {
  * - MQTT over WebSocket Secure (可选)
  * - 多 io_context 线程池
  * - 认证授权管理
- * 
+ *
  * @note 所有 async_mqtt 相关的头文件依赖都隐藏在实现文件中，
  *       使用者无需引入 async_mqtt 依赖
  */
@@ -49,7 +49,7 @@ public:
      *   - recv_buf_size: 接收缓冲区大小（可选）
      *   - send_buf_size: 发送缓冲区大小（可选）
      *   - auth_file: 认证文件路径（可选）
-     *   
+     *
      *   TLS 相关配置（当启用 TLS 时必需）：
      *   - certificate: 证书文件路径
      *   - private_key: 私钥文件路径
@@ -57,9 +57,9 @@ public:
      *   - verify_field: 证书验证字段（默认 "CN"）
      */
     explicit MqttBroker(const Parameter& param);
-    
+
     ~MqttBroker();
-    
+
     // 禁止拷贝和移动
     MqttBroker(const MqttBroker&) = delete;
     MqttBroker& operator=(const MqttBroker&) = delete;
@@ -71,12 +71,12 @@ public:
      * @note 此方法会阻塞直到 stop() 被调用
      */
     void start();
-    
+
     /**
      * @brief 停止 MQTT Broker
      */
     void stop();
-    
+
     /**
      * @brief 检查 Broker 是否正在运行
      * @return true 如果正在运行
@@ -89,4 +89,4 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
-} // namespace hku
+}  // namespace hku
