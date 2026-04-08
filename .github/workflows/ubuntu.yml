@@ -15,39 +15,43 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest]
+        arch: [x86_64, aarch64]
     
+    concurrency:
+        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS-${{ matrix.arch }}
+        cancel-in-progress: true
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@v4        
 
-    - name: Cache packages
-      id: cache-xmake-ubuntu
-      uses: actions/cache@v4
-      env:
-        cache-name: cache-node-modules
-      with:
-        path: ~/.xmake
-        key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-build-${{ env.cache-name }}-
-          ${{ runner.os }}-build-
-          ${{ runner.os }}-
+      - name: Cache packages
+        id: cache-xmake-ubuntu
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.xmake
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
 
-    - uses: xmake-io/github-action-setup-xmake@v1
-      with:
-        xmake-version: 3.0.0
-        actions-cache-folder: '.xmake-cache'
-        actions-cache-key: 'ubuntu'
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 3.0.0
+          actions-cache-folder: '.xmake-cache'
+          actions-cache-key: 'ubuntu'
 
-    - name: config
-      run: |
-        xmake f -c -y -vD
+      - name: config
+        run: |
+          xmake f -c -y -vD
 
-    - name: build1
-      run: |
-        xmake -bvD rest_server
+      - name: build1
+        run: |
+          xmake -bvD rest_server
 
-    - name: build2
-      run: |
-        xmake -bvD node_server
+      - name: build2
+        run: |
+          xmake -bvD node_server
 
   

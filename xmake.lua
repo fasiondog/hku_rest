@@ -69,8 +69,9 @@ if is_plat("windows") then
     add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
     add_cxflags("-wd4819") -- template dll export warning
     add_defines("WIN32_LEAN_AND_MEAN", "_WIN32_WINNT=0x0601")
+    add_cxflags("/bigobj")
     if is_mode("debug") then
-        add_cxflags("-Gs", "-RTC1", "/bigobj")
+        add_cxflags("-Gs", "-RTC1")
     end
 end
 
