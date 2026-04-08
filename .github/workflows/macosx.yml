@@ -47,7 +47,18 @@ jobs:
         run: |
           xmake f -c -y -vD
 
-      - name: build1
+      - name: build_rest_server
         run: |
           xmake -bvD rest_server
 
+      - name: build_node_server
+        run: |
+          xmake -bvD node_server
+
+      - name: build_websocket_server
+        run: |
+          xmake -bvD websocket_server
+
+      - name: build_mqtt_broker
+        run: |
+          xmake -bvD mqtt_broker

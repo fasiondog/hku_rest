@@ -18,7 +18,7 @@ option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false}
 
 add_rules("mode.debug", "mode.release")
 
-add_repositories("hikyuu-repo https://gitee.com/fasiondog/hikyuu_extern_libs.git")
+add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 
 local log_level = get_config("log_level")
 if get_config("use_hikyuu") then
