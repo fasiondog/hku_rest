@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <csignal>
+#include <hikyuu/utilities/osdef.h>
 #include <hikyuu/httpd/HttpServer.h>
 #include "hikyuu/httpd/pod/all.h"
 #include "EchoWsHandle.h"
@@ -38,8 +39,10 @@ void signal_handle(int signal) {
  */
 int main(int argc, char* argv[]) {
     try {
+#if !HKU_OS_WINDOWS
         // 忽略 SIGPIPE 信号，防止客户端断开连接时服务器异常退出
         std::signal(SIGPIPE, SIG_IGN);
+#endif
 
         std::signal(SIGINT, signal_handle);
         std::signal(SIGTERM, signal_handle);

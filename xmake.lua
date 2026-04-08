@@ -21,7 +21,7 @@ add_rules("mode.debug", "mode.release")
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 
 local log_level = get_config("log_level")
-if get_config("use_hikyuu") then
+if has_config("use_hikyuu") then
     add_requires("hikyuu", 
     {configs = {
         shared = is_kind("shared"), 
@@ -121,15 +121,13 @@ else
             cmake = true,
     }}
 end
-if get_config("use_hikyuu") then
-    add_packages("hikyuu")
+if has_config("use_hikyuu") then
     add_requireconfs("hikyuu.boost", {override=true, system = false, configs = boost_config.configs})
 else
-    add_packages("hku_utils")
     add_requireconfs("hku_utils.boost", {override=true, system = false, configs = boost_config.configs})
 end
 
-if get_config("leak_check") then
+if has_config("leak_check") then
     -- 需要 export LD_PRELOAD=libasan.so
     set_policy("build.sanitizer.address", true)
     set_policy("build.sanitizer.leak", true)
@@ -144,6 +142,7 @@ else
 end
 
 add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
+add_requireconfs("async_mqtt.boost", {override=true, system = false, configs = boost_config.configs})
 
 target("hku_httpd")
     set_kind("$(kind)")
@@ -154,6 +153,12 @@ target("hku_httpd")
 
     set_configvar("HKU_HTTPD_POD_USE_SQLITE", has_config("sqlite") and 1 or 0)
     set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
+
+    if has_config("use_hikyuu") then
+        add_packages("hikyuu")
+    else
+        add_packages("hku_utils")
+    end
 
     add_packages("openssl3")
     add_packages("async_mqtt")

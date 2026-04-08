@@ -4,6 +4,11 @@ target("mqtt_broker")
 
     add_deps("hku_httpd")
     add_packages("async_mqtt")
+    if has_config("use_hikyuu") then
+        add_packages("hikyuu")
+    else
+        add_packages("hku_utils")
+    end    
 
     add_includedirs("$(projectdir)")
 

@@ -5,6 +5,11 @@ target("websocket_server")
     set_languages("c++20")
     
     add_deps("hku_httpd")
+    if has_config("use_hikyuu") then
+        add_packages("hikyuu")
+    else
+        add_packages("hku_utils")
+    end    
     add_packages("boost", "nlohmann_json", "fmt", "openssl3")
 
     if is_plat("linux", "cross") then
