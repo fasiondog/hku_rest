@@ -1,30 +1,31 @@
-name: ubuntu-build
+name: macosx-build
 
-on: 
+on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
 
 jobs:
   build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14]
+        arch: [arm64, x86_64]
 
     runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        arch: [x86_64, aarch64]
-    
+
     concurrency:
         group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS-${{ matrix.arch }}
         cancel-in-progress: true
     steps:
-      - uses: actions/checkout@v4        
+      - uses: actions/checkout@v4
 
       - name: Cache packages
-        id: cache-xmake-ubuntu
+        id: cache-xmake-macosx
         uses: actions/cache@v4
         env:
           cache-name: cache-node-modules
@@ -38,10 +39,10 @@ jobs:
 
       - uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: 3.0.0
+          xmake-version: 3.0.8
           actions-cache-folder: '.xmake-cache'
-          actions-cache-key: 'ubuntu'
-
+          actions-cache-key: 'macosx-arm64'
+          
       - name: config
         run: |
           xmake f -c -y -vD
@@ -60,4 +61,4 @@ jobs:
 
       - name: build_mqtt_broker
         run: |
-          xmake -bvD mqtt_broker   
+          xmake -bvD mqtt_broker

@@ -12,15 +12,16 @@ option("stacktrace", {description = "Enable check/assert with stack trace info."
 option("log_level", {description = "set log level.", default = 2, values = {1, 2, 3, 4, 5, 6}})
 option("async_log", {description = "Use async log.", default = false})
 option("leak_check", {description = "Enable leak check for test", default = false})
+option("mqtt", {description = "Enable mqtt broker support.", default = true})
 
 option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
 add_rules("mode.debug", "mode.release")
 
-add_repositories("hikyuu-repo https://gitee.com/fasiondog/hikyuu_extern_libs.git")
+add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 
 local log_level = get_config("log_level")
-if get_config("use_hikyuu") then
+if has_config("use_hikyuu") then
     add_requires("hikyuu", 
     {configs = {
         shared = is_kind("shared"), 
@@ -68,8 +69,9 @@ if is_plat("windows") then
     add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
     add_cxflags("-wd4819") -- template dll export warning
     add_defines("WIN32_LEAN_AND_MEAN", "_WIN32_WINNT=0x0601")
+    add_cxflags("/bigobj")
     if is_mode("debug") then
-        add_cxflags("-Gs", "-RTC1", "/bigobj")
+        add_cxflags("-Gs", "-RTC1")
     end
 end
 
@@ -84,7 +86,8 @@ if is_plat("windows") then
             multi = true,
             date_time = true,
             filesystem = false,
-            serialization = get_config("serialize"),
+            property_tree= true, --mqtt need
+            serialization = true,
             system = true,
             python = false,
             asio = true,
@@ -118,15 +121,13 @@ else
             cmake = true,
     }}
 end
-if get_config("use_hikyuu") then
-    add_packages("hikyuu")
+if has_config("use_hikyuu") then
     add_requireconfs("hikyuu.boost", {override=true, system = false, configs = boost_config.configs})
 else
-    add_packages("hku_utils")
     add_requireconfs("hku_utils.boost", {override=true, system = false, configs = boost_config.configs})
 end
 
-if get_config("leak_check") then
+if has_config("leak_check") then
     -- 需要 export LD_PRELOAD=libasan.so
     set_policy("build.sanitizer.address", true)
     set_policy("build.sanitizer.leak", true)
@@ -140,6 +141,9 @@ else
   add_requires("openssl3")
 end
 
+add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
+add_requireconfs("async_mqtt.boost", {override=true, system = false, configs = boost_config.configs})
+
 target("hku_httpd")
     set_kind("$(kind)")
 
@@ -150,7 +154,14 @@ target("hku_httpd")
     set_configvar("HKU_HTTPD_POD_USE_SQLITE", has_config("sqlite") and 1 or 0)
     set_configvar("HKU_HTTPD_POD_USE_MYSQL", has_config("mysql") and 1 or 0)
 
+    if has_config("use_hikyuu") then
+        add_packages("hikyuu")
+    else
+        add_packages("hku_utils")
+    end
+
     add_packages("openssl3")
+    add_packages("async_mqtt")
     
     add_includedirs(".")
 
@@ -206,6 +217,11 @@ target("hku_httpd")
     add_files("hikyuu/httpd/*.cpp")
     add_files("hikyuu/httpd/pod/*.cpp")
 
+    if has_config("mqtt") then
+        add_headerfiles("$(projectdir)/(hikyuu/mqtt/**.h)")
+        add_files("hikyuu/mqtt/*.cpp")
+    end
+
     if has_config("sqlite") then
         add_files("hikyuu/httpd/pod/sqlite/*.cpp")
     end
@@ -245,3 +261,4 @@ target_end()
 includes("example/rest_server")
 includes("example/node_server")
 includes("example/websocket_server")
+includes("example/mqtt_broker")
