@@ -1,0 +1,53 @@
+name: macosx-build
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14]
+        arch: [arm64, x86_64]
+
+    runs-on: ${{ matrix.os }}
+
+    concurrency:
+        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS-${{ matrix.arch }}
+        cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache packages
+        id: cache-xmake-macosx
+        uses: actions/cache@v4
+        env:
+          cache-name: cache-node-modules
+        with:
+          path: ~/.xmake
+          key: ${{ runner.os }}-build-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-build-${{ env.cache-name }}-
+            ${{ runner.os }}-build-
+            ${{ runner.os }}-
+
+      - uses: xmake-io/github-action-setup-xmake@v1
+        with:
+          xmake-version: 3.0.8
+          actions-cache-folder: '.xmake-cache'
+          actions-cache-key: 'macosx-arm64'
+          
+      - name: config
+        run: |
+          xmake f -c -y -vD
+
+      - name: build1
+        run: |
+          xmake -bvD rest_server
+

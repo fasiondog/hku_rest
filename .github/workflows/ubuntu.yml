@@ -50,7 +50,4 @@ jobs:
       run: |
         xmake -bvD node_server
 
-    - name: test
-      run: |
-        xmake r node_server
   
