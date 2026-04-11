@@ -12,7 +12,7 @@ option("stacktrace", {description = "Enable check/assert with stack trace info."
 option("log_level", {description = "set log level.", default = 2, values = {1, 2, 3, 4, 5, 6}})
 option("async_log", {description = "Use async log.", default = false})
 option("leak_check", {description = "Enable leak check for test", default = false})
-option("mqtt", {description = "Enable mqtt broker support.", default = true})
+option("mqtt", {description = "Enable mqtt broker support.", default = false})
 
 option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
