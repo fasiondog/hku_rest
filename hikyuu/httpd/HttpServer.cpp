@@ -185,8 +185,7 @@ static void setResponseHeaders(ResponseType& response, const CorsConfig& cors_co
 
     // HSTS 仅在 HTTPS 连接时设置
     if (is_https) {
-        response.set(http::field::strict_transport_security,
-                     "max-age=31536000; includeSubDomains");
+        response.set(http::field::strict_transport_security, "max-age=31536000; includeSubDomains");
     }
 
     // 设置 CORS 头 (如果提供了配置且已启用)
@@ -399,11 +398,18 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
             parser.body_limit(HttpConfig::MAX_BODY_SIZE);
             parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
 
-            // 异步读取请求
-            if (m_ssl_stream) {
-                co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
-            } else {
-                co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
+            // 异步读取请求（带超时保护）
+            try {
+                if (m_ssl_stream) {
+                    co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
+                } else {
+                    co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
+                }
+            } catch (const std::exception& e) {
+                HKU_ERROR("WebSocket upgrade read error from {}:{} - {}", m_client_ip,
+                          m_client_port, e.what());
+                close();
+                co_return;
             }
 
             m_existing_req = parser.release();
@@ -1134,6 +1140,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                     if (auto sess = weak_sess.lock()) {
                         // 主动取消正在进行的异步操作
                         sess->cancel_signal.emit(net::cancellation_type::all);
+                        HKU_WARN("Read timeout triggered for client {}:{}", sess->client_ip,
+                                 sess->client_port);
                     }
                 }
             });
@@ -1152,14 +1160,25 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
                 session->timer.cancel();
 
-                // 判断是否为正常断开
+                // 判断是否为正常断开或超时
                 if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
                     e.code() == beast::errc::connection_reset) {
                     HKU_DEBUG("Client disconnected during read: {}", e.code().message());
+                } else if (e.code() == net::error::operation_aborted) {
+                    HKU_WARN("HTTP read operation aborted due to timeout for client {}:{}",
+                             m_client_ip, m_client_port);
                 } else {
-                    HKU_ERROR("Read error: {}", e.what());
+                    HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port, e.what());
                 }
-                throw;  // 重新抛出异常，让外层处理
+                close();
+                co_return;
+            } catch (const std::exception& e) {
+                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
+                session->timer.cancel();
+                HKU_ERROR("Exception during read from {}:{} - {}", m_client_ip, m_client_port,
+                          e.what());
+                close();
+                co_return;
             }
 
             // 取消定时器（读取成功）
@@ -1354,6 +1373,11 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     // 查找对应的处理器
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
+
+    // ⭐ 调试：打印收到的 Host 头
+    std::string host_header = context->req[http::field::host];
+    HKU_INFO(">>> Request received - Method: {}, Target: {}, Host: '{}', Client: {}:{}", method,
+             target, host_header, m_client_ip, m_client_port);
 
     // 判断是否为 HTTPS 连接
     bool is_https = (m_ssl_stream != nullptr);
@@ -1845,15 +1869,15 @@ void HttpServer::start() {
         // 创建 acceptor
         CLS_INFO("Creating acceptor on {}:{}", m_host, m_port);
         auto addr = net::ip::make_address(m_host.c_str());
-        
+
         // 检查是否为 IPv6 地址
         bool is_ipv6 = addr.is_v6();
-        
+
         if (is_ipv6) {
             // 对于 IPv6 地址，尝试启用双栈模式（IPv4 映射）
             tcp::endpoint ep(addr, m_port);
             m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, ep);
-            
+
             // 禁用 IPV6_V6ONLY，允许接收 IPv4 连接
 #if HKU_OS_WINDOWS
             DWORD ipv6_only = 0;
@@ -1862,17 +1886,21 @@ void HttpServer::start() {
 #endif
             try {
                 m_acceptor->set_option(
-                    boost::asio::detail::socket_option::boolean<IPPROTO_IPV6, IPV6_V6ONLY>(ipv6_only));
+                  boost::asio::detail::socket_option::boolean<IPPROTO_IPV6, IPV6_V6ONLY>(
+                    ipv6_only));
                 CLS_INFO("IPv6 dual-stack mode enabled (accepting both IPv4 and IPv6 connections)");
             } catch (const std::exception& e) {
-                CLS_WARN("Failed to enable IPv6 dual-stack mode: {}. "
-                         "Server will only accept IPv6 connections.", e.what());
+                CLS_WARN(
+                  "Failed to enable IPv6 dual-stack mode: {}. "
+                  "Server will only accept IPv6 connections.",
+                  e.what());
             }
         } else {
             // IPv4 地址，正常创建
-            m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, tcp::endpoint{addr, m_port});
+            m_acceptor =
+              std::make_unique<tcp::acceptor>(*m_io_context, tcp::endpoint{addr, m_port});
         }
-        
+
         CLS_INFO("Acceptor created: {}", (void*)m_acceptor.get());
 
         // 配置 SSL（如果启用）
