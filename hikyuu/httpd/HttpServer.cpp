@@ -23,6 +23,9 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#else
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #endif
 
 // Boost.beast 相关头文件
@@ -151,23 +154,24 @@ static UINT g_old_cp;
  * @brief 为 HTTP 响应设置安全响应头和 CORS 头
  *
  * 包含以下安全头:
- * - Strict-Transport-Security (HSTS): 强制 HTTPS
  * - X-Content-Type-Options: 防止 MIME 类型嗅探
  * - X-Frame-Options: 防止点击劫持攻击
  * - X-XSS-Protection: XSS 防护
  * - Referrer-Policy: 控制 Referer 信息泄露
  * - Content-Security-Policy: 内容安全策略（防止XSS）
  * - Permissions-Policy: 权限策略（限制浏览器功能）
+ * - Strict-Transport-Security (HSTS): 强制 HTTPS（仅 HTTPS 连接）
  * - CORS 头 (如果启用)
  *
  * @tparam ResponseType 响应类型 (http::response 或其引用)
  * @param response HTTP 响应对象
  * @param cors_config CORS 配置对象 (可选)
+ * @param is_https 是否为 HTTPS 连接（仅在 HTTPS 时设置 HSTS）
  */
 template <typename ResponseType>
-static void setResponseHeaders(ResponseType& response, const CorsConfig& cors_config) {
+static void setResponseHeaders(ResponseType& response, const CorsConfig& cors_config,
+                               bool is_https = false) {
     // 设置安全响应头
-    response.set(http::field::strict_transport_security, "max-age=31536000; includeSubDomains");
     response.set(http::field::x_content_type_options, "nosniff");
     response.set(http::field::x_frame_options, "DENY");
     response.set(http::field::x_xss_protection, "1; mode=block");
@@ -178,6 +182,12 @@ static void setResponseHeaders(ResponseType& response, const CorsConfig& cors_co
                  "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src "
                  "'self' data:;");
     response.set(http::field::cache_control, "no-store, no-cache, must-revalidate, max-age=0");
+
+    // HSTS 仅在 HTTPS 连接时设置
+    if (is_https) {
+        response.set(http::field::strict_transport_security,
+                     "max-age=31536000; includeSubDomains");
+    }
 
     // 设置 CORS 头 (如果提供了配置且已启用)
     if (cors_config.enabled) {
@@ -1345,6 +1355,9 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     auto method = std::string(context->req.method_string());
     auto target = std::string(context->req.target());
 
+    // 判断是否为 HTTPS 连接
+    bool is_https = (m_ssl_stream != nullptr);
+
     // 安全检查 router 是否为空
     if (!m_router) {
         HKU_ERROR("Router is null, cannot process request");
@@ -1354,7 +1367,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 设置响应头 (安全头 + CORS)
-        setResponseHeaders(context->res, m_server->getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig(), is_https);
 
         co_return;
     }
@@ -1368,7 +1381,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.result(http::status::no_content);
 
         // 设置 CORS 响应头
-        setResponseHeaders(context->res, m_server->getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig(), is_https);
 
         context->res.prepare_payload();
         co_return;
@@ -1383,7 +1396,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 设置响应头 (安全头 + CORS)
-        setResponseHeaders(context->res, m_server->getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig(), is_https);
 
         co_return;
     }
@@ -1407,7 +1420,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         });
 
         // 统一添加响应头 (安全头 + CORS，在 handler 执行前设置，确保所有响应都包含)
-        setResponseHeaders(context->res, m_server->getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig(), is_https);
 
         // 执行业务处理（绑定取消令牌到协程）
         // 注意：handler 内部需要通过 net::bind_cancellation 或检查 cancellation_state 来响应取消
@@ -1436,7 +1449,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         context->res.prepare_payload();
 
         // 异常时也要设置响应头（安全头 + CORS）
-        setResponseHeaders(context->res, m_server->getCorsConfig());
+        setResponseHeaders(context->res, m_server->getCorsConfig(), is_https);
     }
 }
 
@@ -1832,7 +1845,34 @@ void HttpServer::start() {
         // 创建 acceptor
         CLS_INFO("Creating acceptor on {}:{}", m_host, m_port);
         auto addr = net::ip::make_address(m_host.c_str());
-        m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, tcp::endpoint{addr, m_port});
+        
+        // 检查是否为 IPv6 地址
+        bool is_ipv6 = addr.is_v6();
+        
+        if (is_ipv6) {
+            // 对于 IPv6 地址，尝试启用双栈模式（IPv4 映射）
+            tcp::endpoint ep(addr, m_port);
+            m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, ep);
+            
+            // 禁用 IPV6_V6ONLY，允许接收 IPv4 连接
+#if HKU_OS_WINDOWS
+            DWORD ipv6_only = 0;
+#else
+            int ipv6_only = 0;
+#endif
+            try {
+                m_acceptor->set_option(
+                    boost::asio::detail::socket_option::boolean<IPPROTO_IPV6, IPV6_V6ONLY>(ipv6_only));
+                CLS_INFO("IPv6 dual-stack mode enabled (accepting both IPv4 and IPv6 connections)");
+            } catch (const std::exception& e) {
+                CLS_WARN("Failed to enable IPv6 dual-stack mode: {}. "
+                         "Server will only accept IPv6 connections.", e.what());
+            }
+        } else {
+            // IPv4 地址，正常创建
+            m_acceptor = std::make_unique<tcp::acceptor>(*m_io_context, tcp::endpoint{addr, m_port});
+        }
+        
         CLS_INFO("Acceptor created: {}", (void*)m_acceptor.get());
 
         // 配置 SSL（如果启用）
