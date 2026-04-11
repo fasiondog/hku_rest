@@ -1,7 +1,7 @@
 set_xmakever("3.0.0")
 set_project("hku_rest")
 
-set_version("1.1.3", {build="%Y%m%d%H%M"})
+set_version("1.1.5", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 set_languages("c++20")
