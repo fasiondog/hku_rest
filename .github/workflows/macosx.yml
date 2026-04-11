@@ -45,7 +45,7 @@ jobs:
           
       - name: config
         run: |
-          xmake f -c -y -vD
+          xmake f -c -y -vD --mqtt=y
 
       - name: build_rest_server
         run: |
