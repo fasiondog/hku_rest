@@ -398,14 +398,21 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
             parser.body_limit(HttpConfig::MAX_BODY_SIZE);
             parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
 
-            // 异步读取请求（带超时保护）
+            // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+            // 使用复用的 parser 成员变量而不是创建新的 parser
+            HKU_INFO(">>> Starting async_read for client {}:{} (buffer size: {})", m_client_ip,
+                     m_client_port, session->buffer.size());
             try {
                 if (m_ssl_stream) {
-                    co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
+                    co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
+                                              net::use_awaitable);
                 } else {
-                    co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
+                    co_await http::async_read(session->socket, session->buffer, *session->parser,
+                                              net::use_awaitable);
                 }
-            } catch (const std::exception& e) {
+                HKU_INFO(">>> async_read completed successfully for client {}:{}", m_client_ip,
+                         m_client_port);
+            } catch (const beast::system_error& e) {
                 HKU_ERROR("WebSocket upgrade read error from {}:{} - {}", m_client_ip,
                           m_client_port, e.what());
                 close();
@@ -1378,6 +1385,15 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     std::string host_header = context->req[http::field::host];
     HKU_INFO(">>> Request received - Method: {}, Target: {}, Host: '{}', Client: {}:{}", method,
              target, host_header, m_client_ip, m_client_port);
+
+    // ========== CORS 检查与日志 ==========
+    std::string req_origin = context->req[http::field::origin];
+    if (!req_origin.empty() && !m_server->getCorsConfig().enabled) {
+        HKU_WARN(
+          "CORS not enabled but received cross-origin request - Origin: '{}', Target: {}, "
+          "Client: {}:{}",
+          req_origin, target, m_client_ip, m_client_port);
+    }
 
     // 判断是否为 HTTPS 连接
     bool is_https = (m_ssl_stream != nullptr);
