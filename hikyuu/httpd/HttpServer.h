@@ -380,6 +380,14 @@ public:
     net::io_context* get_io_context();
 
     /**
+     * @brief 获取服务器监听的端口
+     * @return 服务器端口号
+     */
+    uint16_t getPort() const noexcept {
+        return m_port;
+    }
+
+    /**
      * @brief 配置 CORS (跨域资源共享)
      * @param config CORS 配置对象
      *

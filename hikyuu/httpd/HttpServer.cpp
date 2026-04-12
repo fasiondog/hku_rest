@@ -1393,6 +1393,16 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
     HKU_INFO(">>> Request received - Method: {}, Target: {}, Host: '{}', Client: {}:{}", method,
              target, host_header, m_client_ip, m_client_port);
 
+    // ========== Host 头检查与修复 ==========
+    // 检查 Host 头是否包含端口号，如果不包含则补全（兼容某些代理场景）
+    if (!host_header.empty() && host_header.find(':') == std::string::npos) {
+        // Host 没有端口，补全端口
+        uint16_t server_port = m_server->getPort();
+        std::string fixed_host = host_header + ":" + std::to_string(server_port);
+        context->req.set(http::field::host, fixed_host);
+        HKU_DEBUG("Fixed Host header: '{}' -> '{}'", host_header, fixed_host);
+    }
+
     // ========== CORS 检查与日志 ==========
     std::string req_origin = context->req[http::field::origin];
     if (!req_origin.empty() && !m_server->getCorsConfig().enabled) {
