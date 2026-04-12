@@ -1198,8 +1198,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 诊断日志：打印收到的请求概要
             int major_ver = session->req.version() / 10;
             int minor_ver = session->req.version() % 10;
-            HKU_DEBUG("Request parsed successfully - Method: {}, Target: {}, Version: HTTP/{}.{}",
-                      session->req.method_string(), session->req.target(), major_ver, minor_ver);
+            HKU_DEBUG("Request parsed successfully - Method: {}, Target: {}, Version: HTTP/{}.{}, "
+                      "keep_alive: {}, Connection: {}",
+                      session->req.method_string(), session->req.target(), major_ver, minor_ver,
+                      session->req.keep_alive(),
+                      session->req[http::field::connection]);
 
             // ========== P99 延迟优化：快速路径 ==========
             // 如果启用快速路径，对简单 GET 请求跳过部分安全检查
