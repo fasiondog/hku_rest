@@ -1145,7 +1145,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                         // 主动取消正在进行的异步操作
                         sess->cancel_signal.emit(net::cancellation_type::all);
                         HKU_DEBUG("Read timeout triggered for client {}:{}", sess->client_ip,
-                                 sess->client_port);
+                                  sess->client_port);
                     }
                 }
             });
@@ -1198,11 +1198,11 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 诊断日志：打印收到的请求概要
             int major_ver = session->req.version() / 10;
             int minor_ver = session->req.version() % 10;
-            HKU_DEBUG("Request parsed successfully - Method: {}, Target: {}, Version: HTTP/{}.{}, "
-                      "keep_alive: {}, Connection: {}",
-                      session->req.method_string(), session->req.target(), major_ver, minor_ver,
-                      session->req.keep_alive(),
-                      session->req[http::field::connection]);
+            HKU_DEBUG(
+              "Request parsed successfully - Method: {}, Target: {}, Version: HTTP/{}.{}, "
+              "keep_alive: {}, Connection: {}",
+              session->req.method_string(), session->req.target(), major_ver, minor_ver,
+              session->req.keep_alive(), session->req[http::field::connection]);
 
             // ========== P99 延迟优化：快速路径 ==========
             // 如果启用快速路径，对简单 GET 请求跳过部分安全检查
@@ -1393,8 +1393,8 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
     // ⭐ 调试：打印收到的 Host 头
     std::string host_header = context->req[http::field::host];
-    HKU_INFO(">>> Request received - Method: {}, Target: {}, Host: '{}', Client: {}:{}", method,
-             target, host_header, m_client_ip, m_client_port);
+    HKU_DEBUG(">>> Request received - Method: {}, Target: {}, Host: '{}', Client: {}:{}", method,
+              target, host_header, m_client_ip, m_client_port);
 
     // ========== Host 头检查与修复 ==========
     // 检查 Host 头是否包含端口号，如果不包含则补全（兼容某些代理场景）
@@ -1876,7 +1876,8 @@ net::awaitable<void> HttpServer::doAccept() {
         std::string client_ip = addr_ec ? "unknown" : remote_ep.address().to_string();
         CLS_DEBUG("New connection accepted from {}:{}", client_ip, remote_ep.port());
 
-        // ========== 探测连接快速关闭（解决 cpolar 探测导致 head 超时问题，浪费服务器资源） ==========
+        // ========== 探测连接快速关闭（解决 cpolar 探测导致 head 超时问题，浪费服务器资源）
+        // ==========
         if (m_probe_close_enabled) {
             // 使用 select/poll 检测 100ms 内是否有数据到达
             bool has_data = false;
