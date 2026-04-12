@@ -1873,6 +1873,50 @@ net::awaitable<void> HttpServer::doAccept() {
         std::string client_ip = addr_ec ? "unknown" : remote_ep.address().to_string();
         CLS_DEBUG("New connection accepted from {}:{}", client_ip, remote_ep.port());
 
+        // ========== 探测连接快速关闭（解决 cpolar 探测导致 head 超时问题，浪费服务器资源） ==========
+        if (m_probe_close_enabled) {
+            // 使用 select/poll 检测 100ms 内是否有数据到达
+            bool has_data = false;
+#if HKU_OS_WINDOWS
+            u_long mode = 1;
+            ioctlsocket(socket.native_handle(), FIONBIO, &mode);
+            fd_set read_fds;
+            FD_ZERO(&read_fds);
+            FD_SET(static_cast<u_int>(socket.native_handle()), &read_fds);
+            struct timeval tv;
+            tv.tv_sec = 0;
+            tv.tv_usec = 100000;  // 100ms
+            int ret = select(0, &read_fds, nullptr, nullptr, &tv);
+            has_data = (ret > 0 && FD_ISSET(socket.native_handle(), &read_fds));
+            mode = 0;
+            ioctlsocket(socket.native_handle(), FIONBIO, &mode);
+#else
+            int sock_fd = socket.native_handle();
+            struct pollfd pfd;
+            pfd.fd = sock_fd;
+            pfd.events = POLLIN;
+            pfd.revents = 0;
+            int ret = poll(&pfd, 1, 100);  // 100ms timeout
+            has_data = (ret > 0 && (pfd.revents & POLLIN));
+#endif
+
+            if (!has_data) {
+                CLS_INFO("Probe connection detected from {}:{}, closing immediately", client_ip,
+                         remote_ep.port());
+                boost::system::error_code close_ec;
+                socket.close(close_ec);
+                continue;
+            }
+
+            // 有数据，读取并丢弃第一个字节（探测连接不会有数据）
+            char buf[1];
+            boost::system::error_code read_ec;
+            socket.read_some(net::buffer(buf), read_ec);
+            CLS_DEBUG("Normal request detected from {}:{}, first byte read", client_ip,
+                      remote_ep.port());
+        }
+        // ========== 探测关闭结束 ==========
+
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
         auto connection =

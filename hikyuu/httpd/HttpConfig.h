@@ -28,7 +28,7 @@ struct HttpConfig {
     // ========== 超时控制 (针对高频低延迟场景优化) ==========
     // 注意：超时时间过短会导致频繁的定时器检查和连接重建，反而增加延迟
     static constexpr std::chrono::milliseconds HEADER_TIMEOUT{
-      5000};  // 请求头首字节超时：5s (探测连接快速关闭)
+      10000};  // 请求头首字节超时：10s
     static constexpr std::chrono::seconds READ_TIMEOUT{60};   // 读取请求超时：60s (生产环境标准)
     static constexpr std::chrono::seconds WRITE_TIMEOUT{60};  // 写入响应超时：60s (支持批量推送)
     static constexpr std::chrono::seconds TOTAL_TIMEOUT{

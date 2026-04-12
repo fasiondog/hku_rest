@@ -487,6 +487,30 @@ public:
     }
 
     /**
+     * @brief 启用或禁用探测连接快速关闭（解决 cpolar 探测导致 5s 超时问题）
+     * @param enable true-启用探测关闭，false-禁用（默认）
+     *
+     * cpolar 等反向代理会定期发送 TCP 探测连接（只建立连接不发送 HTTP 请求），
+     * 启用此选项后，服务器会在接受连接后立即检测 socket 是否有可用数据，
+     * 如果没有数据则立即关闭连接，避免空等超时。
+     *
+     * 示例:
+     *   // 启用探测连接快速关闭（用于反向代理场景）
+     *   server->enableProbeConnectionClose(true);
+     */
+    void enableProbeConnectionClose(bool enable = true) {
+        m_probe_close_enabled = enable;
+    }
+
+    /**
+     * @brief 检查是否启用了探测连接快速关闭
+     * @return true-已启用，false-未启用
+     */
+    bool isProbeConnectionCloseEnabled() const {
+        return m_probe_close_enabled;
+    }
+
+    /**
      * @brief 配置 SSL/TLS(同时作用于 HTTP 和 WebSocket)
      * @param ca_key_file CA 证书和私钥文件 (PEM 格式)
      * @param password 私钥密码 (可为空)
@@ -719,7 +743,8 @@ private:
     net::io_context* m_io_context{nullptr};
     bool m_use_external_io{false};    // 是否使用外部 io_context
     bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
-    bool m_enable_fast_path{true};    // 是否启用快速路径（P99 延迟优化）
+    bool m_enable_fast_path{true};                           // 是否启用快速路径（P99 延迟优化）
+    bool m_probe_close_enabled{false};  // 是否启用探测连接快速关闭（识别 cpolar 探测）
     std::atomic<bool> m_running{false};
 
     std::shared_ptr<ConnectionManager> m_connection_manager;              // 连接管理器
