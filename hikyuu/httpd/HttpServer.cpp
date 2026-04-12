@@ -1876,8 +1876,7 @@ net::awaitable<void> HttpServer::doAccept() {
         std::string client_ip = addr_ec ? "unknown" : remote_ep.address().to_string();
         CLS_DEBUG("New connection accepted from {}:{}", client_ip, remote_ep.port());
 
-        // ========== 探测连接快速关闭（解决 cpolar 探测导致 head 超时问题，浪费服务器资源）
-        // ==========
+        // 探测连接快速关闭（解决 cpolar 探测导致 head 超时问题，浪费服务器资源)
         if (m_probe_close_enabled) {
             // 使用 select/poll 检测 100ms 内是否有数据到达
             bool has_data = false;
