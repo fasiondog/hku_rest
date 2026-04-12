@@ -1144,7 +1144,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                     if (auto sess = weak_sess.lock()) {
                         // 主动取消正在进行的异步操作
                         sess->cancel_signal.emit(net::cancellation_type::all);
-                        HKU_WARN("Read timeout triggered for client {}:{}", sess->client_ip,
+                        HKU_DEBUG("Read timeout triggered for client {}:{}", sess->client_ip,
                                  sess->client_port);
                     }
                 }
