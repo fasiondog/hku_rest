@@ -1075,7 +1075,22 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             co_return;
         }
 
+        bool is_first_request = true;  // 标记是否为连接的第一个请求
         while (true) {
+            // ========== 探测连接快速检测 ==========
+            // 某些代理（如 cpolar）会建立 TCP 连接进行健康检查但不发送数据
+            // 只在第一个请求时检测：如果连接刚建立就没有待读取数据，很可能是探测连接
+            if (is_first_request) {
+                boost::system::error_code ec;
+                size_t available = m_socket.available(ec);
+                if (!ec && available == 0) {
+                    // 没有待读取数据，可能是探测连接
+                    HKU_DEBUG("Probe connection detected (no data available), closing from {}:{}",
+                              m_client_ip, m_client_port);
+                    break;  // 退出循环，让连接正常关闭
+                }
+                is_first_request = false;
+            }
             // 检查连接最大存活时间
             auto elapsed = std::chrono::steady_clock::now() - m_connection_start;
             if (elapsed > HttpConfig::MAX_CONNECTION_AGE) {
