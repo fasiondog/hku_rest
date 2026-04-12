@@ -1115,6 +1115,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             session->buffer.consume(session->buffer.size());
 
             // 3. 重置 parser 状态（重要！）
+            // 注意：每次复用 parser 时都需要重新设置 limit，否则可能使用默认的无限制值
             if (!session->parser.has_value()) {
                 // 第一次请求时创建并配置 parser
                 session->parser.emplace();
@@ -1123,6 +1124,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             } else {
                 // 复用已有 parser，重新构造一个空对象
                 session->parser.emplace();
+                session->parser->body_limit(HttpConfig::MAX_BODY_SIZE);
+                session->parser->header_limit(HttpConfig::MAX_HEADER_SIZE);
             }
 
             // 4. 重置其他状态字段
@@ -1150,6 +1153,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
             // 使用复用的 parser 成员变量而不是创建新的 parser
             try {
+                HKU_TRACE("Starting read for client {}:{}, buffer size: {}", m_client_ip,
+                          m_client_port, session->buffer.size());
                 if (m_ssl_stream) {
                     co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
                                               net::use_awaitable);
@@ -1157,6 +1162,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                     co_await http::async_read(session->socket, session->buffer, *session->parser,
                                               net::use_awaitable);
                 }
+                HKU_TRACE("Read completed for client {}:{}, bytes in buffer: {}", m_client_ip,
+                          m_client_port, session->buffer.size());
             } catch (const beast::system_error& e) {
                 // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
                 session->timer.cancel();
@@ -1187,6 +1194,12 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 将解析后的请求移动到 session 中
             session->req = session->parser->release();
+
+            // 诊断日志：打印收到的请求概要
+            int major_ver = session->req.version() / 10;
+            int minor_ver = session->req.version() % 10;
+            HKU_DEBUG("Request parsed successfully - Method: {}, Target: {}, Version: HTTP/{}.{}",
+                      session->req.method_string(), session->req.target(), major_ver, minor_ver);
 
             // ========== P99 延迟优化：快速路径 ==========
             // 如果启用快速路径，对简单 GET 请求跳过部分安全检查
@@ -1466,8 +1479,13 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
         }
 
         // 设置响应版本和 Keep-Alive
+        // 根据 HTTP 版本和请求头中的 Connection 头自动判断是否保持连接
+        // Boost.Beast 的 keep_alive() 会自动检查：
+        // - HTTP/1.0 且无 Connection: keep-alive 头 -> false
+        // - HTTP/1.1 且无 Connection: close 头 -> true
+        // - 任何版本有 Connection: close 头 -> false
         context->res.version(context->req.version());
-        context->res.keep_alive(true);  // 默认保持连接
+        context->res.keep_alive(context->req.keep_alive());
 
     } catch (std::exception& e) {
         // 异常时也要取消定时器，防止定时器回调访问已销毁的对象
@@ -1805,13 +1823,17 @@ net::awaitable<void> HttpServer::doAcceptSsl() {
         // 异步接受新连接
         tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
 
-        if (ec) {
-            if (ec == net::error::operation_aborted) {
-                co_return;
-            }
-            CLS_ERROR("Accept error: {}", ec.message());
+        // 检查 socket 是否有效
+        if (!socket.is_open()) {
+            CLS_ERROR("Accept failed: socket not open");
             continue;
         }
+
+        // 获取客户端地址信息
+        boost::system::error_code addr_ec;
+        auto remote_ep = socket.remote_endpoint(addr_ec);
+        std::string client_ip = addr_ec ? "unknown" : remote_ep.address().to_string();
+        CLS_DEBUG("New SSL connection accepted from {}:{}", client_ip, remote_ep.port());
 
         // 为 SSL 连接创建处理器并启动协程（传入 SSL 上下文）
         auto connection = Connection::create(std::move(socket), &m_router, *m_io_context,
@@ -1829,13 +1851,17 @@ net::awaitable<void> HttpServer::doAccept() {
         // 异步接受新连接
         tcp::socket socket = co_await m_acceptor->async_accept(net::use_awaitable);
 
-        if (ec) {
-            if (ec == net::error::operation_aborted) {
-                co_return;
-            }
-            CLS_ERROR("Accept error: {}", ec.message());
+        // 检查 socket 是否有效（如果 accept 失败，socket 会是无效状态）
+        if (!socket.is_open()) {
+            CLS_ERROR("Accept failed: socket not open");
             continue;
         }
+
+        // 获取客户端地址信息
+        boost::system::error_code addr_ec;
+        auto remote_ep = socket.remote_endpoint(addr_ec);
+        std::string client_ip = addr_ec ? "unknown" : remote_ep.address().to_string();
+        CLS_DEBUG("New connection accepted from {}:{}", client_ip, remote_ep.port());
 
         // 为新连接创建处理器并启动协程（非 SSL 模式）
         // 注意：连接限流由 ConnectionManager 统一管理，这里不再重复检查
