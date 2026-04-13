@@ -22,8 +22,13 @@ namespace hku {
  */
 
 struct Error {
-    int32_t code;
-    std::string msg;
+    int32_t code() const noexcept {
+        return m_code;
+    };
+
+    const std::string& message() const noexcept {
+        return m_msg;
+    };
 
     // 只通过 code 创建，msg 自动多语言获取
     static Error from_code(int32_t code) {
@@ -41,6 +46,24 @@ struct Error {
     static std::string get_error_msg(int32_t code) {
         return std::string{};
     }
+
+    Error() = default;
+    Error(int32_t code, std::string msg) : m_code(code), m_msg(std::move(msg)) {}
+
+    Error(const Error&) = default;
+    Error& operator=(const Error&) = default;
+    Error(Error&& rhs) : m_code(rhs.m_code), m_msg(std::move(rhs.m_msg)) {}
+    Error& operator=(Error&& rhs) {
+        if (this != &rhs) [[likely]] {
+            m_code = rhs.m_code;
+            m_msg = std::move(rhs.m_msg);
+        }
+        return *this;
+    }
+
+private:
+    int32_t m_code;
+    std::string m_msg;
 };
 
 using Ok = std::monostate;

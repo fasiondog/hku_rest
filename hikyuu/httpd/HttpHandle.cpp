@@ -90,13 +90,13 @@ net::awaitable<void> HttpHandle::operator()() {
 }
 
 void HttpHandle::processError(const Error& err) noexcept {
-    CLS_ERROR("{}", err.msg);
+    CLS_ERROR("{}", err.message());
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.result(http::status::ok);
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err.code, err.msg);
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err.code(), err.message());
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processError: {}", e.what());
