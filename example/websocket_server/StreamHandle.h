@@ -140,6 +140,7 @@ public:
         co_await finishChunkedTransfer();
 
         HKU_INFO("SSE connection closed");
+        co_return 0;
     }
 };
 
