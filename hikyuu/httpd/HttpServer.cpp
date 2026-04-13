@@ -1213,8 +1213,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                 } else {
                     HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port,
                               ec.message());
-                    HKU_INFO("Buffer content: {}",
-                             beast::buffers_to_string(session->buffer.data()));
+                    HKU_DEBUG("Buffer content: {}",
+                              beast::buffers_to_string(session->buffer.data()));
                 }
                 close();
                 co_return;
