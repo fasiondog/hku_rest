@@ -1,6 +1,14 @@
+/*
+ *  Copyright (c) 2026 hikyuu.org
+ *
+ *  Created on: 2026-04-13
+ *      Author: fasiondog
+ */
+
 #pragma once
 
 #include <version>
+#include <variant>
 
 #if __cpp_lib_expected >= 202211L
 #define STDX_USE_STD 1
