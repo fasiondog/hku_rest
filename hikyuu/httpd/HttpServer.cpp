@@ -290,7 +290,7 @@ WebSocketConnection::WebSocketConnection(HttpServer* server, tcp::socket&& socke
             m_socket.shutdown(tcp::socket::shutdown_both, ec);
             m_socket.close(ec);
 
-            throw std::runtime_error("Unauthorized IP address for WebSocket");
+            return;
         }
 
     } catch (const std::exception& e) {
@@ -616,15 +616,16 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             timer.expires_after(WebSocketConfig::PING_INTERVAL);
 
             // 使用可取消的等待，这样当服务器停止时能快速退出
-            try {
-                co_await timer.async_wait(net::use_awaitable);
-            } catch (const boost::system::system_error& e) {
-                // 定时器被取消是正常现象，直接退出
-                if (e.code() == boost::asio::error::operation_aborted) {
-                    HKU_DEBUG("Ping timer cancelled, stopping ping loop");
-                    break;
-                }
-                throw;  // 重新抛出其他异常
+            beast::error_code ec;
+            co_await timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+
+            // 检查错误码
+            if (ec == boost::asio::error::operation_aborted) {
+                HKU_DEBUG("Ping timer cancelled, stopping ping loop");
+                break;
+            } else if (ec) {
+                HKU_ERROR("Ping timer error: {}", ec.message());
+                break;
             }
 
             // 检查停止标志和连接状态
@@ -674,15 +675,18 @@ net::awaitable<void> WebSocketConnection::sendPing() {
 
             // 等待 Ping 完成或超时
             bool timed_out = false;
-            try {
-                co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
-            } catch (const boost::system::system_error& e) {
-                if (e.code() == boost::asio::error::operation_aborted) {
-                    // 定时器被取消，说明 Ping 在超时前已完成
-                    timed_out = false;
-                } else {
-                    throw;
-                }
+            // beast::error_code ec;
+            co_await m_ws_ctx->timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+
+            if (ec == boost::asio::error::operation_aborted) {
+                // 定时器被取消，说明 Ping 在超时前已完成
+                timed_out = false;
+            } else if (ec) {
+                HKU_ERROR("Ping timeout timer error: {}", ec.message());
+                timed_out = true;
+            } else {
+                // 定时器正常触发，说明超时
+                timed_out = true;
             }
 
             // 检查 Ping 是否成功
@@ -1042,7 +1046,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
             m_socket.shutdown(tcp::socket::shutdown_both, ec);
             m_socket.close(ec);
 
-            throw std::runtime_error("Unauthorized IP address");
+            return;
         }
 
     } catch (const std::exception& e) {
