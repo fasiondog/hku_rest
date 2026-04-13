@@ -11,7 +11,7 @@
 
 namespace hku {
 
-net::awaitable<stdx::expected<int32_t, Error>> RestHandle::before_run() noexcept {
+net::awaitable<stdx::expected<Ok, Error>> RestHandle::before_run() noexcept {
     setResHeader("Content-Type", "application/json; charset=UTF-8");
 
     std::string data = getReqData();
@@ -26,10 +26,10 @@ net::awaitable<stdx::expected<int32_t, Error>> RestHandle::before_run() noexcept
           Error::custom(BadRequestErrorCode::INVALID_JSON_REQUEST, std::string(e.what())));
     }
 
-    co_return 0;
+    co_return Ok{};
 }
 
-net::awaitable<stdx::expected<int32_t, Error>> RestHandle::after_run() {
+net::awaitable<stdx::expected<Ok, Error>> RestHandle::after_run() {
     json new_res;
     new_res["ret"] = 0;
     new_res["data"] = std::move(res);
@@ -39,7 +39,7 @@ net::awaitable<stdx::expected<int32_t, Error>> RestHandle::after_run() {
     std::string content = new_res.dump();
     if (content.size() < 1024) {
         ctx->res.body() = std::move(content);
-        co_return 0;
+        co_return Ok{};
     }
 
     std::string encodings = getReqHeader("Accept-Encoding");
@@ -52,7 +52,7 @@ net::awaitable<stdx::expected<int32_t, Error>> RestHandle::after_run() {
         ctx->res.body() = std::move(content);
     }
 
-    co_return 0;
+    co_return Ok{};
 }
 
 }  // namespace hku

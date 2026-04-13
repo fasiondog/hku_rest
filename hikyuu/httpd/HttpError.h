@@ -200,10 +200,7 @@ struct Error {
     static std::string get_error_msg(int32_t code);
 };
 
-namespace ErrorCode {
-constexpr int32_t OK = 0;
-
-}
+using Ok = std::monostate;
 
 namespace BadRequestErrorCode {
 constexpr int32_t INVALID_JSON_REQUEST = 20001;  // 请求数据无法解析为 JSON

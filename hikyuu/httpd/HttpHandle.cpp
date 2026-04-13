@@ -43,7 +43,7 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
-        stdx::expected<int32_t, Error> result;
+        stdx::expected<Ok, Error> result;
         for (const auto& filter : m_filters) {
             result = co_await filter(this);
             if (!result) {
