@@ -401,15 +401,18 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
 
         // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
         // 异步读取请求（带超时保护）
-        try {
-            if (m_ssl_stream) {
-                co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
-            } else {
-                co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
-            }
-        } catch (const std::exception& e) {
+        beast::error_code ec;
+        if (m_ssl_stream) {
+            co_await http::async_read(*m_ssl_stream, buffer, parser,
+                                      net::redirect_error(net::use_awaitable, ec));
+        } else {
+            co_await http::async_read(m_socket, buffer, parser,
+                                      net::redirect_error(net::use_awaitable, ec));
+        }
+
+        if (ec) {
             HKU_ERROR("WebSocket upgrade read error from {}:{} - {}", m_client_ip, m_client_port,
-                      e.what());
+                      ec.message());
             close();
             co_return;
         }
@@ -1182,45 +1185,38 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
             // 使用复用的 parser 成员变量而不是创建新的 parser
-            try {
-                HKU_TRACE("Starting read for client {}:{}, buffer size: {}", m_client_ip,
-                          m_client_port, session->buffer.size());
-                if (m_ssl_stream) {
-                    co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
-                                              net::use_awaitable);
-                } else {
-                    co_await http::async_read(session->socket, session->buffer, *session->parser,
-                                              net::use_awaitable);
-                }
-                HKU_TRACE("Read completed for client {}:{}, bytes in buffer: {}", m_client_ip,
-                          m_client_port, session->buffer.size());
-            } catch (const beast::system_error& e) {
-                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
-                session->timer.cancel();
+            HKU_TRACE("Starting read for client {}:{}, buffer size: {}", m_client_ip, m_client_port,
+                      session->buffer.size());
+            beast::error_code ec;
+            if (m_ssl_stream) {
+                co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
+                                          net::redirect_error(net::use_awaitable, ec));
+            } else {
+                co_await http::async_read(session->socket, session->buffer, *session->parser,
+                                          net::redirect_error(net::use_awaitable, ec));
+            }
+            HKU_TRACE("Read completed for client {}:{}, bytes in buffer: {}", m_client_ip,
+                      m_client_port, session->buffer.size());
 
+            // 取消定时器
+            session->timer.cancel();
+
+            // 检查错误
+            if (ec) {
                 // 判断是否为正常断开或超时
-                if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
-                    e.code() == beast::errc::connection_reset) {
-                    HKU_DEBUG("Client disconnected during read: {}", e.code().message());
-                } else if (e.code() == net::error::operation_aborted) {
+                if (ec == http::error::end_of_stream || ec == net::error::eof ||
+                    ec == beast::errc::connection_reset) {
+                    HKU_DEBUG("Client disconnected during read: {}", ec.message());
+                } else if (ec == net::error::operation_aborted) {
                     HKU_WARN("HTTP read operation aborted due to timeout for client {}:{}",
                              m_client_ip, m_client_port);
                 } else {
-                    HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port, e.what());
+                    HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port,
+                              ec.message());
                 }
                 close();
                 co_return;
-            } catch (const std::exception& e) {
-                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
-                session->timer.cancel();
-                HKU_ERROR("Exception during read from {}:{} - {}", m_client_ip, m_client_port,
-                          e.what());
-                close();
-                co_return;
             }
-
-            // 取消定时器（读取成功）
-            session->timer.cancel();
 
             // 将解析后的请求移动到 session 中
             session->req = session->parser->release();
