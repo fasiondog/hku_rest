@@ -643,27 +643,64 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             auto weak_self = weak_from_this();
 
             // 异步发送 Ping（使用空 payload）
-            auto ping_sent = std::make_shared<bool>(false);
+            auto ping_sent = std::make_shared<std::atomic<bool>>(false);
             websocket::ping_data ping_payload;
-            m_ws_stream->async_ping(ping_payload,
-                                    [ping_sent](beast::error_code ec) { *ping_sent = !ec; });
+
+            HKU_DEBUG("Sending Ping to {}:{}", m_client_ip, m_client_port);
+
+            // 关键：在回调中取消定时器，表示 Ping 成功完成
+            m_ws_stream->async_ping(
+              ping_payload, [ping_sent, timer = &m_ws_ctx->timer, client_ip = m_client_ip,
+                             client_port = m_client_port](beast::error_code ec) {
+                  if (ec && ec != beast::websocket::error::closed) {
+                      // Operation canceled 是正常的（收到 Pong 后 Beast 会取消）
+                      if (ec != boost::asio::error::operation_aborted) {
+                          HKU_WARN("Ping async callback error: {} - {}:{}", ec.message(), client_ip,
+                                   client_port);
+                      }
+                  } else {
+                      HKU_DEBUG("Ping sent successfully to {}:{}", client_ip, client_port);
+                  }
+
+                  // operation_aborted 或 success 都视为成功
+                  bool success = (!ec || ec == boost::asio::error::operation_aborted);
+                  ping_sent->store(success, std::memory_order_release);
+
+                  if (success) {
+                      // Ping 成功，取消超时定时器
+                      timer->cancel();
+                  }
+              });
 
             // 等待 Ping 完成或超时
+            bool timed_out = false;
             try {
                 co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
             } catch (const boost::system::system_error& e) {
                 if (e.code() == boost::asio::error::operation_aborted) {
-                    // 定时器被取消，继续下一次循环
-                    continue;
+                    // 定时器被取消，说明 Ping 在超时前已完成
+                    timed_out = false;
+                } else {
+                    throw;
                 }
-                throw;
             }
 
-            if (!*ping_sent) {
-                HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
-                close();
-                co_return;
+            // 检查 Ping 是否成功
+            if (!timed_out && ping_sent->load(std::memory_order_acquire)) {
+                // Ping 成功，继续下一次循环
+                continue;
             }
+
+            // Ping 失败或超时，关闭连接
+            if (timed_out) {
+                HKU_WARN("Ping timeout (no Pong received within {}s), closing connection: {}:{}",
+                         WebSocketConfig::PING_TIMEOUT.count(), m_client_ip, m_client_port);
+            } else {
+                HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
+            }
+
+            close();
+            co_return;
         }
     } catch (const std::exception& e) {
         HKU_ERROR("Ping loop exception: {}", e.what());
