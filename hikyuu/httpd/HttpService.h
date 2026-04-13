@@ -18,12 +18,13 @@ public:
 
     virtual void regHandle() = 0;
 
-    void bind(HttpServer* server) {
-        if (!server) {
-            throw std::invalid_argument("Invalid server(nullptr)!");
+    bool bind(HttpServer* server) {
+        if (!server) [[unlikely]] {
+            return false;
         }
         m_server = server;
         regHandle();
+        return true;
     }
 
     template <typename Handle>
