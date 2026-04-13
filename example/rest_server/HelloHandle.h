@@ -13,10 +13,10 @@ namespace hku {
 
 class HelloHandle : public RestHandle {
     REST_HANDLE_IMP(HelloHandle)
-    virtual net::awaitable<void> run() override {
+    virtual net::awaitable<stdx::expected<int, Error>> run() override {
         res["msg"] = "hello word!";
-        co_return;
+        co_return ErrorCode::OK;
     }
 };
 
-}
+}  // namespace hku

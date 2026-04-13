@@ -34,8 +34,8 @@ public:
 
     virtual ~RestHandle() override = default;
 
-    virtual net::awaitable<void> before_run() override;
-    virtual net::awaitable<void> after_run() override;
+    virtual net::awaitable<stdx::expected<int32_t, Error>> before_run() noexcept override;
+    virtual net::awaitable<stdx::expected<int32_t, Error>> after_run() override;
 
 protected:
     void check_missing_param(std::string_view param) {

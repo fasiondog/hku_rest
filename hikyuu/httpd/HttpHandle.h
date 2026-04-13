@@ -12,6 +12,7 @@
 #include "hikyuu/utilities/Log.h"
 #include "hikyuu/httpd/pod/MOHelper.h"
 #include "HttpConfig.h"
+#include "expected.h"
 
 #include <string>
 #include <memory>
@@ -84,8 +85,8 @@ public:
     virtual ~HttpHandle() {}
 
     /** 前处理 */
-    virtual net::awaitable<void> before_run() {
-        co_return;
+    virtual net::awaitable<stdx::expected<int32_t, Error>> before_run() noexcept {
+        co_return 0;
     }
 
     /**
@@ -119,14 +120,15 @@ public:
      * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
      * @note 超时后协程会被强制取消，但已执行的副作用 (如数据库写入) 不会回滚
      */
-    virtual net::awaitable<void> run() = 0;
+    virtual net::awaitable<stdx::expected<int32_t, Error>> run() = 0;
 
     /** 后处理 */
-    virtual net::awaitable<void> after_run() {
-        co_return;
+    virtual net::awaitable<stdx::expected<int32_t, Error>> after_run() {
+        co_return 0;
     }
 
-    void addFilter(std::function<net::awaitable<void>(HttpHandle*)> filter) {
+    void addFilter(
+      std::function<net::awaitable<stdx::expected<int32_t, Error>>(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -295,11 +297,13 @@ protected:
     uint16_t getClientPort() const noexcept;
 
 private:
-    void processException(int http_status, int errcode, std::string_view err_msg);
+    void processException(int http_status, int errcode, std::string_view err_msg) noexcept;
+    void processError(int http_status, const Error& err) noexcept;
 
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
-    std::vector<std::function<net::awaitable<void>(HttpHandle*)>> m_filters;
+    std::vector<std::function<net::awaitable<stdx::expected<int32_t, Error>>(HttpHandle*)>>
+      m_filters;
 
     // 流式分批传输支持
     bool m_chunked_transfer{false};  // 是否启用分块传输

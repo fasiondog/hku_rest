@@ -43,13 +43,32 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
+        stdx::expected<int32_t, Error> result;
         for (const auto& filter : m_filters) {
-            co_await filter(this);
+            result = co_await filter(this);
+            if (!result) {
+                processError(400, result.error());
+                co_return;
+            }
         }
 
-        co_await before_run();
-        co_await run();
-        co_await after_run();
+        result = co_await before_run();
+        if (!result) {
+            processError(400, result.error());
+            co_return;
+        }
+
+        result = co_await run();
+        if (!result) {
+            processError(400, result.error());
+            co_return;
+        }
+
+        result = co_await after_run();
+        if (!result) {
+            processError(400, result.error());
+            co_return;
+        }
 
         // 如果是分块传输，响应已经在 run() 内部手动发送完成，直接返回
         if (m_chunked_transfer) {
@@ -85,7 +104,27 @@ net::awaitable<void> HttpHandle::operator()() {
     co_return;
 }
 
-void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) {
+void HttpHandle::processError(int http_status, const Error& err) noexcept {
+    CLS_ERROR("{}", err.msg);
+    try {
+        // 直接设置错误响应的状态码和数据
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->res.result(http_status);
+        ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err.code, err.msg);
+        ctx->res.prepare_payload();
+    } catch (std::exception& e) {
+        CLS_ERROR("Exception in processException: {}", e.what());
+    } catch (...) {
+        CLS_FATAL("Unknown error in processException!");
+    }
+
+    if (ms_enable_trace) {
+        printTraceInfo();
+    }
+}
+
+void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) noexcept {
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);

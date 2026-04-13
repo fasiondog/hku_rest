@@ -11,7 +11,7 @@
 
 namespace hku {
 
-net::awaitable<void> RestHandle::before_run() {
+net::awaitable<stdx::expected<int32_t, Error>> RestHandle::before_run() noexcept {
     setResHeader("Content-Type", "application/json; charset=UTF-8");
 
     std::string data = getReqData();
@@ -21,13 +21,15 @@ net::awaitable<void> RestHandle::before_run() {
         }
     } catch (json::exception& e) {
         HKU_ERROR("Failed parse json: {}", data);
-        throw HttpBadRequestError(BadRequestErrorCode::INVALID_JSON_REQUEST, e.what());
+        // co_return HttpBadRequestError(BadRequestErrorCode::INVALID_JSON_REQUEST, e.what());
+        co_return stdx::unexpected(
+          Error::custom(BadRequestErrorCode::INVALID_JSON_REQUEST, std::string(e.what())));
     }
 
-    co_return;
+    co_return 0;
 }
 
-net::awaitable<void> RestHandle::after_run() {
+net::awaitable<stdx::expected<int32_t, Error>> RestHandle::after_run() {
     json new_res;
     new_res["ret"] = 0;
     new_res["data"] = std::move(res);
@@ -37,7 +39,7 @@ net::awaitable<void> RestHandle::after_run() {
     std::string content = new_res.dump();
     if (content.size() < 1024) {
         ctx->res.body() = std::move(content);
-        co_return;
+        co_return 0;
     }
 
     std::string encodings = getReqHeader("Accept-Encoding");
@@ -50,7 +52,7 @@ net::awaitable<void> RestHandle::after_run() {
         ctx->res.body() = std::move(content);
     }
 
-    co_return;
+    co_return 0;
 }
 
 }  // namespace hku
