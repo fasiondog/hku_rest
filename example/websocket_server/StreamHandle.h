@@ -16,7 +16,7 @@ class FileDownloadHandle : public HttpHandle {
 public:
     explicit FileDownloadHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<stdx::expected<Ok, Error>> run() override {
+    net::awaitable<Result> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         // 获取要下载的文件路径
@@ -85,12 +85,10 @@ public:
 
 private:
     std::string getQueryValue(const std::string& key) {
-        QueryParams params;
-        if (getQueryParams(params)) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                return it->second;
-            }
+        auto params = getQueryParams().value_or(QueryParams{});
+        auto it = params.find(key);
+        if (it != params.end()) {
+            return it->second;
         }
         return "";
     }
@@ -103,7 +101,7 @@ class SSEHandle : public HttpHandle {
 public:
     explicit SSEHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<stdx::expected<Ok, Error>> run() override {
+    net::awaitable<Result> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         // 设置 SSE 响应头
@@ -151,7 +149,7 @@ class CSVExportHandle : public HttpHandle {
 public:
     explicit CSVExportHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<stdx::expected<Ok, Error>> run() override {
+    net::awaitable<Result> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         HKU_INFO("Exporting CSV data");

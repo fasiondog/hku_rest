@@ -9,6 +9,7 @@
 namespace stdx {
 using std::bad_expected_access;
 using std::expected;
+using std::make_unexpected;
 using std::unexpect;
 using std::unexpect_t;
 using std::unexpected;
@@ -28,6 +29,7 @@ template <typename T, typename E>
 using expected = tl::expected<T, E>;
 
 using tl::bad_expected_access;
+using tl::make_unexpected;
 using tl::unexpect;
 using tl::unexpect_t;
 using tl::unexpected;

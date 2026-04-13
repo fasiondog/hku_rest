@@ -11,7 +11,7 @@
 
 namespace hku {
 
-net::awaitable<stdx::expected<Ok, Error>> RestHandle::before_run() noexcept {
+net::awaitable<Result> RestHandle::before_run() noexcept {
     setResHeader("Content-Type", "application/json; charset=UTF-8");
 
     std::string data = getReqData();
@@ -21,7 +21,6 @@ net::awaitable<stdx::expected<Ok, Error>> RestHandle::before_run() noexcept {
         }
     } catch (json::exception& e) {
         HKU_ERROR("Failed parse json: {}", data);
-        // co_return HttpBadRequestError(BadRequestErrorCode::INVALID_JSON_REQUEST, e.what());
         co_return stdx::unexpected(
           Error::custom(BadRequestErrorCode::INVALID_JSON_REQUEST, std::string(e.what())));
     }
@@ -29,7 +28,7 @@ net::awaitable<stdx::expected<Ok, Error>> RestHandle::before_run() noexcept {
     co_return Ok{};
 }
 
-net::awaitable<stdx::expected<Ok, Error>> RestHandle::after_run() {
+net::awaitable<Result> RestHandle::after_run() {
     json new_res;
     new_res["ret"] = 0;
     new_res["data"] = std::move(res);

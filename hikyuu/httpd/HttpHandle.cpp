@@ -43,30 +43,30 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
-        stdx::expected<Ok, Error> result;
+        Result result;
         for (const auto& filter : m_filters) {
             result = co_await filter(this);
             if (!result) {
-                processError(400, result.error());
+                processError(result.error());
                 co_return;
             }
         }
 
         result = co_await before_run();
         if (!result) {
-            processError(400, result.error());
+            processError(result.error());
             co_return;
         }
 
         result = co_await run();
         if (!result) {
-            processError(400, result.error());
+            processError(result.error());
             co_return;
         }
 
         result = co_await after_run();
         if (!result) {
-            processError(400, result.error());
+            processError(result.error());
             co_return;
         }
 
@@ -79,39 +79,44 @@ net::awaitable<void> HttpHandle::operator()() {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.prepare_payload();
 
-    } catch (HttpError& e) {
-        processException(e.status(), e.errcode(), e.what());
-        CLS_WARN("{}({}): {}, client: {}:{}, url: {}, req: {}", e.name(), e.errcode(), e.what(),
-                 getClientIp(), getClientPort(), getReqUrl(), tryGetReqData());
-
     } catch (std::exception& e) {
-        processException(static_cast<int>(http::status::internal_server_error),
-                         static_cast<int>(http::status::internal_server_error), e.what());
-        CLS_ERROR("HttpError({}): {}", static_cast<int>(http::status::internal_server_error),
-                  e.what());
+        processException(e.what());
 
     } catch (...) {
-        processException(static_cast<int>(http::status::internal_server_error),
-                         static_cast<int>(http::status::internal_server_error), "Unknown error");
-        CLS_ERROR("HttpError({}): {}", static_cast<int>(http::status::internal_server_error),
-                  "Unknown error");
-    }
-
-    if (ms_enable_trace) {
-        printTraceInfo();
+        processException("Unknown error");
     }
 
     co_return;
 }
 
-void HttpHandle::processError(int http_status, const Error& err) noexcept {
+void HttpHandle::processError(const Error& err) noexcept {
     CLS_ERROR("{}", err.msg);
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
-        ctx->res.result(http_status);
+        ctx->res.result(http::status::ok);
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
         ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err.code, err.msg);
+        ctx->res.prepare_payload();
+    } catch (std::exception& e) {
+        CLS_ERROR("Exception in processError: {}", e.what());
+    } catch (...) {
+        CLS_FATAL("Unknown error in processError!");
+    }
+
+    if (ms_enable_trace) {
+        printTraceInfo();
+    }
+}
+
+void HttpHandle::processException(const std::string& err_msg) noexcept {
+    CLS_ERROR("{}", err_msg);
+    try {
+        // 直接设置错误响应的状态码和数据
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->res.result(http::status::internal_server_error);
+        ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", -1, err_msg);
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());
@@ -121,21 +126,6 @@ void HttpHandle::processError(int http_status, const Error& err) noexcept {
 
     if (ms_enable_trace) {
         printTraceInfo();
-    }
-}
-
-void HttpHandle::processException(int http_status, int errcode, std::string_view err_msg) noexcept {
-    try {
-        // 直接设置错误响应的状态码和数据
-        auto* ctx = static_cast<BeastContext*>(m_beast_context);
-        ctx->res.result(http_status);
-        ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", errcode, err_msg);
-        ctx->res.prepare_payload();
-    } catch (std::exception& e) {
-        CLS_ERROR("Exception in processException: {}", e.what());
-    } catch (...) {
-        CLS_FATAL("Unknown error in processException!");
     }
 }
 
@@ -192,7 +182,6 @@ void HttpHandle::printTraceInfo() noexcept {
 
 std::string HttpHandle::getReqMethod() const noexcept {
     std::string ret;
-    HKU_IF_RETURN(!m_beast_context, ret);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     ret = ctx->req.method_string();
     return ret;
@@ -200,7 +189,6 @@ std::string HttpHandle::getReqMethod() const noexcept {
 
 std::string HttpHandle::getReqUrl() const noexcept {
     std::string ret;
-    HKU_IF_RETURN(!m_beast_context, ret);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     ret = ctx->req.target();
     return ret;
@@ -208,13 +196,11 @@ std::string HttpHandle::getReqUrl() const noexcept {
 
 std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     std::string ret;
-    HKU_IF_RETURN(!m_beast_context, ret);
-
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     auto& req = ctx->req;
 
     // 直接遍历请求头查找
-    for (auto& field : req) {
+    for (const auto& field : req) {
         if (field.name_string() == name) {
             ret = field.value();
             break;
@@ -224,43 +210,28 @@ std::string HttpHandle::getReqHeader(const char* name) const noexcept {
     return ret;
 }
 
-std::string HttpHandle::getReqData() {
+std::string HttpHandle::getReqData() const noexcept {
     std::string result;
-    if (!m_beast_context) {
-        return result;
-    }
-
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
-    std::string encoding = getReqHeader("Content-Encoding");
-    if (encoding.empty()) {
-        result = ctx->req.body();
+    try {
+        std::string encoding = getReqHeader("Content-Encoding");
+        if (encoding == "gzip") {
+            gzip::Decompressor decomp;
+            decomp.decompress(result, ctx->req.body().data(), ctx->req.body().size());
 
-    } else if (encoding == "gzip") {
-        gzip::Decompressor decomp;
-        decomp.decompress(result, ctx->req.body().data(), ctx->req.body().size());
-
-    } else {
-        throw HttpNotAcceptableError(
-          HttpNotAcceptableError::UNSUPPORT_CONTENT_ENCODING,
-          fmt::format("Unsupported Content-Encoding format: {}! only gzip", encoding));
+        } else {
+            result = ctx->req.body();
+        }
+    } catch (std::exception& e) {
+        CLS_ERROR("{}", e.what());
     }
 
     return result;
 }
 
-std::string HttpHandle::tryGetReqData() noexcept {
-    try {
-        return getReqData();
-    } catch (...) {
-        return std::string();
-    }
-}
-
 std::string HttpHandle::getResData() const {
     std::string result;
-    HKU_IF_RETURN(!m_beast_context, result);
-
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     auto& body = ctx->res.body();
 
@@ -275,38 +246,33 @@ std::string HttpHandle::getResData() const {
 }
 
 bool HttpHandle::haveQueryParams() const noexcept {
-    if (!m_beast_context) {
-        return false;
-    }
-
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string_view target = ctx->req.target();
     return target.find('?') != std::string_view::npos;
 }
 
-bool HttpHandle::getQueryParams(QueryParams& query_params) const {
-    if (!m_beast_context) {
-        return false;
-    }
-
+stdx::expected<HttpHandle::QueryParams, std::string> HttpHandle::getQueryParams() const noexcept {
+    QueryParams query_params;
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string_view target = ctx->req.target();
 
     // 长度限制，防止超长 URL 攻击
     constexpr std::size_t MAX_URL_LENGTH = 8192;
     if (target.size() > MAX_URL_LENGTH) {
-        HKU_WARN("URL length exceeds limit (max={}, actual={}, client={}:{})", MAX_URL_LENGTH,
+        CLS_WARN("URL length exceeds limit (max={}, actual={}, client={}:{})", MAX_URL_LENGTH,
                  target.size(), getClientIp(), getClientPort());
-        throw HttpBadRequestError(
-          BadRequestErrorCode::TOO_LONG_URL,
-          fmt::format("URL too long (maximum {} characters)", MAX_URL_LENGTH));
+        return stdx::unexpected("URL too long");
     }
 
     const char* url = target.data();
-    CLS_IF_RETURN(!url, false);
+    if (!url) [[unlikely]] {
+        return stdx::unexpected("Invalid URL");
+    }
 
     const char* p = strchr(url, '?');
-    CLS_IF_RETURN(!p, false);
+    if (!p) {
+        return query_params;
+    }
 
     p = p + 1;
 
@@ -327,13 +293,11 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const {
     while (*p != '\0') {
         if (*p == '&') {
             if (key_len && value_len) {
-                // IMP-001: 检查参数数量是否超过限制
+                // 检查参数数量是否超过限制
                 if (++param_count > MAX_QUERY_PARAMS) {
-                    HKU_WARN("Query parameters exceed limit (max={}, client={}:{})",
+                    CLS_WARN("Query parameters exceed limit (max={}, client={}:{})",
                              MAX_QUERY_PARAMS, getClientIp(), getClientPort());
-                    throw HttpBadRequestError(
-                      BadRequestErrorCode::TOO_MANY_QUERY_PARAMS,
-                      fmt::format("Too many query parameters (maximum {})", MAX_QUERY_PARAMS));
+                    return stdx::unexpected("Too many query parameters");
                 }
 
                 std::string strkey = std::string(key, key_len);
@@ -352,13 +316,11 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const {
         ++p;
     }
     if (key_len && value_len) {
-        // IMP-001: 检查最后一个参数
+        // 检查最后一个参数
         if (++param_count > MAX_QUERY_PARAMS) {
-            HKU_WARN("Query parameters exceed limit (max={}, client={}:{})", MAX_QUERY_PARAMS,
+            CLS_WARN("Query parameters exceed limit (max={}, client={}:{})", MAX_QUERY_PARAMS,
                      getClientIp(), getClientPort());
-            throw HttpBadRequestError(
-              BadRequestErrorCode::TOO_MANY_QUERY_PARAMS,
-              fmt::format("Too many query parameters (maximum {})", MAX_QUERY_PARAMS));
+            return stdx::unexpected("Too many query parameters");
         }
 
         std::string strkey = std::string(key, key_len);
@@ -367,7 +329,7 @@ bool HttpHandle::getQueryParams(QueryParams& query_params) const {
         key_len = value_len = 0;
     }
 
-    return query_params.size() != 0;
+    return query_params;
 }
 
 std::string HttpHandle::getLanguage() const {
@@ -384,8 +346,6 @@ std::string HttpHandle::getLanguage() const {
 
 std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
     std::string result;
-    HKU_IF_RETURN(!m_beast_context, result);
-
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     result = ctx->client_ip;
 
@@ -422,20 +382,15 @@ std::string HttpHandle::getClientIp(bool tryFromHeader) const noexcept {
 }
 
 uint16_t HttpHandle::getClientPort() const noexcept {
-    HKU_IF_RETURN(!m_beast_context, 0);
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     return ctx->client_port;
 }
 
 // ========== 流式分批传输实现（新增）==========
 
-net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) {
+net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) noexcept {
     if (!m_chunked_transfer) {
         CLS_ERROR("Chunked transfer not enabled! Call enableChunkedTransfer() first.");
-        co_return false;
-    }
-
-    if (!m_beast_context) {
         co_return false;
     }
 
@@ -502,13 +457,9 @@ net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) {
     }
 }
 
-bool HttpHandle::writeChunkSync(const std::string& data) {
+bool HttpHandle::writeChunkSync(const std::string& data) noexcept {
     if (!m_chunked_transfer) {
         CLS_ERROR("Chunked transfer not enabled!");
-        return false;
-    }
-
-    if (!m_beast_context) {
         return false;
     }
 
@@ -571,13 +522,9 @@ bool HttpHandle::writeChunkSync(const std::string& data) {
     }
 }
 
-net::awaitable<bool> HttpHandle::finishChunkedTransfer() {
+net::awaitable<bool> HttpHandle::finishChunkedTransfer() noexcept {
     if (!m_chunked_transfer) {
         CLS_ERROR("Chunked transfer not enabled!");
-        co_return false;
-    }
-
-    if (!m_beast_context) {
         co_return false;
     }
 
@@ -616,13 +563,9 @@ net::awaitable<bool> HttpHandle::finishChunkedTransfer() {
     }
 }
 
-bool HttpHandle::finishChunkedTransferSync() {
+bool HttpHandle::finishChunkedTransferSync() noexcept {
     if (!m_chunked_transfer) {
         CLS_ERROR("Chunked transfer not enabled!");
-        return false;
-    }
-
-    if (!m_beast_context) {
         return false;
     }
 

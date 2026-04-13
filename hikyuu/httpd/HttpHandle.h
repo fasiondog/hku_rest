@@ -12,7 +12,6 @@
 #include "hikyuu/utilities/Log.h"
 #include "hikyuu/httpd/pod/MOHelper.h"
 #include "HttpConfig.h"
-#include "expected.h"
 
 #include <string>
 #include <memory>
@@ -85,7 +84,7 @@ public:
     virtual ~HttpHandle() {}
 
     /** 前处理 */
-    virtual net::awaitable<stdx::expected<Ok, Error>> before_run() noexcept {
+    virtual net::awaitable<Result> before_run() noexcept {
         co_return Ok{};
     }
 
@@ -120,14 +119,14 @@ public:
      * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
      * @note 超时后协程会被强制取消，但已执行的副作用 (如数据库写入) 不会回滚
      */
-    virtual net::awaitable<stdx::expected<Ok, Error>> run() = 0;
+    virtual net::awaitable<Result> run() = 0;
 
     /** 后处理 */
-    virtual net::awaitable<stdx::expected<Ok, Error>> after_run() {
+    virtual net::awaitable<Result> after_run() {
         co_return Ok{};
     }
 
-    void addFilter(std::function<net::awaitable<stdx::expected<Ok, Error>>(HttpHandle*)> filter) {
+    void addFilter(std::function<net::awaitable<Result>(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -153,27 +152,16 @@ public:
         return getReqHeader(name.c_str());
     }
 
-    /** 根据 Content-Encoding 进行解码，返回解码后的请求数据 */
-    std::string getReqData();
-
-    /**
-     * 尝试获取请求数据，如果无法获取到数据，则返回空字符串
-     * @return 请求数据
-     */
-    std::string tryGetReqData() noexcept;
+    /** 如果 Content-Encoding 为 gzip，则返回解压后的数据，其他直接返回原始body数据 */
+    std::string getReqData() const noexcept;
 
     /** 判断请求的 ulr 中是否包含 query 参数 */
     bool haveQueryParams() const noexcept;
 
     typedef std::unordered_map<std::string, std::string> QueryParams;
 
-    /**
-     * 获取 query 参数
-     * @param query_params [out] 输出 query 参数
-     * @return true | false 获取或解析失败
-     * @throws HttpBadRequestError 当参数数量超过最大限制时抛出异常
-     */
-    bool getQueryParams(QueryParams& query_params) const;
+    /** 获取 query 参数 */
+    stdx::expected<QueryParams, std::string> getQueryParams() const noexcept;
 
     void setResHeader(const char* key, const char* val) {
         // 直接写入 BeastContext，避免中间存储
@@ -232,7 +220,7 @@ public:
     /**
      * 检查是否启用了分块传输编码
      */
-    bool isChunkedTransferEnabled() const {
+    bool isChunkedTransferEnabled() const noexcept {
         return m_chunked_transfer;
     }
 
@@ -244,7 +232,7 @@ public:
      *
      * @note 必须先调用 enableChunkedTransfer()
      */
-    net::awaitable<bool> writeChunk(const std::string& data);
+    net::awaitable<bool> writeChunk(const std::string& data) noexcept;
 
     /**
      * 写入一个数据块（同步版本）
@@ -252,7 +240,7 @@ public:
      * @param data 数据块内容
      * @return 是否写入成功
      */
-    bool writeChunkSync(const std::string& data);
+    bool writeChunkSync(const std::string& data) noexcept;
 
     /**
      * 完成分块传输
@@ -261,21 +249,18 @@ public:
      *
      * @note 必须调用此方法以正确结束分块传输
      */
-    net::awaitable<bool> finishChunkedTransfer();
+    net::awaitable<bool> finishChunkedTransfer() noexcept;
 
     /**
      * 完成分块传输（同步版本）
      */
-    bool finishChunkedTransferSync();
+    bool finishChunkedTransferSync() noexcept;
 
     /**
      * 获取 io_context
      * @return net::io_context* io_context 指针
      */
     net::io_context* get_io_context() const noexcept {
-        if (!m_beast_context) {
-            return nullptr;
-        }
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         return ctx->io_ctx_ptr;
     }
@@ -296,12 +281,12 @@ protected:
     uint16_t getClientPort() const noexcept;
 
 private:
-    void processException(int http_status, int errcode, std::string_view err_msg) noexcept;
-    void processError(int http_status, const Error& err) noexcept;
+    void processException(const std::string& err_msg) noexcept;
+    void processError(const Error& err) noexcept;
 
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
-    std::vector<std::function<net::awaitable<stdx::expected<Ok, Error>>(HttpHandle*)>> m_filters;
+    std::vector<std::function<net::awaitable<Result>(HttpHandle*)>> m_filters;
 
     // 流式分批传输支持
     bool m_chunked_transfer{false};  // 是否启用分块传输
