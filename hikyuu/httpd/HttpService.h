@@ -20,6 +20,7 @@ public:
 
     bool bind(HttpServer* server) {
         if (!server) [[unlikely]] {
+            HKU_ERROR("server is null");
             return false;
         }
         m_server = server;
