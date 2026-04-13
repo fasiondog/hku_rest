@@ -86,6 +86,10 @@ net::awaitable<void> HttpHandle::operator()() {
         processException("Unknown error");
     }
 
+    if (ms_enable_trace) {
+        printTraceInfo();
+    }
+
     co_return;
 }
 
@@ -122,10 +126,6 @@ void HttpHandle::processException(const std::string& err_msg) noexcept {
         CLS_ERROR("Exception in processException: {}", e.what());
     } catch (...) {
         CLS_FATAL("Unknown error in processException!");
-    }
-
-    if (ms_enable_trace) {
-        printTraceInfo();
     }
 }
 
