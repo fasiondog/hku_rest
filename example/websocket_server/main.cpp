@@ -114,7 +114,7 @@ int main(int argc, char* argv[]) {
             FileDownloadHandle handle(ctx);
             auto ret = co_await handle.run();
             if (!ret) {
-                HKU_ERROR("File download failed: {}", ret.error().msg);
+                HKU_ERROR("File download failed: {}", ret.error().message());
                 co_return;
             }
         });
