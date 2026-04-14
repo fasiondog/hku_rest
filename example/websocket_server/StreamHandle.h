@@ -85,11 +85,7 @@ public:
 
 private:
     std::string getQueryValue(const std::string& key) {
-        auto params_ret = getQueryParams();
-        if (!params_ret) {
-            return "";
-        }
-        const auto& params = params_ret.value();
+        auto params = getQueryParams().value_or(QueryParams());
         auto it = params.find(key);
         if (it != params.end()) {
             return it->second;

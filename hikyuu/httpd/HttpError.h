@@ -67,6 +67,10 @@ struct BizResult {
         return value_;
     }
 
+    T value_or(T v) const noexcept {
+        return ok() ? value_ : std::move(v);
+    }
+
     int32_t error() const noexcept {
         return err_;
     }
