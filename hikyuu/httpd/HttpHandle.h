@@ -265,7 +265,6 @@ public:
         return ctx->io_ctx_ptr;
     }
 
-protected:
     /**
      * 获取客户端 IP 地址
      * @param tryFromHeader 优先尝试从请求头中获取真实客户 ip，否则为直连对端 ip
