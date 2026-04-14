@@ -11,7 +11,7 @@
 
 namespace hku {
 
-VoidResult RestHandle::before_run() noexcept {
+VoidBizResult RestHandle::before_run() noexcept {
     setResHeader("Content-Type", "application/json; charset=UTF-8");
 
     std::string data = getReqData();
@@ -27,7 +27,7 @@ VoidResult RestHandle::before_run() noexcept {
     return BIZ_OK;
 }
 
-VoidResult RestHandle::after_run() {
+VoidBizResult RestHandle::after_run() {
     json new_res;
     new_res["ret"] = 0;
     new_res["data"] = std::move(res);

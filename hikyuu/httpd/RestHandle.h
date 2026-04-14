@@ -34,18 +34,18 @@ public:
 
     virtual ~RestHandle() override = default;
 
-    virtual VoidResult before_run() noexcept override;
-    virtual VoidResult after_run() override;
+    virtual VoidBizResult before_run() noexcept override;
+    virtual VoidBizResult after_run() override;
 
 protected:
-    VoidResult check_missing_param(std::string_view param) {
+    VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
         }
         return BIZ_OK;
     }
 
-    VoidResult check_missing_param(const std::vector<std::string>& params) {
+    VoidBizResult check_missing_param(const std::vector<std::string>& params) {
         for (auto& param : params) {
             auto ret = check_missing_param(param);
             if (!ret) {

@@ -255,7 +255,7 @@ bool HttpHandle::haveQueryParams() const noexcept {
     return target.find('?') != std::string_view::npos;
 }
 
-stdx::expected<HttpHandle::QueryParams, std::string> HttpHandle::getQueryParams() const noexcept {
+BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
     QueryParams query_params;
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     std::string_view target = ctx->req.target();
@@ -265,12 +265,12 @@ stdx::expected<HttpHandle::QueryParams, std::string> HttpHandle::getQueryParams(
     if (target.size() > MAX_URL_LENGTH) {
         CLS_WARN("URL length exceeds limit (max={}, actual={}, client={}:{})", MAX_URL_LENGTH,
                  target.size(), getClientIp(), getClientPort());
-        return stdx::unexpected("URL too long");
+        return BIZ_BASE_TOO_LONG_URL;
     }
 
     const char* url = target.data();
     if (!url) [[unlikely]] {
-        return stdx::unexpected("Invalid URL");
+        return BIZ_BASE_INVALID_URL;
     }
 
     const char* p = strchr(url, '?');
@@ -301,7 +301,7 @@ stdx::expected<HttpHandle::QueryParams, std::string> HttpHandle::getQueryParams(
                 if (++param_count > MAX_QUERY_PARAMS) {
                     CLS_WARN("Query parameters exceed limit (max={}, client={}:{})",
                              MAX_QUERY_PARAMS, getClientIp(), getClientPort());
-                    return stdx::unexpected("Too many query parameters");
+                    return BIZ_BASE_TOO_MANY_QUERY_PARAMS;
                 }
 
                 std::string strkey = std::string(key, key_len);
@@ -324,7 +324,7 @@ stdx::expected<HttpHandle::QueryParams, std::string> HttpHandle::getQueryParams(
         if (++param_count > MAX_QUERY_PARAMS) {
             CLS_WARN("Query parameters exceed limit (max={}, client={}:{})", MAX_QUERY_PARAMS,
                      getClientIp(), getClientPort());
-            return stdx::unexpected("Too many query parameters");
+            return BIZ_BASE_TOO_MANY_QUERY_PARAMS;
         }
 
         std::string strkey = std::string(key, key_len);

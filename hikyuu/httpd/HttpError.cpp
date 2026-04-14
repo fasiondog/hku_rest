@@ -48,6 +48,8 @@ static const char* biz_base_err_msg(BizErrCode ec) noexcept {
             return "too many query params";
         case 5:
             return "too long url";
+        case 6:
+            return "invalid url";
         default:
             return "base unknown error";
     }

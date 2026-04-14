@@ -84,7 +84,7 @@ public:
     virtual ~HttpHandle() {}
 
     /** 前处理 */
-    virtual VoidResult before_run() noexcept {
+    virtual VoidBizResult before_run() noexcept {
         return BIZ_OK;
     }
 
@@ -119,14 +119,14 @@ public:
      * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
      * @note 超时后协程会被强制取消，但已执行的副作用 (如数据库写入) 不会回滚
      */
-    virtual net::awaitable<VoidResult> run() = 0;
+    virtual net::awaitable<VoidBizResult> run() = 0;
 
     /** 后处理 */
-    virtual VoidResult after_run() {
+    virtual VoidBizResult after_run() {
         return BIZ_OK;
     }
 
-    void addFilter(std::function<net::awaitable<VoidResult>(HttpHandle*)> filter) {
+    void addFilter(std::function<net::awaitable<VoidBizResult>(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -161,7 +161,7 @@ public:
     typedef std::unordered_map<std::string, std::string> QueryParams;
 
     /** 获取 query 参数 */
-    stdx::expected<QueryParams, std::string> getQueryParams() const noexcept;
+    BizResult<QueryParams> getQueryParams() const noexcept;
 
     void setResHeader(const char* key, const char* val) {
         // 直接写入 BeastContext，避免中间存储
@@ -286,7 +286,7 @@ private:
 
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
-    std::vector<std::function<net::awaitable<VoidResult>(HttpHandle*)>> m_filters;
+    std::vector<std::function<net::awaitable<VoidBizResult>(HttpHandle*)>> m_filters;
 
     // 流式分批传输支持
     bool m_chunked_transfer{false};  // 是否启用分块传输
