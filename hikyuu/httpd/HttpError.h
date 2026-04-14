@@ -8,6 +8,7 @@
 #pragma once
 
 #include <string>
+#include <cstdint>
 #include <fmt/format.h>
 #include "expected.h"
 
@@ -68,7 +69,7 @@ private:
 
 using Ok = std::monostate;
 
-using Result = stdx::expected<Ok, Error>;
+// using Result = stdx::expected<Ok, Error>;
 
 namespace AuthorizeErrorCode {
 constexpr int32_t MISS_TOKEN = 1000;         // 缺失令牌
@@ -85,5 +86,91 @@ constexpr int32_t WRONG_PARAMETER_TYPE = 2004;   // 参数类型错误（各个�
 constexpr int32_t TOO_MANY_QUERY_PARAMS = 2005;  //  URL 参数数量过多（防止哈希碰撞 DoS 攻击）
 constexpr int32_t TOO_LONG_URL = 2006;           //  URL 长度过长（防止超长 URL 攻击）
 }  // namespace BadRequestErrorCode
+
+// 轻量返回值，替代 heavy expected
+template <typename T>
+struct Result {
+    T value;
+    int32_t err = 0;
+
+    // 成功
+    Result(T v) : value(std::move(v)) {}
+
+    // 失败
+    Result(int32_t e) : err(e) {}
+
+    bool ok() const noexcept {
+        return err == 0;
+    }
+    explicit operator bool() const noexcept {
+        return ok();
+    }
+
+    int32_t error() const noexcept {
+        return err;
+    }
+};
+
+// 无返回值专用
+template <>
+struct Result<void> {
+    int32_t err = 0;
+
+    Result() = default;
+    Result(int32_t e) : err(e) {}
+
+    bool ok() const {
+        return err == 0;
+    }
+    explicit operator bool() const {
+        return ok();
+    }
+
+    int32_t error() const noexcept {
+        return err;
+    }
+};
+
+using VoidResult = Result<void>;
+
+using BizErrCode = int32_t;
+constexpr BizErrCode BIZ_OK = 0;
+
+constexpr BizErrCode MAKE_ERR(int32_t biz_mod, int32_t biz_code) {
+    return biz_mod + biz_code;
+}
+
+constexpr int32_t get_biz_mod(BizErrCode e) {
+    return e / 10000;
+}
+
+constexpr int32_t get_biz_code(BizErrCode e) {
+    return e % 10000;
+}
+
+// 注册模块错误信息
+using BizErrMsgFunc = const char* (*)(BizErrCode);
+HKU_HTTPD_API void register_biz_error_module(int32_t biz_mod, BizErrMsgFunc func);
+
+// 统一获取错误信息
+HKU_HTTPD_API const char* biz_err_msg(BizErrCode e);
+
+// 请求模块错误码
+constexpr BizErrCode BIZ_MOD_BASE = 1;
+#define BIZ_BASE_ERR(code) MAKE_ERR(BIZ_MOD_BASE, code);
+constexpr BizErrCode BIZ_BASE_INVALID_JSON = BIZ_BASE_ERR(0);          // 请求数据无法解析为 JSON
+constexpr BizErrCode BIZ_BASE_MISS_PARAMETER = BIZ_BASE_ERR(1);        // 缺失参数，参数不能为空
+constexpr BizErrCode BIZ_BASE_WRONG_PARAMETER = BIZ_BASE_ERR(2);       // 参数值填写错误
+constexpr BizErrCode BIZ_BASE_WRONG_PARAMETER_TYPE = BIZ_BASE_ERR(3);  // 参数类型错误
+constexpr BizErrCode BIZ_BASE_TOO_MANY_QUERY_PARAMS =
+  BIZ_BASE_ERR(4);  //  URL 参数数量过多（防止哈希碰撞 DoS 攻击）
+constexpr BizErrCode BIZ_BASE_TOO_LONG_URL = BIZ_BASE_ERR(5);  //  URL 长度过长（防止超长 URL 攻击）
+
+// 鉴权模块错误码
+constexpr BizErrCode BIZ_MOD_AUTH = 2;
+#define BIZ_AUTH_ERR(code) MAKE_ERR(BIZ_MOD_AUTH, code);
+constexpr BizErrCode BIZ_AUTH_FAILED = BIZ_AUTH_ERR(0);      // 鉴权失败
+constexpr BizErrCode BIZ_AUTH_MISS_TOKEN = BIZ_AUTH_ERR(1);  // 缺失令牌
+constexpr BizErrCode BIZ_AUTH_EXPIRED = BIZ_AUTH_ERR(2);     // 鉴权过期
 
 }  // namespace hku

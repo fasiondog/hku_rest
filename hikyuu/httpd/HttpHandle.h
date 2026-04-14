@@ -84,8 +84,8 @@ public:
     virtual ~HttpHandle() {}
 
     /** 前处理 */
-    virtual net::awaitable<Result> before_run() noexcept {
-        co_return Ok{};
+    virtual VoidResult before_run() noexcept {
+        return BIZ_OK;
     }
 
     /**
@@ -119,14 +119,14 @@ public:
      * @note 如果 Handle 执行时间超过 TOTAL_TIMEOUT(默认 60 秒),框架会返回 504 Gateway Timeout
      * @note 超时后协程会被强制取消，但已执行的副作用 (如数据库写入) 不会回滚
      */
-    virtual net::awaitable<Result> run() = 0;
+    virtual net::awaitable<VoidResult> run() = 0;
 
     /** 后处理 */
-    virtual net::awaitable<Result> after_run() {
-        co_return Ok{};
+    virtual VoidResult after_run() {
+        return BIZ_OK;
     }
 
-    void addFilter(std::function<net::awaitable<Result>(HttpHandle*)> filter) {
+    void addFilter(std::function<net::awaitable<VoidResult>(HttpHandle*)> filter) {
         m_filters.push_back(filter);
     }
 
@@ -282,11 +282,11 @@ protected:
 
 private:
     void processException(const std::string& err_msg) noexcept;
-    void processError(const Error& err) noexcept;
+    void processError(int32_t err) noexcept;
 
 protected:
     void* m_beast_context{nullptr};  // boost::beast 上下文
-    std::vector<std::function<net::awaitable<Result>(HttpHandle*)>> m_filters;
+    std::vector<std::function<net::awaitable<VoidResult>(HttpHandle*)>> m_filters;
 
     // 流式分批传输支持
     bool m_chunked_transfer{false};  // 是否启用分块传输

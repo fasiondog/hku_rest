@@ -43,30 +43,34 @@ net::awaitable<void> HttpHandle::operator()() {
     }
 
     try {
-        Result result;
         for (const auto& filter : m_filters) {
-            result = co_await filter(this);
+            auto result = co_await filter(this);
             if (!result) {
                 processError(result.error());
                 co_return;
             }
         }
 
-        result = co_await before_run();
+        // result = co_await before_run();
+        // if (!result) {
+        //     processError(result.error());
+        //     co_return;
+        // }
+        auto before_ret = before_run();
+        if (!before_ret) {
+            processError(before_ret.error());
+            co_return;
+        }
+
+        auto result = co_await run();
         if (!result) {
             processError(result.error());
             co_return;
         }
 
-        result = co_await run();
-        if (!result) {
-            processError(result.error());
-            co_return;
-        }
-
-        result = co_await after_run();
-        if (!result) {
-            processError(result.error());
+        auto after_ret = after_run();
+        if (!after_ret) {
+            processError(after_ret.error());
             co_return;
         }
 
@@ -93,14 +97,14 @@ net::awaitable<void> HttpHandle::operator()() {
     co_return;
 }
 
-void HttpHandle::processError(const Error& err) noexcept {
-    CLS_ERROR("{}", err.message());
+void HttpHandle::processError(int32_t err) noexcept {
+    CLS_ERROR("{}", biz_err_msg(err));
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.result(http::status::ok);
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err.code(), err.message());
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err, biz_err_msg(err));
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processError: {}", e.what());
