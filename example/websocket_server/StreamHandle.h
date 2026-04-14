@@ -16,7 +16,7 @@ class FileDownloadHandle : public HttpHandle {
 public:
     explicit FileDownloadHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<void> run() override {
+    net::awaitable<VoidBizResult> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         // 获取要下载的文件路径
@@ -26,7 +26,7 @@ public:
             ctx->res.result(http::status::bad_request);
             ctx->res.set(http::field::content_type, "application/json");
             ctx->res.body() = R"({"error": "Missing 'file' parameter"})";
-            co_return;
+            co_return BIZ_OK;
         }
 
         // 打开文件
@@ -35,7 +35,7 @@ public:
             ctx->res.result(http::status::not_found);
             ctx->res.set(http::field::content_type, "application/json");
             ctx->res.body() = R"({"error": "File not found"})";
-            co_return;
+            co_return BIZ_OK;
         }
 
         // 获取文件大小
@@ -80,16 +80,15 @@ public:
         // HKU_ERROR(">>> After finishChunkedTransfer: response_sent = {}",
         //          ctx->response_sent ? "true" : "false");
         // HKU_DEBUG("response_sent = {}", ctx->response_sent ? "true" : "false");
+        co_return BIZ_OK;
     }
 
 private:
     std::string getQueryValue(const std::string& key) {
-        QueryParams params;
-        if (getQueryParams(params)) {
-            auto it = params.find(key);
-            if (it != params.end()) {
-                return it->second;
-            }
+        auto params = getQueryParams().value_or(QueryParams());
+        auto it = params.find(key);
+        if (it != params.end()) {
+            return it->second;
         }
         return "";
     }
@@ -102,7 +101,7 @@ class SSEHandle : public HttpHandle {
 public:
     explicit SSEHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<void> run() override {
+    net::awaitable<VoidBizResult> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         // 设置 SSE 响应头
@@ -139,6 +138,7 @@ public:
         co_await finishChunkedTransfer();
 
         HKU_INFO("SSE connection closed");
+        co_return BIZ_OK;
     }
 };
 
@@ -149,7 +149,7 @@ class CSVExportHandle : public HttpHandle {
 public:
     explicit CSVExportHandle(void* beast_context) : HttpHandle(beast_context) {}
 
-    net::awaitable<void> run() override {
+    net::awaitable<VoidBizResult> run() override {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
 
         HKU_INFO("Exporting CSV data");
@@ -211,6 +211,8 @@ public:
         co_await finishChunkedTransfer();
 
         HKU_INFO("CSV export completed: {} records", TOTAL_RECORDS);
+
+        co_return BIZ_OK;
     }
 };
 

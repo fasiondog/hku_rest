@@ -34,21 +34,25 @@ public:
 
     virtual ~RestHandle() override = default;
 
-    virtual net::awaitable<void> before_run() override;
-    virtual net::awaitable<void> after_run() override;
+    virtual VoidBizResult before_run() noexcept override;
+    virtual VoidBizResult after_run() override;
 
 protected:
-    void check_missing_param(std::string_view param) {
+    VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
-            throw HttpBadRequestError(BadRequestErrorCode::MISS_PARAMETER,
-                                      fmt::format("Missing param: {}", param));
+            return BIZ_BASE_MISS_PARAMETER;
         }
+        return BIZ_OK;
     }
 
-    void check_missing_param(const std::vector<std::string>& params) {
+    VoidBizResult check_missing_param(const std::vector<std::string>& params) {
         for (auto& param : params) {
-            check_missing_param(param);
+            auto ret = check_missing_param(param);
+            if (!ret) {
+                return ret;
+            }
         }
+        return BIZ_OK;
     }
 
 protected:

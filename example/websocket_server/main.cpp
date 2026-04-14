@@ -112,21 +112,25 @@ int main(int argc, char* argv[]) {
         server->registerHttpHandle("GET", "/api/download", [](void* ctx) -> net::awaitable<void> {
             HKU_INFO("Download handler called");
             FileDownloadHandle handle(ctx);
-            co_await handle.run();
+            auto ret = co_await handle.run();
+            if (!ret) {
+                HKU_ERROR("File download failed: {}", biz_err_msg(ret.error()));
+                co_return;
+            }
         });
 
         // SSE 实时推送
         // GET /api/sse
         server->registerHttpHandle("GET", "/api/sse", [](void* ctx) -> net::awaitable<void> {
             SSEHandle handle(ctx);
-            co_await handle.run();
+            (void)co_await handle.run();
         });
 
         // CSV 大数据导出
         // GET /api/export/csv
         server->registerHttpHandle("GET", "/api/export/csv", [](void* ctx) -> net::awaitable<void> {
             CSVExportHandle handle(ctx);
-            co_await handle.run();
+            (void)co_await handle.run();
         });
 
         // ========== 启用 WebSocket 支持（必须显式启用） ==========

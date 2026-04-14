@@ -10,7 +10,7 @@ target("websocket_server")
     else
         add_packages("hku_utils")
     end    
-    add_packages("boost", "nlohmann_json", "fmt", "openssl3")
+    add_packages("boost", "nlohmann_json", "fmt", "openssl3", "tl_expected")
 
     if is_plat("linux", "cross") then
         add_cxflags("-fcoroutines")

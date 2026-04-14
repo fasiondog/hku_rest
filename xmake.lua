@@ -135,14 +135,18 @@ if has_config("leak_check") then
     -- set_policy("build.sanitizer.thread", true)
 end
 
+add_requires("tl_expected")
+
 if is_plat("linux") then
   add_requires("apt::libssl-dev", {alias="openssl3"})
 else
   add_requires("openssl3")
 end
 
-add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
-add_requireconfs("async_mqtt.boost", {override=true, system = false, configs = boost_config.configs})
+if has_config("mqtt") then
+    add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
+    add_requireconfs("async_mqtt.boost", {override=true, system = false, configs = boost_config.configs})
+end
 
 target("hku_httpd")
     set_kind("$(kind)")
@@ -160,8 +164,12 @@ target("hku_httpd")
         add_packages("hku_utils")
     end
 
+    add_packages("tl_expected")
     add_packages("openssl3")
-    add_packages("async_mqtt")
+
+    if has_config("mqtt") then
+        add_packages("async_mqtt")
+    end
     
     add_includedirs(".")
 

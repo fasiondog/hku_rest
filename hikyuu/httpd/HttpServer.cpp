@@ -290,7 +290,7 @@ WebSocketConnection::WebSocketConnection(HttpServer* server, tcp::socket&& socke
             m_socket.shutdown(tcp::socket::shutdown_both, ec);
             m_socket.close(ec);
 
-            throw std::runtime_error("Unauthorized IP address for WebSocket");
+            return;
         }
 
     } catch (const std::exception& e) {
@@ -374,231 +374,222 @@ net::awaitable<bool> WebSocketConnection::websocketHandshake(
 }
 
 net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConnection> self) {
-    try {
-        // SSL 握手（如果是 WSS）
+    std::shared_ptr<WebSocketHandle> active_handle;
+
+    // SSL 握手（如果是 WSS）
+    if (m_ssl_stream) {
+        bool success = co_await sslHandshake();
+        if (!success) {
+            close();
+            co_return;
+        }
+    }
+
+    // 如果没有已有的 HTTP 请求，需要重新读取
+    const http::request<http::string_body>* req_ptr = nullptr;
+
+    if (m_existing_req.method() != http::verb::unknown) {
+        // 使用已有的请求
+        req_ptr = &m_existing_req;
+        HKU_DEBUG("Using existing HTTP request for WebSocket upgrade");
+    } else {
+        // 需要重新读取 HTTP 请求
+        beast::flat_buffer buffer;
+        http::request_parser<http::string_body> parser;
+        parser.body_limit(HttpConfig::MAX_BODY_SIZE);
+        parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
+
+        // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+        // 异步读取请求（带超时保护）
+        beast::error_code ec;
         if (m_ssl_stream) {
-            bool success = co_await sslHandshake();
-            if (!success) {
-                close();
-                co_return;
-            }
-        }
-
-        // 如果没有已有的 HTTP 请求，需要重新读取
-        const http::request<http::string_body>* req_ptr = nullptr;
-
-        if (m_existing_req.method() != http::verb::unknown) {
-            // 使用已有的请求
-            req_ptr = &m_existing_req;
-            HKU_DEBUG("Using existing HTTP request for WebSocket upgrade");
+            co_await http::async_read(*m_ssl_stream, buffer, parser,
+                                      net::redirect_error(net::use_awaitable, ec));
         } else {
-            // 需要重新读取 HTTP 请求
-            beast::flat_buffer buffer;
-            http::request_parser<http::string_body> parser;
-            parser.body_limit(HttpConfig::MAX_BODY_SIZE);
-            parser.header_limit(HttpConfig::MAX_HEADER_SIZE);
-
-            // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
-            // 异步读取请求（带超时保护）
-            try {
-                if (m_ssl_stream) {
-                    co_await http::async_read(*m_ssl_stream, buffer, parser, net::use_awaitable);
-                } else {
-                    co_await http::async_read(m_socket, buffer, parser, net::use_awaitable);
-                }
-            } catch (const std::exception& e) {
-                HKU_ERROR("WebSocket upgrade read error from {}:{} - {}", m_client_ip,
-                          m_client_port, e.what());
-                close();
-                co_return;
-            }
-
-            m_existing_req = parser.release();
-            req_ptr = &m_existing_req;
+            co_await http::async_read(m_socket, buffer, parser,
+                                      net::redirect_error(net::use_awaitable, ec));
         }
 
-        auto& req = *req_ptr;
-
-        // 验证 WebSocket 升级请求
-        if (req.method() != http::verb::get || req.find(http::field::upgrade) == req.end() ||
-            !beast::iequals(req[http::field::upgrade], "websocket")) {
-            HKU_ERROR("Invalid WebSocket upgrade request from {}:{}", m_client_ip, m_client_port);
+        if (ec) {
+            HKU_ERROR("WebSocket upgrade read error from {}:{} - {}", m_client_ip, m_client_port,
+                      ec.message());
             close();
             co_return;
         }
 
-        // WebSocket 握手
-        bool handshake_success = co_await websocketHandshake(req);
-        if (!handshake_success) {
+        m_existing_req = parser.release();
+        req_ptr = &m_existing_req;
+    }
+
+    auto& req = *req_ptr;
+
+    // 验证 WebSocket 升级请求
+    if (req.method() != http::verb::get || req.find(http::field::upgrade) == req.end() ||
+        !beast::iequals(req[http::field::upgrade], "websocket")) {
+        HKU_ERROR("Invalid WebSocket upgrade request from {}:{}", m_client_ip, m_client_port);
+        close();
+        co_return;
+    }
+
+    // WebSocket 握手
+    bool handshake_success = co_await websocketHandshake(req);
+    if (!handshake_success) {
+        close();
+        co_return;
+    }
+
+    // 创建 WebSocketContext
+    m_ws_ctx = std::make_shared<WebSocketContext>(m_io_ctx);
+    m_ws_ctx->client_ip = m_client_ip;
+    m_ws_ctx->client_port = m_client_port;
+
+    // 设置发送和关闭的回调函数（这样 Handle 就可以通过 Context 发送消息了）
+    auto weak_self = weak_from_this();
+    m_ws_ctx->send_callback = [weak_self](std::string_view msg,
+                                          bool is_text) -> net::awaitable<bool> {
+        HKU_DEBUG("WebSocketContext send_callback called (is_text={})", is_text);
+        if (auto self = weak_self.lock()) {
+            HKU_DEBUG("Sending message via WebSocketConnection::send()");
+            co_return co_await self->send(msg, is_text);
+        }
+        HKU_WARN("WebSocketContext send_callback: weak_self.lock() failed");
+        co_return false;
+    };
+
+    m_ws_ctx->close_callback = [weak_self](ws::close_code code,
+                                           std::string_view reason) -> net::awaitable<void> {
+        if (auto self = weak_self.lock()) {
+            co_await self->closeWebSocket(code, reason);
+        }
+        co_return;
+    };
+
+    // 配置 WebSocket 安全选项（使用 public 静态方法）
+    configureWebSocketSecurity(*m_ws_stream);
+
+    // 查找对应的 WebSocket Handle
+    std::string_view target_view(req.target());
+    auto query_pos = target_view.find('?');
+    std::string path = (query_pos != std::string_view::npos)
+                         ? std::string(target_view.substr(0, query_pos))
+                         : std::string(target_view);
+
+    auto handler = m_ws_router->findHandler(path);
+
+    if (!handler) {
+        HKU_TRACE("WebSocket handler not found for path: {}", path);
+        // 发送 404 响应并关闭
+        m_ws_stream->close(websocket::close_code::policy_error);
+        close();
+        co_return;
+    }
+
+    // ========== WebSocket Handle 集成方案 ==========
+    // 保存工厂函数以便在消息循环中使用
+    auto ws_handle_factory = handler;
+
+    HKU_DEBUG("Starting WebSocket message loop for path: {}", path);
+
+    // ========== 在连接建立时立即创建 Handle 并调用 onOpen ==========
+    try {
+        // 使用工厂函数创建 Handle 实例
+        active_handle = ws_handle_factory(m_ws_ctx.get());
+
+        if (!active_handle) {
+            HKU_ERROR("Failed to create WebSocket Handle for path: {}", path);
             close();
             co_return;
         }
 
-        // 创建 WebSocketContext
-        m_ws_ctx = std::make_shared<WebSocketContext>(m_io_ctx);
-        m_ws_ctx->client_ip = m_client_ip;
-        m_ws_ctx->client_port = m_client_port;
+        // 调用 onOpen() 发送欢迎消息
+        co_await active_handle->onOpen();
 
-        // 设置发送和关闭的回调函数（这样 Handle 就可以通过 Context 发送消息了）
+        HKU_DEBUG("Handle initialized and onOpen() called for path: {}", path);
+
+    } catch (const std::exception& e) {
+        HKU_ERROR("Failed to initialize Handle: {}", e.what());
+        close();
+        co_return;
+    }
+
+    // 【新增】启动心跳保活机制（按 PING_INTERVAL 周期性发送 Ping）
+    net::co_spawn(m_io_ctx, sendPing(), net::detached);
+
+    // WebSocket 消息读取循环
+    while (true) {
+        // 设置读取超时定时器
+        m_ws_ctx->timer.expires_after(WebSocketConfig::READ_TIMEOUT);
+
+        // 启动超时定时器
         auto weak_self = weak_from_this();
-        m_ws_ctx->send_callback = [weak_self](std::string_view msg,
-                                              bool is_text) -> net::awaitable<bool> {
-            HKU_DEBUG("WebSocketContext send_callback called (is_text={})", is_text);
-            if (auto self = weak_self.lock()) {
-                HKU_DEBUG("Sending message via WebSocketConnection::send()");
-                co_return co_await self->send(msg, is_text);
+        m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
+            if (!ec || ec == boost::asio::error::operation_aborted) {
+                if (auto self = weak_self.lock()) {
+                    // 取消正在进行的异步操作
+                    self->m_socket.cancel();
+                }
             }
-            HKU_WARN("WebSocketContext send_callback: weak_self.lock() failed");
-            co_return false;
-        };
+        });
 
-        m_ws_ctx->close_callback = [weak_self](ws::close_code code,
-                                               std::string_view reason) -> net::awaitable<void> {
-            if (auto self = weak_self.lock()) {
-                co_await self->closeWebSocket(code, reason);
+        // 读取 WebSocket 消息
+        m_ws_ctx->buffer.consume(m_ws_ctx->buffer.size());
+        beast::error_code ec;
+        co_await m_ws_stream->async_read(m_ws_ctx->buffer,
+                                         net::redirect_error(net::use_awaitable, ec));
+
+        // 取消定时器
+        m_ws_ctx->timer.cancel();
+
+        // 检查错误
+        if (ec) {
+            if (ec == websocket::error::closed || ec == net::error::eof ||
+                ec == net::error::operation_aborted || ec == beast::errc::connection_reset) {
+                HKU_DEBUG("Client disconnected: {}:{} - {}", m_client_ip, m_client_port,
+                          ec.message());
+            } else {
+                HKU_ERROR("WebSocket read error: {}", ec.message());
             }
-            co_return;
-        };
-
-        // 配置 WebSocket 安全选项（使用 public 静态方法）
-        configureWebSocketSecurity(*m_ws_stream);
-
-        // 查找对应的 WebSocket Handle
-        std::string_view target_view(req.target());
-        auto query_pos = target_view.find('?');
-        std::string path = (query_pos != std::string_view::npos)
-                             ? std::string(target_view.substr(0, query_pos))
-                             : std::string(target_view);
-
-        auto handler = m_ws_router->findHandler(path);
-
-        if (!handler) {
-            HKU_TRACE("WebSocket handler not found for path: {}", path);
-            // 发送 404 响应并关闭
-            m_ws_stream->close(websocket::close_code::policy_error);
-            close();
-            co_return;
+            break;
         }
 
-        // ========== WebSocket Handle 集成方案 ==========
-        // 保存工厂函数以便在消息循环中使用
-        auto ws_handle_factory = handler;
+        // 获取消息内容
+        auto data = m_ws_ctx->buffer.data();
+        std::string message(static_cast<const char*>(data.data()), data.size());
+        m_ws_ctx->buffer.consume(data.size());
 
-        HKU_DEBUG("Starting WebSocket message loop for path: {}", path);
+        // 判断消息类型
+        bool is_text = m_ws_stream->got_text();
 
-        // ========== 在连接建立时立即创建 Handle 并调用 onOpen ==========
-        std::shared_ptr<WebSocketHandle> active_handle;
-        try {
-            // 使用工厂函数创建 Handle 实例
-            active_handle = ws_handle_factory(m_ws_ctx.get());
-
-            if (!active_handle) {
-                HKU_ERROR("Failed to create WebSocket Handle for path: {}", path);
-                close();
-                co_return;
-            }
-
-            // 调用 onOpen() 发送欢迎消息
-            co_await active_handle->onOpen();
-
-            HKU_DEBUG("Handle initialized and onOpen() called for path: {}", path);
-
-        } catch (const std::exception& e) {
-            HKU_ERROR("Failed to initialize Handle: {}", e.what());
-            close();
-            co_return;
+        // ========== 增强的 WebSocket 消息验证 ==========
+        // 在传递给业务处理前进行严格验证
+        if (!validateWebSocketMessage(message, is_text)) {
+            HKU_WARN("Invalid WebSocket message rejected from {}:{}", m_client_ip, m_client_port);
+            continue;  // 跳过此消息，不传递给业务处理
         }
 
-        // 【新增】启动心跳保活机制（按 PING_INTERVAL 周期性发送 Ping）
-        net::co_spawn(m_io_ctx, sendPing(), net::detached);
-
-        // WebSocket 消息读取循环
-        while (true) {
-            try {
-                // 设置读取超时定时器
-                m_ws_ctx->timer.expires_after(WebSocketConfig::READ_TIMEOUT);
-
-                // 启动超时定时器
-                auto weak_self = weak_from_this();
-                m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
-                    if (!ec || ec == boost::asio::error::operation_aborted) {
-                        if (auto self = weak_self.lock()) {
-                            // 取消正在进行的异步操作
-                            self->m_socket.cancel();
-                        }
-                    }
-                });
-
-                // 读取 WebSocket 消息
-                m_ws_ctx->buffer.consume(m_ws_ctx->buffer.size());
-                co_await m_ws_stream->async_read(m_ws_ctx->buffer, net::use_awaitable);
-
-                // 读取成功，取消定时器
-                m_ws_ctx->timer.cancel();
-
-                // 获取消息内容
-                auto data = m_ws_ctx->buffer.data();
-                std::string message(static_cast<const char*>(data.data()), data.size());
-                m_ws_ctx->buffer.consume(data.size());
-
-                // 判断消息类型
-                bool is_text = m_ws_stream->got_text();
-
-                // ========== 增强的 WebSocket 消息验证 ==========
-                // 在传递给业务处理前进行严格验证
-                if (!validateWebSocketMessage(message, is_text)) {
-                    HKU_WARN("Invalid WebSocket message rejected from {}:{}", m_client_ip,
-                             m_client_port);
-                    continue;  // 跳过此消息，不传递给业务处理
-                }
-
-                // ========== 调用用户 Handle 的 onMessage ==========
-                if (active_handle) {
-                    co_await active_handle->onMessage(message, is_text);
-                }
-
-            } catch (const beast::system_error& e) {
-                if (e.code() == websocket::error::closed || e.code() == net::error::eof ||
-                    e.code() == net::error::operation_aborted ||
-                    e.code() == beast::errc::connection_reset) {
-                    HKU_DEBUG("Client disconnected: {}:{} - {}", m_client_ip, m_client_port,
-                              e.code().message());
-                } else {
-                    HKU_ERROR("WebSocket read error: {}", e.what());
-                }
-                break;
-            } catch (const std::exception& e) {
-                HKU_ERROR("WebSocket exception: {}", e.what());
-                // 注意：不能在 catch 块中使用 co_await
-                // bridge->onError(beast::errc::make_error_code(beast::errc::connection_aborted),
-                // e.what());
-                break;
-            }
-        }
-
-        // ========== 连接关闭，调用 Handle 的 onClose ==========
+        // ========== 调用用户 Handle 的 onMessage ==========
         if (active_handle) {
             try {
-                auto close_reason = m_ws_stream->reason();
-                co_await active_handle->onClose(static_cast<ws::close_code>(close_reason.code),
-                                                close_reason.reason);
-
-                HKU_DEBUG("WebSocket connection closed: code={}, reason={}",
-                          static_cast<int>(close_reason.code), close_reason.reason);
+                co_await active_handle->onMessage(message, is_text);
             } catch (const std::exception& e) {
-                HKU_ERROR("onClose exception: {}", e.what());
+                HKU_ERROR("WebSocket exception: {}", e.what());
+                break;
             }
         }
+    }
 
-    } catch (const beast::system_error& e) {
-        if (e.code() == http::error::end_of_stream || e.code() == net::error::eof) {
-            HKU_DEBUG("Client disconnected during WebSocket setup: {}:{}", m_client_ip,
-                      m_client_port);
-        } else {
-            HKU_ERROR("WebSocket connection error: {}", e.what());
+    // ========== 连接关闭，调用 Handle 的 onClose ==========
+    if (active_handle) {
+        try {
+            auto close_reason = m_ws_stream->reason();
+            co_await active_handle->onClose(static_cast<ws::close_code>(close_reason.code),
+                                            close_reason.reason);
+
+            HKU_DEBUG("WebSocket connection closed: code={}, reason={}",
+                      static_cast<int>(close_reason.code), close_reason.reason);
+        } catch (const std::exception& e) {
+            HKU_ERROR("onClose exception: {}", e.what());
         }
-    } catch (const std::exception& e) {
-        HKU_ERROR("WebSocket exception in readLoop: {}", e.what());
     }
 
     close();
@@ -616,15 +607,16 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             timer.expires_after(WebSocketConfig::PING_INTERVAL);
 
             // 使用可取消的等待，这样当服务器停止时能快速退出
-            try {
-                co_await timer.async_wait(net::use_awaitable);
-            } catch (const boost::system::system_error& e) {
-                // 定时器被取消是正常现象，直接退出
-                if (e.code() == boost::asio::error::operation_aborted) {
-                    HKU_DEBUG("Ping timer cancelled, stopping ping loop");
-                    break;
-                }
-                throw;  // 重新抛出其他异常
+            beast::error_code ec;
+            co_await timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+
+            // 检查错误码
+            if (ec == boost::asio::error::operation_aborted) {
+                HKU_DEBUG("Ping timer cancelled, stopping ping loop");
+                break;
+            } else if (ec) {
+                HKU_ERROR("Ping timer error: {}", ec.message());
+                break;
             }
 
             // 检查停止标志和连接状态
@@ -643,27 +635,67 @@ net::awaitable<void> WebSocketConnection::sendPing() {
             auto weak_self = weak_from_this();
 
             // 异步发送 Ping（使用空 payload）
-            auto ping_sent = std::make_shared<bool>(false);
+            auto ping_sent = std::make_shared<std::atomic<bool>>(false);
             websocket::ping_data ping_payload;
-            m_ws_stream->async_ping(ping_payload,
-                                    [ping_sent](beast::error_code ec) { *ping_sent = !ec; });
+
+            HKU_DEBUG("Sending Ping to {}:{}", m_client_ip, m_client_port);
+
+            // 关键：在回调中取消定时器，表示 Ping 成功完成
+            m_ws_stream->async_ping(
+              ping_payload, [ping_sent, timer = &m_ws_ctx->timer, client_ip = m_client_ip,
+                             client_port = m_client_port](beast::error_code ec) {
+                  if (ec && ec != beast::websocket::error::closed) {
+                      // Operation canceled 是正常的（收到 Pong 后 Beast 会取消）
+                      if (ec != boost::asio::error::operation_aborted) {
+                          HKU_WARN("Ping async callback error: {} - {}:{}", ec.message(), client_ip,
+                                   client_port);
+                      }
+                  } else {
+                      HKU_DEBUG("Ping sent successfully to {}:{}", client_ip, client_port);
+                  }
+
+                  // operation_aborted 或 success 都视为成功
+                  bool success = (!ec || ec == boost::asio::error::operation_aborted);
+                  ping_sent->store(success, std::memory_order_release);
+
+                  if (success) {
+                      // Ping 成功，取消超时定时器
+                      timer->cancel();
+                  }
+              });
 
             // 等待 Ping 完成或超时
-            try {
-                co_await m_ws_ctx->timer.async_wait(net::use_awaitable);
-            } catch (const boost::system::system_error& e) {
-                if (e.code() == boost::asio::error::operation_aborted) {
-                    // 定时器被取消，继续下一次循环
-                    continue;
-                }
-                throw;
+            bool timed_out = false;
+            // beast::error_code ec;
+            co_await m_ws_ctx->timer.async_wait(net::redirect_error(net::use_awaitable, ec));
+
+            if (ec == boost::asio::error::operation_aborted) {
+                // 定时器被取消，说明 Ping 在超时前已完成
+                timed_out = false;
+            } else if (ec) {
+                HKU_ERROR("Ping timeout timer error: {}", ec.message());
+                timed_out = true;
+            } else {
+                // 定时器正常触发，说明超时
+                timed_out = true;
             }
 
-            if (!*ping_sent) {
-                HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
-                close();
-                co_return;
+            // 检查 Ping 是否成功
+            if (!timed_out && ping_sent->load(std::memory_order_acquire)) {
+                // Ping 成功，继续下一次循环
+                continue;
             }
+
+            // Ping 失败或超时，关闭连接
+            if (timed_out) {
+                HKU_WARN("Ping timeout (no Pong received within {}s), closing connection: {}:{}",
+                         WebSocketConfig::PING_TIMEOUT.count(), m_client_ip, m_client_port);
+            } else {
+                HKU_WARN("Ping failed, closing connection: {}:{}", m_client_ip, m_client_port);
+            }
+
+            close();
+            co_return;
         }
     } catch (const std::exception& e) {
         HKU_ERROR("Ping loop exception: {}", e.what());
@@ -858,37 +890,38 @@ net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is
     // 增加队列计数
     m_write_queue_size.fetch_add(1);
 
-    try {
-        // 设置写入超时定时器
-        m_ws_ctx->timer.expires_after(WebSocketConfig::WRITE_TIMEOUT);
+    // 设置写入超时定时器
+    m_ws_ctx->timer.expires_after(WebSocketConfig::WRITE_TIMEOUT);
 
-        // 启动超时定时器
-        auto weak_self = weak_from_this();
-        m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
-            if (!ec || ec == boost::asio::error::operation_aborted) {
-                if (auto self = weak_self.lock()) {
-                    // 取消正在进行的异步操作
-                    self->m_socket.cancel();
-                }
+    // 启动超时定时器
+    auto weak_self = weak_from_this();
+    m_ws_ctx->timer.async_wait([weak_self](beast::error_code ec) {
+        if (!ec || ec == boost::asio::error::operation_aborted) {
+            if (auto self = weak_self.lock()) {
+                // 取消正在进行的异步操作
+                self->m_socket.cancel();
             }
-        });
+        }
+    });
 
-        // 异步发送消息（使用 buffer）
-        co_await m_ws_stream->async_write(net::buffer(message), net::use_awaitable);
+    // 异步发送消息（使用 buffer）
+    beast::error_code ec;
+    co_await m_ws_stream->async_write(net::buffer(message),
+                                      net::redirect_error(net::use_awaitable, ec));
 
-        // 发送成功，取消定时器
-        m_ws_ctx->timer.cancel();
+    // 取消定时器
+    m_ws_ctx->timer.cancel();
 
-        // 减少队列计数
-        m_write_queue_size.fetch_sub(1);
+    // 减少队列计数
+    m_write_queue_size.fetch_sub(1);
 
-        co_return true;
-    } catch (const beast::system_error& e) {
-        HKU_ERROR("WebSocket send error: {}", e.what());
-        // 减少队列计数（异常情况下也要释放）
-        m_write_queue_size.fetch_sub(1);
+    // 检查错误
+    if (ec) {
+        HKU_ERROR("WebSocket send error: {}", ec.message());
         co_return false;
     }
+
+    co_return true;
 }
 
 net::awaitable<void> WebSocketConnection::closeWebSocket(ws::close_code code,
@@ -1005,7 +1038,7 @@ Connection::Connection(tcp::socket&& socket, Router* router, net::io_context& io
             m_socket.shutdown(tcp::socket::shutdown_both, ec);
             m_socket.close(ec);
 
-            throw std::runtime_error("Unauthorized IP address");
+            return;
         }
 
     } catch (const std::exception& e) {
@@ -1152,45 +1185,40 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
 
             // 异步读取 HTTP 请求（根据 m_ssl_stream 是否为 nullptr 选择不同流）
             // 使用复用的 parser 成员变量而不是创建新的 parser
-            try {
-                HKU_TRACE("Starting read for client {}:{}, buffer size: {}", m_client_ip,
-                          m_client_port, session->buffer.size());
-                if (m_ssl_stream) {
-                    co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
-                                              net::use_awaitable);
-                } else {
-                    co_await http::async_read(session->socket, session->buffer, *session->parser,
-                                              net::use_awaitable);
-                }
-                HKU_TRACE("Read completed for client {}:{}, bytes in buffer: {}", m_client_ip,
-                          m_client_port, session->buffer.size());
-            } catch (const beast::system_error& e) {
-                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
-                session->timer.cancel();
+            HKU_TRACE("Starting read for client {}:{}, buffer size: {}", m_client_ip, m_client_port,
+                      session->buffer.size());
+            beast::error_code ec;
+            if (m_ssl_stream) {
+                co_await http::async_read(*m_ssl_stream, session->buffer, *session->parser,
+                                          net::redirect_error(net::use_awaitable, ec));
+            } else {
+                co_await http::async_read(session->socket, session->buffer, *session->parser,
+                                          net::redirect_error(net::use_awaitable, ec));
+            }
+            HKU_TRACE("Read completed for client {}:{}, bytes in buffer: {}", m_client_ip,
+                      m_client_port, session->buffer.size());
 
+            // 取消定时器
+            session->timer.cancel();
+
+            // 检查错误
+            if (ec) {
                 // 判断是否为正常断开或超时
-                if (e.code() == http::error::end_of_stream || e.code() == net::error::eof ||
-                    e.code() == beast::errc::connection_reset) {
-                    HKU_DEBUG("Client disconnected during read: {}", e.code().message());
-                } else if (e.code() == net::error::operation_aborted) {
+                if (ec == http::error::end_of_stream || ec == net::error::eof ||
+                    ec == beast::errc::connection_reset) {
+                    HKU_DEBUG("Client disconnected during read: {}", ec.message());
+                } else if (ec == net::error::operation_aborted) {
                     HKU_WARN("HTTP read operation aborted due to timeout for client {}:{}",
                              m_client_ip, m_client_port);
                 } else {
-                    HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port, e.what());
+                    HKU_ERROR("Read error from {}:{} - {}", m_client_ip, m_client_port,
+                              ec.message());
+                    HKU_DEBUG("Buffer content: {}",
+                              beast::buffers_to_string(session->buffer.data()));
                 }
                 close();
                 co_return;
-            } catch (const std::exception& e) {
-                // 读取失败时也要取消定时器，防止定时器回调访问已销毁的对象
-                session->timer.cancel();
-                HKU_ERROR("Exception during read from {}:{} - {}", m_client_ip, m_client_port,
-                          e.what());
-                close();
-                co_return;
             }
-
-            // 取消定时器（读取成功）
-            session->timer.cancel();
 
             // 将解析后的请求移动到 session 中
             session->req = session->parser->release();
@@ -1518,30 +1546,32 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 }
 
 net::awaitable<void> Connection::writeResponse(std::shared_ptr<BeastContext> context) {
-    try {
-        // 如果响应已经手动发送（如分块传输），则跳过
-        if (context->response_sent) {
-            co_return;
-        }
+    // 如果响应已经手动发送（如分块传输），则跳过
+    if (context->response_sent) {
+        co_return;
+    }
 
-        // ========== P99 延迟优化：简化定时器处理 ==========
-        // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
-        context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
+    // ========== P99 延迟优化：简化定时器处理 ==========
+    // 复用已有的定时器，仅更新超时时间（Boost.Asio 会自动处理）
+    context->timer.expires_after(HttpConfig::WRITE_TIMEOUT);
 
-        // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）
-        if (m_ssl_stream) {
-            co_await http::async_write(*m_ssl_stream, context->res, net::use_awaitable);
-        } else {
-            co_await http::async_write(context->socket, context->res, net::use_awaitable);
-        }
+    // 异步写入 HTTP 响应（根据 m_ssl_stream 是否为 nullptr 选择不同流）
+    beast::error_code ec;
+    if (m_ssl_stream) {
+        co_await http::async_write(*m_ssl_stream, context->res,
+                                   net::redirect_error(net::use_awaitable, ec));
+    } else {
+        co_await http::async_write(context->socket, context->res,
+                                   net::redirect_error(net::use_awaitable, ec));
+    }
 
-        // 取消定时器（写入成功）
-        context->timer.cancel();
-    } catch (const beast::system_error& e) {
-        HKU_ERROR("Write response error: {}", e.what());
-        // 写入失败时也要取消定时器，防止定时器回调访问已销毁的对象
-        context->timer.cancel();
-        throw;
+    // 取消定时器
+    context->timer.cancel();
+
+    // 检查错误
+    if (ec) {
+        HKU_ERROR("Write response error: {}", ec.message());
+        throw beast::system_error(ec);
     }
 }
 
@@ -1634,58 +1664,57 @@ void HttpServer::configureSsl() {
 #if !HKU_OS_WINDOWS
     // 使用 open() 而不是 stat() + fopen() 组合，避免 TOCTOU 漏洞
     int fd = open(m_ssl_config.ca_key_file.c_str(), O_RDONLY);
-    if (fd >= 0) {
-        struct stat st;
-        if (fstat(fd, &st) == 0) {
-            // 检查文件权限是否为 600（-rw-------）或更严格
-            mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
-            if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
-                HKU_WARN(
-                  "Certificate file '{}' has insecure permissions: {:o}. "
-                  "Recommended: 600 (-rw-------)",
-                  m_ssl_config.ca_key_file, perms);
-            }
+    HKU_CHECK(fd >= 0, "Failed to open ca file: {}", m_ssl_config.ca_key_file);
 
-            // 如果是私钥文件，检查应该更严格
-            // 使用更严格的检查：检查文件内容是否为私钥
-            bool is_private_key = false;
+    struct stat st;
+    if (fstat(fd, &st) == 0) {
+        // 检查文件权限是否为 600（-rw-------）或更严格
+        mode_t perms = st.st_mode & (S_IRWXU | S_IRWXG | S_IRWXO);
+        if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+            HKU_WARN(
+              "Certificate file '{}' has insecure permissions: {:o}. "
+              "Recommended: 600 (-rw-------)",
+              m_ssl_config.ca_key_file, perms);
+        }
 
-            // 使用 fdopen() 而不是 fopen()，确保使用同一文件描述符
-            FILE* fp = fdopen(fd, "r");
-            if (fp) {
-                char buffer[256];
-                if (fgets(buffer, sizeof(buffer), fp)) {
-                    // 检查是否为私钥文件（PEM格式）
-                    std::string line(buffer);
-                    if (line.find("-----BEGIN PRIVATE KEY-----") != std::string::npos ||
-                        line.find("-----BEGIN RSA PRIVATE KEY-----") != std::string::npos ||
-                        line.find("-----BEGIN EC PRIVATE KEY-----") != std::string::npos) {
-                        is_private_key = true;
-                    }
-                }
-                fclose(fp);  // fclose() 也会关闭底层的 fd
-            } else {
-                close(fd);  // fdopen 失败时关闭 fd
-            }
+        // 如果是私钥文件，检查应该更严格
+        // 使用更严格的检查：检查文件内容是否为私钥
+        bool is_private_key = false;
 
-            // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
-            if (is_private_key || m_ssl_config.ca_key_file.find(".key") != std::string::npos ||
-                m_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
-                if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
-                    HKU_ERROR(
-                      "Private key file '{}' has world/group readable permissions! "
-                      "This is a security risk. Please set permissions to 600",
-                      m_ssl_config.ca_key_file);
-                    throw std::runtime_error("Insecure private key file permissions");
+        // 使用 fdopen() 而不是 fopen()，确保使用同一文件描述符
+        FILE* fp = fdopen(fd, "r");
+        if (fp) {
+            char buffer[256];
+            if (fgets(buffer, sizeof(buffer), fp)) {
+                // 检查是否为私钥文件（PEM格式）
+                std::string line(buffer);
+                if (line.find("-----BEGIN PRIVATE KEY-----") != std::string::npos ||
+                    line.find("-----BEGIN RSA PRIVATE KEY-----") != std::string::npos ||
+                    line.find("-----BEGIN EC PRIVATE KEY-----") != std::string::npos) {
+                    is_private_key = true;
                 }
             }
+            fclose(fp);  // fclose() 也会关闭底层的 fd
         } else {
-            close(fd);
-            HKU_WARN("Failed to fstat certificate file: {}", m_ssl_config.ca_key_file);
+            close(fd);  // fdopen 失败时关闭 fd
+        }
+
+        // 如果文件扩展名包含.key/.pem或文件内容确认为私钥，则执行严格权限检查
+        if (is_private_key || m_ssl_config.ca_key_file.find(".key") != std::string::npos ||
+            m_ssl_config.ca_key_file.find(".pem") != std::string::npos) {
+            if (perms & (S_IRGRP | S_IWGRP | S_IXGRP | S_IROTH | S_IWOTH | S_IXOTH)) {
+                HKU_THROW(
+                  "Insecure private key file permissions! Private key file '{}' has world/group "
+                  "readable permissions! "
+                  "This is a security risk. Please set permissions to 600",
+                  m_ssl_config.ca_key_file);
+            }
         }
     } else {
-        HKU_WARN("Failed to open certificate file: {}", m_ssl_config.ca_key_file);
+        close(fd);
+        HKU_THROW("Failed to fstat certificate file: {}", m_ssl_config.ca_key_file);
     }
+
 #else
     // Windows 系统：检查文件是否存在即可，Windows 使用 ACL 而非 POSIX 权限
     HKU_DEBUG("Running on Windows, skipping POSIX permission check for '{}'",
