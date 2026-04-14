@@ -281,7 +281,8 @@ protected:
     uint16_t getClientPort() const noexcept;
 
 private:
-    void processException(const std::string& err_msg) noexcept;
+    void processBizException(const BizException& e) noexcept;
+    void processException(const char* err_msg) noexcept;
     void processError(int32_t err) noexcept;
 
 protected:

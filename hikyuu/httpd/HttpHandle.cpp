@@ -51,11 +51,6 @@ net::awaitable<void> HttpHandle::operator()() {
             }
         }
 
-        // result = co_await before_run();
-        // if (!result) {
-        //     processError(result.error());
-        //     co_return;
-        // }
         auto before_ret = before_run();
         if (!before_ret) {
             processError(before_ret.error());
@@ -83,7 +78,10 @@ net::awaitable<void> HttpHandle::operator()() {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.prepare_payload();
 
-    } catch (std::exception& e) {
+    } catch (const BizException& e) {
+        processBizException(e);
+
+    } catch (const std::exception& e) {
         processException(e.what());
 
     } catch (...) {
@@ -98,7 +96,7 @@ net::awaitable<void> HttpHandle::operator()() {
 }
 
 void HttpHandle::processError(int32_t err) noexcept {
-    CLS_ERROR("{}", biz_err_msg(err));
+    CLS_ERROR("{}! from: {}:{}", biz_err_msg(err), getClientIp(), getClientPort());
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
@@ -117,14 +115,29 @@ void HttpHandle::processError(int32_t err) noexcept {
     }
 }
 
-void HttpHandle::processException(const std::string& err_msg) noexcept {
+void HttpHandle::processException(const char* err_msg) noexcept {
     CLS_ERROR("{}", err_msg);
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.result(http::status::internal_server_error);
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", -1, err_msg);
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", BIZ_BASE_FAILED, err_msg);
+        ctx->res.prepare_payload();
+    } catch (std::exception& e) {
+        CLS_ERROR("Exception in processException: {}", e.what());
+    } catch (...) {
+        CLS_FATAL("Unknown error in processException!");
+    }
+}
+
+void HttpHandle::processBizException(const BizException& e) noexcept {
+    try {
+        CLS_ERROR("{}", e.what());
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->res.result(http::status::ok);  // 以 200 响应方式返回错误信息
+        ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", e.errcode(), e.what());
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());

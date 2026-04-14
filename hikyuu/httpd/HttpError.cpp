@@ -11,6 +11,10 @@
 
 namespace hku {
 
+const char* BizException::what() const noexcept {
+    return m_msg.c_str();
+}
+
 static std::unordered_map<int32_t, BizErrMsgFunc> g_biz_err_map;
 
 HKU_HTTPD_API void register_biz_error_module(int32_t biz_mod, BizErrMsgFunc func) {
@@ -37,21 +41,23 @@ HKU_HTTPD_API const char* biz_err_msg(BizErrCode e) {
 static const char* biz_base_err_msg(BizErrCode ec) noexcept {
     switch (get_biz_code(ec)) {
         case 0:
-            return "invalid json";
+            return "bissness failed";
         case 1:
-            return "missing parameter";
+            return "invalid json";
         case 2:
-            return "wrong parameter";
+            return "missing parameter";
         case 3:
-            return "wrong parameter type";
+            return "wrong parameter";
         case 4:
-            return "too many query params";
+            return "wrong parameter type";
         case 5:
-            return "too long url";
+            return "too many query params";
         case 6:
+            return "too long url";
+        case 7:
             return "invalid url";
         default:
-            return "base unknown error";
+            return "unknown error";
     }
 }
 
