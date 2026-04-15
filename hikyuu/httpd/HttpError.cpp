@@ -76,7 +76,7 @@ HKU_HTTPD_API const char* biz_err_msg(BizErrCode e) {
         return "OK";
     }
 
-    int32_t mod = (e / 1000) * 1000;
+    int32_t mod = get_biz_mod(e);
     auto& biz_err_map = get_biz_err_map();
     auto iter = biz_err_map.find(mod);
     if (iter != biz_err_map.end()) {
