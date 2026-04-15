@@ -35,7 +35,7 @@ HKU_HTTPD_API const char* biz_err_msg(BizErrCode e) {
         return iter->second(e);
     }
 
-    return "unknown error";
+    return "unknown error! not found mod!";
 }
 
 static const char* biz_base_err_msg(BizErrCode ec) noexcept {

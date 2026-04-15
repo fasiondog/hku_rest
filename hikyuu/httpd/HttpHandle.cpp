@@ -320,20 +320,30 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
                 std::string strkey = std::string(key, key_len);
                 std::string strvalue = std::string(value, value_len);
                 query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
-                key_len = value_len = 0;
+            } else if (key_len && !value_len) {
+                // 只有 key 没有 value，视为非法请求
+                CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
+                         std::string(key, key_len), getClientIp(), getClientPort());
+                return BIZ_BASE_INVALID_URL;
             }
+            key_len = value_len = 0;
             state = s_key;
             key = p + 1;
         } else if (*p == '=') {
             state = s_value;
             value = p + 1;
         } else {
-            state == s_key ? ++key_len : ++value_len;
+            if (state == s_key) {
+                ++key_len;
+            } else {
+                ++value_len;
+            }
         }
         ++p;
     }
+
+    // 处理最后一个参数
     if (key_len && value_len) {
-        // 检查最后一个参数
         if (++param_count > MAX_QUERY_PARAMS) {
             CLS_WARN("Query parameters exceed limit (max={}, client={}:{})", MAX_QUERY_PARAMS,
                      getClientIp(), getClientPort());
@@ -343,7 +353,11 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
         query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
-        key_len = value_len = 0;
+    } else if (key_len && !value_len) {
+        // 最后一个参数只有 key 没有 value，视为非法请求
+        CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
+                 std::string(key, key_len), getClientIp(), getClientPort());
+        return BIZ_BASE_INVALID_URL;
     }
 
     return query_params;
