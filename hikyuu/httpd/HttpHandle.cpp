@@ -326,9 +326,11 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
                 std::string strkey = std::string(key, key_len);
                 std::string strvalue = std::string(value, value_len);
+                // 先做 unescape，确保临时字符串在 unescape 完成前有效
                 std::string unescaped_key = url_unescape(strkey.c_str());
                 std::string unescaped_value = url_unescape(strvalue.c_str());
-                query_params[unescaped_key] = unescaped_value;
+                // 显式保留 unescape 结果后再插入 map
+                query_params[unescaped_key] = std::move(unescaped_value);
             } else if (key_len && !value_len) {
                 // 只有 key 没有 value，视为非法请求
                 CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
@@ -361,9 +363,13 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
+        CLS_INFO("DEBUG: key='{}' value='{}' value_len={}", strkey, strvalue, value_len);
+        // 先做 unescape，确保临时字符串在 unescape 完成前有效
         std::string unescaped_key = url_unescape(strkey.c_str());
         std::string unescaped_value = url_unescape(strvalue.c_str());
-        query_params[unescaped_key] = unescaped_value;
+        CLS_INFO("DEBUG: unescaped_key='{}' unescaped_value='{}'", unescaped_key, unescaped_value);
+        // 显式保留 unescape 结果后再插入 map
+        query_params[unescaped_key] = std::move(unescaped_value);
     } else if (key_len && !value_len) {
         // 最后一个参数只有 key 没有 value，视为非法请求
         CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
