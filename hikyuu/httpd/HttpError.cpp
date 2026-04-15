@@ -35,7 +35,8 @@ HKU_HTTPD_API const char* biz_err_msg(BizErrCode e) {
         return iter->second(e);
     }
 
-    return "unknown error! not found mod!";
+    HKU_WARN("Biz error module not found: {}", mod);
+    return "unknown error";
 }
 
 static const char* biz_base_err_msg(BizErrCode ec) noexcept {
@@ -74,11 +75,24 @@ static const char* biz_auth_err_msg(BizErrCode ec) noexcept {
     }
 }
 
-// 全局自动注册
-static inline bool base_mod_reg = [] {
+// 自动注册函数，确保在程序启动时执行
+static void auto_register_biz_errors() {
     register_biz_error_module(BIZ_MOD_BASE, biz_base_err_msg);
     register_biz_error_module(BIZ_MOD_AUTH, biz_auth_err_msg);
-    return true;
-}();
+}
+
+// 跨平台自动初始化
+#if defined(_MSC_VER)
+// MSVC: 使用 section 和 initializer
+#pragma section(".CRT$XCU", read)
+__declspec(allocate(".CRT$XCU")) static void (*init_func)(void) = auto_register_biz_errors;
+#elif defined(__GNUC__) || defined(__clang__)
+// GCC/Clang: 使用 constructor 属性
+__attribute__((constructor)) static void init_biz_errors() {
+    auto_register_biz_errors();
+}
+#else
+#error "Unsupported compiler for automatic initialization"
+#endif
 
 }  // namespace hku
