@@ -83,7 +83,8 @@ HKU_HTTPD_API const char* biz_err_msg(BizErrCode e) {
         return iter->second(e);
     }
 
-    return "unknown error! not found mod!";
+    HKU_WARN("Not found biz error module: {}", mod);
+    return "unknown error";
 }
 
 }  // namespace hku
