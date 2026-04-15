@@ -27,7 +27,7 @@ using BizErrCode = int32_t;
 constexpr BizErrCode BIZ_OK = 0;
 
 constexpr BizErrCode MAKE_ERR(int32_t biz_mod, int32_t biz_code) {
-    return biz_mod + biz_code;
+    return biz_mod * 10000 + biz_code;
 }
 
 constexpr int32_t get_biz_mod(BizErrCode e) {
