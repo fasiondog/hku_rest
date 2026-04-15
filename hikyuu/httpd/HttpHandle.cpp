@@ -288,17 +288,20 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
         return BIZ_BASE_TOO_LONG_URL;
     }
 
-    const char* url = target.data();
-    if (!url) [[unlikely]] {
-        return BIZ_BASE_INVALID_URL;
-    }
-
-    const char* p = strchr(url, '?');
-    if (!p) {
+    // 使用 string_view 安全地找到 query string，避免依赖 \0 终止
+    size_t qpos = target.find('?');
+    if (qpos == std::string_view::npos) {
         return query_params;
     }
 
-    p = p + 1;
+    // query string 从 '?' 后面开始
+    std::string_view query = target.substr(qpos + 1);
+    const char* p = query.data();
+    size_t remaining = query.size();  // 剩余字符数，用于安全遍历
+
+    if (!p || remaining == 0) {
+        return query_params;
+    }
 
     enum {
         s_key,
@@ -307,15 +310,17 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
     const char* key = p;
     const char* value = NULL;
-    int key_len = 0;
-    int value_len = 0;
+    size_t key_len = 0;
+    size_t value_len = 0;
 
     // URL 参数数量限制，防止哈希碰撞 DoS 攻击
     constexpr std::size_t MAX_QUERY_PARAMS = 100;  // 最大允许 100 个查询参数
     std::size_t param_count = 0;
 
-    while (*p != '\0') {
-        if (*p == '&') {
+    size_t idx = 0;
+    while (idx < remaining) {
+        char c = p[idx];
+        if (c == '&') {
             if (key_len && value_len) {
                 // 检查参数数量是否超过限制
                 if (++param_count > MAX_QUERY_PARAMS) {
@@ -339,10 +344,10 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
             }
             key_len = value_len = 0;
             state = s_key;
-            key = p + 1;
-        } else if (*p == '=') {
+            key = p + idx + 1;
+        } else if (c == '=') {
             state = s_value;
-            value = p + 1;
+            value = p + idx + 1;
         } else {
             if (state == s_key) {
                 ++key_len;
@@ -350,7 +355,7 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
                 ++value_len;
             }
         }
-        ++p;
+        ++idx;
     }
 
     // 处理最后一个参数
@@ -363,11 +368,9 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
-        CLS_INFO("DEBUG: key='{}' value='{}' value_len={}", strkey, strvalue, value_len);
         // 先做 unescape，确保临时字符串在 unescape 完成前有效
         std::string unescaped_key = url_unescape(strkey.c_str());
         std::string unescaped_value = url_unescape(strvalue.c_str());
-        CLS_INFO("DEBUG: unescaped_key='{}' unescaped_value='{}'", unescaped_key, unescaped_value);
         // 显式保留 unescape 结果后再插入 map
         query_params[unescaped_key] = std::move(unescaped_value);
     } else if (key_len && !value_len) {
