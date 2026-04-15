@@ -326,7 +326,9 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
                 std::string strkey = std::string(key, key_len);
                 std::string strvalue = std::string(value, value_len);
-                query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
+                std::string unescaped_key = url_unescape(strkey.c_str());
+                std::string unescaped_value = url_unescape(strvalue.c_str());
+                query_params[unescaped_key] = unescaped_value;
             } else if (key_len && !value_len) {
                 // 只有 key 没有 value，视为非法请求
                 CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
@@ -359,7 +361,9 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
 
         std::string strkey = std::string(key, key_len);
         std::string strvalue = std::string(value, value_len);
-        query_params[url_unescape(strkey.c_str())] = url_unescape(strvalue.c_str());
+        std::string unescaped_key = url_unescape(strkey.c_str());
+        std::string unescaped_value = url_unescape(strvalue.c_str());
+        query_params[unescaped_key] = unescaped_value;
     } else if (key_len && !value_len) {
         // 最后一个参数只有 key 没有 value，视为非法请求
         CLS_WARN("Invalid query parameter format: missing value for key '{}', client={}:{}",
