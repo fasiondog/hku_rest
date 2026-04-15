@@ -46,6 +46,8 @@ net::awaitable<void> HttpHandle::operator()() {
         for (const auto& filter : m_filters) {
             auto result = co_await filter(this);
             if (!result) {
+                CLS_ERROR("{}! from: {}:{}", biz_err_msg(result.error()), getClientIp(),
+                          getClientPort());
                 processError(result.error());
                 co_return;
             }
@@ -53,18 +55,24 @@ net::awaitable<void> HttpHandle::operator()() {
 
         auto before_ret = before_run();
         if (!before_ret) {
+            CLS_ERROR("{}! from: {}:{}", biz_err_msg(before_ret.error()), getClientIp(),
+                      getClientPort());
             processError(before_ret.error());
             co_return;
         }
 
         auto result = co_await run();
         if (!result) {
+            CLS_ERROR("{}! from: {}:{}", biz_err_msg(result.error()), getClientIp(),
+                      getClientPort());
             processError(result.error());
             co_return;
         }
 
         auto after_ret = after_run();
         if (!after_ret) {
+            CLS_ERROR("{}! from: {}:{}", biz_err_msg(after_ret.error()), getClientIp(),
+                      getClientPort());
             processError(after_ret.error());
             co_return;
         }
@@ -96,7 +104,6 @@ net::awaitable<void> HttpHandle::operator()() {
 }
 
 void HttpHandle::processError(int32_t err) noexcept {
-    CLS_ERROR("{}! from: {}:{}", biz_err_msg(err), getClientIp(), getClientPort());
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
