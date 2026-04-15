@@ -46,34 +46,34 @@ net::awaitable<void> HttpHandle::operator()() {
         for (const auto& filter : m_filters) {
             auto result = co_await filter(this);
             if (!result) {
-                CLS_ERROR("{}! from: {}:{}", biz_err_msg(result.error()), getClientIp(),
-                          getClientPort());
                 processError(result.error());
+                CLS_INFO("{}! {} from: {}:{}", getReqUrl(), biz_err_msg(result.error()),
+                         getClientIp(), getClientPort());
                 co_return;
             }
         }
 
         auto before_ret = before_run();
         if (!before_ret) {
-            CLS_ERROR("{}! from: {}:{}", biz_err_msg(before_ret.error()), getClientIp(),
-                      getClientPort());
             processError(before_ret.error());
+            CLS_INFO("{}! {} from: {}:{}", getReqUrl(), biz_err_msg(before_ret.error()),
+                     getClientIp(), getClientPort());
             co_return;
         }
 
         auto result = co_await run();
         if (!result) {
-            CLS_ERROR("{}! from: {}:{}", biz_err_msg(result.error()), getClientIp(),
-                      getClientPort());
             processError(result.error());
+            CLS_INFO("{}! {} from: {}:{}", getReqUrl(), biz_err_msg(result.error()), getClientIp(),
+                     getClientPort());
             co_return;
         }
 
         auto after_ret = after_run();
         if (!after_ret) {
-            CLS_ERROR("{}! from: {}:{}", biz_err_msg(after_ret.error()), getClientIp(),
-                      getClientPort());
             processError(after_ret.error());
+            CLS_INFO("{}! {} from: {}:{}", getReqUrl(), biz_err_msg(after_ret.error()),
+                     getClientIp(), getClientPort());
             co_return;
         }
 
