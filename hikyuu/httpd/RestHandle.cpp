@@ -5,9 +5,11 @@
  *      Author: fasiondog
  */
 
-#include "RestHandle.h"
+#include "hikyuu/utilities/arithmetic.h"
 #include "gzip/compress.hpp"
 #include "gzip/utils.hpp"
+#include "pod/CommonPod.h"
+#include "RestHandle.h"
 
 namespace hku {
 
