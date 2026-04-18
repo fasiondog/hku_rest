@@ -140,7 +140,7 @@ add_requires("tl_expected")
 if is_plat("linux") then
   add_requires("apt::libssl-dev", {alias="openssl3"})
 else
-  add_requires("openssl3")
+  add_requires("openssl3", {system = false})
 end
 
 if has_config("mqtt") then
