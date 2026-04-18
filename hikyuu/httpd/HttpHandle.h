@@ -122,7 +122,7 @@ public:
     virtual net::awaitable<VoidBizResult> run() = 0;
 
     /** 后处理 */
-    virtual VoidBizResult after_run() {
+    virtual VoidBizResult after_run() noexcept {
         return BIZ_OK;
     }
 

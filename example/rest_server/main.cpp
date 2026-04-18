@@ -145,7 +145,7 @@ int main(int argc, char* argv[]) {
         HKU_INFO("Recommended IO threads: {}", recommended_threads);
 
         // 实际设置（如果不设置，loop() 会自动使用 hardware_concurrency())
-        server.set_io_thread_count(2);
+        server.set_io_thread_count(1);
         // server.set_io_thread_count(
         //   std::max<size_t>(recommended_threads / 2, 1));  // 使用默认值（硬件并发数一半）
 

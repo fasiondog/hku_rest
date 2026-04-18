@@ -19,6 +19,7 @@ public:
 
     virtual void regHandle() override {
         GET<HelloHandle>("hello");
+        // GET<BizHelloHandle>("hello");
     }
 };
 
