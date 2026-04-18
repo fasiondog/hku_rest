@@ -27,7 +27,6 @@ if has_config("use_hikyuu") then
         shared = is_kind("shared"), 
         log_level = log_level,
         http_client = true,
-        http_client_asio = true,
         http_client_ssl = true,
         http_client_zip = true,
         async_log = has_config("async_log"),
@@ -41,7 +40,6 @@ else
             shared = is_kind("shared"), 
             log_level = log_level,
             http_client = true,
-            http_client_asio = true,
             http_client_ssl = true,
             http_client_zip = true,
             async_log = has_config("async_log"),
@@ -135,7 +133,7 @@ if has_config("leak_check") then
     -- set_policy("build.sanitizer.thread", true)
 end
 
-add_requires("tl_expected")
+add_requires("gzip-hpp", {system = false})
 
 if is_plat("linux") then
   add_requires("apt::libssl-dev", {alias="openssl3"})
@@ -164,8 +162,7 @@ target("hku_httpd")
         add_packages("hku_utils")
     end
 
-    add_packages("tl_expected")
-    add_packages("openssl3")
+    add_packages("openssl3", "gzip-hpp")
 
     if has_config("mqtt") then
         add_packages("async_mqtt")

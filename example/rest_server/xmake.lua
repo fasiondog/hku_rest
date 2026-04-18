@@ -11,7 +11,7 @@ target("rest_server")
     end
 
     add_deps("hku_httpd")
-    add_packages("boost", "nlohmann_json", "fmt", "openssl3", "tl_expected")
+    add_packages("boost", "nlohmann_json", "fmt", "openssl3")
 
     if is_plat("linux", "cross") then
         add_cxflags("-fcoroutines")

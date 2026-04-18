@@ -11,7 +11,6 @@
 #include <cstdint>
 #include <exception>
 #include <fmt/format.h>
-#include "expected.h"
 
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
