@@ -98,9 +98,8 @@ VoidBizResult BizHandle::after_run() noexcept {
 }
 
 net::awaitable<VoidBizResult> BizHandle::run() {
-    auto ret =
-      co_await co_run(pod::CommonPod::executor(), [this]() -> VoidBizResult { return biz_run(); });
-    co_return ret;
+    co_return co_await hku::co_run(pod::CommonPod::executor(),
+                                   [this]() -> VoidBizResult { return biz_run(); });
 }
 
 }  // namespace hku
