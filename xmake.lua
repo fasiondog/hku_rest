@@ -167,7 +167,7 @@ target("hku_httpd")
     if has_config("mqtt") then
         add_packages("async_mqtt")
     end
-    
+
     add_includedirs(".")
 
     if is_kind("shared") then 
@@ -180,6 +180,8 @@ target("hku_httpd")
     elseif is_kind("static") and not is_plat("windows") then
         add_cxflags("-fPIC", {force=true})
     end
+
+    add_defines("BOOST_ASIO_HAS_CO_AWAIT=1", "BOOST_ASIO_HAS_CXX20_COROUTINES=1", "DBOOST_ASIO_DISABLE_DEPRECATED=1")    
 
     if is_plat("linux", "cross") then
         add_cxflags("-fcoroutines")
