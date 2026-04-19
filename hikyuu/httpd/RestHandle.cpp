@@ -5,7 +5,6 @@
  *      Author: fasiondog
  */
 
-#include "hikyuu/utilities/cppdef.h"
 #include "hikyuu/utilities/thread/algorithm.h"
 #include "gzip/compress.hpp"
 #include "gzip/utils.hpp"
@@ -99,8 +98,8 @@ VoidBizResult BizHandle::after_run() noexcept {
 }
 
 net::awaitable<VoidBizResult> BizHandle::run() {
-    co_return co_await hku::co_run(pod::CommonPod::executor(),
-                                   [this]() -> VoidBizResult { return biz_run(); });
+    co_return co_await co_run(pod::CommonPod::executor(),
+                              [this]() -> VoidBizResult { return biz_run(); });
 }
 
 }  // namespace hku
