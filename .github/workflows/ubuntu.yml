@@ -18,7 +18,7 @@ jobs:
         arch: [x86_64, aarch64]
     
     concurrency:
-        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-macOS-${{ matrix.arch }}
+        group: ${{ github.ref }}-${{ github.base_ref }}-${{ github.head_ref }}-Ubuntu-${{ matrix.arch }}
         cancel-in-progress: true
     steps:
       - uses: actions/checkout@v4        
