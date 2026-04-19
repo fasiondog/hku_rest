@@ -38,6 +38,10 @@ public:
     virtual VoidBizResult after_run() noexcept override;
 
 protected:
+    VoidBizResult check_missing_param() {
+        return BIZ_OK;
+    }
+
     VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
@@ -47,11 +51,11 @@ protected:
 
     template <typename First, typename... Rest>
     VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
-        auto ret = check_missing_param(first);  // 调用单参数版本
+        auto ret = check_missing_param(first);
         if (!ret) {
             return ret;  // 短路！立即返回
         }
-        return check_missing_param(rest...);  // 递归检查剩下的
+        return check_missing_param(rest...);
     }
 
 protected:
@@ -80,6 +84,10 @@ public:
     virtual VoidBizResult biz_run() = 0;
 
 protected:
+    VoidBizResult check_missing_param() {
+        return BIZ_OK;
+    }
+
     VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
@@ -91,9 +99,9 @@ protected:
     VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
         auto ret = check_missing_param(first);  // 调用单参数版本
         if (!ret) {
-            return ret;  // 短路！立即返回
+            return ret;
         }
-        return check_missing_param(rest...);  // 递归检查剩下的
+        return check_missing_param(rest...);
     }
 
 protected:
