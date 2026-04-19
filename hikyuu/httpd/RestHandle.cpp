@@ -5,6 +5,7 @@
  *      Author: fasiondog
  */
 
+#include "hikyuu/utilities/cppdef.h"
 #include "hikyuu/utilities/thread/algorithm.h"
 #include "gzip/compress.hpp"
 #include "gzip/utils.hpp"
