@@ -5,7 +5,7 @@
  *      Author: fasiondog
  */
 
-#include "hikyuu/utilities/arithmetic.h"
+#include "hikyuu/utilities/thread/algorithm.h"
 #include "gzip/compress.hpp"
 #include "gzip/utils.hpp"
 #include "pod/CommonPod.h"

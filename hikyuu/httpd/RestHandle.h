@@ -45,14 +45,13 @@ protected:
         return BIZ_OK;
     }
 
-    VoidBizResult check_missing_param(const std::vector<std::string>& params) {
-        for (auto& param : params) {
-            auto ret = check_missing_param(param);
-            if (!ret) {
-                return ret;
-            }
+    template <typename First, typename... Rest>
+    VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
+        auto ret = check_missing_param(first);  // 调用单参数版本
+        if (!ret) {
+            return ret;  // 短路！立即返回
         }
-        return BIZ_OK;
+        return check_missing_param(rest...);  // 递归检查剩下的
     }
 
 protected:
@@ -88,14 +87,13 @@ protected:
         return BIZ_OK;
     }
 
-    VoidBizResult check_missing_param(const std::vector<std::string>& params) {
-        for (auto& param : params) {
-            auto ret = check_missing_param(param);
-            if (!ret) {
-                return ret;
-            }
+    template <typename First, typename... Rest>
+    VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
+        auto ret = check_missing_param(first);  // 调用单参数版本
+        if (!ret) {
+            return ret;  // 短路！立即返回
         }
-        return BIZ_OK;
+        return check_missing_param(rest...);  // 递归检查剩下的
     }
 
 protected:

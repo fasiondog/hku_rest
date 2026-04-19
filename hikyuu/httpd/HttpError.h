@@ -56,19 +56,26 @@ struct BizResult {
     // 失败
     BizResult(int32_t e) : err_(e) {}
 
-    bool ok() const noexcept {
+    bool has_value() const noexcept {
         return err_ == 0;
     }
     explicit operator bool() const noexcept {
-        return ok();
+        return has_value();
     }
 
     const T& value() const noexcept {
         return value_;
     }
 
+    T&& operator*() && noexcept {
+        return std::move(value_);
+    }
+    const T* operator->() const noexcept {
+        return &value_;
+    }
+
     T value_or(T v) const noexcept {
-        return ok() ? value_ : std::move(v);
+        return has_value() ? value_ : std::move(v);
     }
 
     int32_t error() const noexcept {
@@ -88,11 +95,11 @@ struct BizResult<void> {
     BizResult() = default;
     BizResult(int32_t e) : err_(e) {}
 
-    bool ok() const {
+    bool has_value() const noexcept {
         return err_ == 0;
     }
-    explicit operator bool() const {
-        return ok();
+    explicit operator bool() const noexcept {
+        return has_value();
     }
 
     int32_t error() const noexcept {
