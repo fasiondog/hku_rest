@@ -60,9 +60,10 @@ protected:
     json res;
 };
 
-#define REST_HANDLE_IMP(cls) \
-public:                      \
-    explicit cls(void* beast_context) : RestHandle(beast_context) {}
+#define REST_HANDLE_IMP(cls)                                         \
+public:                                                              \
+    explicit cls(void* beast_context) : RestHandle(beast_context) {} \
+    virtual ~cls() = default;
 
 class HKU_HTTPD_API BizHandle : public HttpHandle {
     CLASS_LOGGER_IMP(BizHandle)
@@ -76,7 +77,7 @@ public:
 
     virtual VoidBizResult before_run() noexcept override;
     virtual VoidBizResult after_run() noexcept override;
-    virtual net::awaitable<VoidBizResult> run() override;
+    virtual net::awaitable<VoidBizResult> run() final override;
     virtual VoidBizResult biz_run() = 0;
 
 protected:
@@ -102,8 +103,9 @@ protected:
     json res;
 };
 
-#define BIZ_HANDLE_IMP(cls) \
-public:                     \
-    explicit cls(void* beast_context) : BizHandle(beast_context) {}
+#define BIZ_HANDLE_IMP(cls)                                         \
+public:                                                             \
+    explicit cls(void* beast_context) : BizHandle(beast_context) {} \
+    virtual ~cls() = default;
 
 }  // namespace hku
