@@ -12,7 +12,7 @@ class MCPTestClient:
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
         self.mcp_url = f"{base_url}/mcp"
-        self.session_id = str(uuid.uuid4())  # 客户端生成 Session ID
+        self.session_id = None  # Session ID 由服务器生成
         self.request_id = 0
         self.session = requests.Session()
         
@@ -28,11 +28,20 @@ class MCPTestClient:
         }
         
         headers = {
-            "Content-Type": "application/json",
-            "X-Session-ID": self.session_id  # 在请求头中传递 Session ID
+            "Content-Type": "application/json"
         }
         
+        # 如果已有 Session ID，添加到请求头
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        
         response = self.session.post(self.mcp_url, json=request, headers=headers)
+        
+        # 从响应头中提取 Session ID（仅 initialize 时）
+        if 'Mcp-Session-Id' in response.headers:
+            self.session_id = response.headers['Mcp-Session-Id']
+            print(f"[INFO] Received Session ID: {self.session_id}")
+        
         return response.json()
     
     def send_notification(self, method, params=None):
@@ -44,12 +53,15 @@ class MCPTestClient:
         }
         
         headers = {
-            "Content-Type": "application/json",
-            "X-Session-ID": self.session_id
+            "Content-Type": "application/json"
         }
         
+        # 如果已有 Session ID，添加到请求头
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        
         self.session.post(self.mcp_url, json=request, headers=headers)
-    
+
     def initialize(self):
         """初始化连接"""
         print("\n=== Testing initialize ===")
@@ -191,9 +203,9 @@ def test_basic_flow():
         response = client.send_request("tools/list")
         print(f"Response: {json.dumps(response, indent=2)}")
         
-        # 重新注册新会话
+        # 重新注册新会话（清除旧 Session ID，让服务器生成新的）
         print("\n=== Re-registering new session ===")
-        client.session_id = str(uuid.uuid4())
+        client.session_id = None  # 清除旧 Session ID
         response = client.send_request("initialize", {
             "protocolVersion": "2024-11-05",
             "capabilities": {},

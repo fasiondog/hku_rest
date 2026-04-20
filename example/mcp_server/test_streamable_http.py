@@ -11,21 +11,18 @@ import time
 
 def test_short_connection_mode():
     """测试短连接 JSON 响应模式"""
-    session_id = str(uuid.uuid4())
-    
     print("=" * 70)
     print("模式 1: 短连接 JSON 响应 (Short Connection)")
     print("=" * 70)
-    print(f"Session ID: {session_id}\n")
     
+    # 第一步：初始化并获取 Session ID
     headers = {
         "Content-Type": "application/json",
-        "X-Session-ID": session_id,
-        "Accept": "application/json"  # 明确请求 JSON 响应
+        "Accept": "application/json"
     }
     
     # Initialize
-    print("1. Initialize (短连接)")
+    print("\n1. Initialize (获取 Session ID)")
     start = time.time()
     response = requests.post(
         "http://localhost:8080/mcp",
@@ -43,11 +40,21 @@ def test_short_connection_mode():
     )
     elapsed = time.time() - start
     
+    # 提取 Session ID
+    session_id = response.headers.get('Mcp-Session-Id')
+    if not session_id:
+        print(f"❌ Failed to get Mcp-Session-Id from response")
+        return
+    
     print(f"   Status: {response.status_code}")
     print(f"   Content-Type: {response.headers.get('Content-Type')}")
     print(f"   Response Time: {elapsed*1000:.2f}ms")
+    print(f"   Session ID: {session_id}")
     print(f"   Connection: Closed immediately ✅\n")
     
+    # 后续请求使用 Session ID
+    headers["Mcp-Session-Id"] = session_id
+
     # Tools List
     print("2. Tools List (短连接)")
     start = time.time()
@@ -73,21 +80,18 @@ def test_short_connection_mode():
 
 def test_long_connection_sse_mode():
     """测试长连接 SSE 流式响应模式"""
-    session_id = str(uuid.uuid4())
-    
     print("=" * 70)
     print("模式 2: 长连接 SSE 流式响应 (Long Connection with SSE)")
     print("=" * 70)
-    print(f"Session ID: {session_id}\n")
     
+    # 第一步：初始化并获取 Session ID
     headers = {
         "Content-Type": "application/json",
-        "X-Session-ID": session_id,
         "Accept": "text/event-stream"  # 请求 SSE 流式响应
     }
     
     # Initialize with SSE
-    print("1. Initialize (SSE 流式)")
+    print("\n1. Initialize (SSE 流式，获取 Session ID)")
     start = time.time()
     response = requests.post(
         "http://localhost:8080/mcp",
@@ -102,28 +106,26 @@ def test_long_connection_sse_mode():
             },
             "id": 1
         },
-        stream=True,
-        timeout=5
+        stream=True  # 启用流式读取
     )
-    elapsed = time.time() - start
     
+    # 提取 Session ID
+    session_id = response.headers.get('Mcp-Session-Id')
+    if not session_id:
+        print(f"❌ Failed to get Mcp-Session-Id from response")
+        return
+    
+    elapsed = time.time() - start
     print(f"   Status: {response.status_code}")
     print(f"   Content-Type: {response.headers.get('Content-Type')}")
+    print(f"   Transfer-Encoding: {response.headers.get('Transfer-Encoding')}")
     print(f"   Response Time: {elapsed*1000:.2f}ms")
-    
-    # 读取 SSE 消息
-    message_count = 0
-    for line in response.iter_lines():
-        if line:
-            line_str = line.decode('utf-8')
-            if line_str.startswith('data:'):
-                message_count += 1
-                data = json.loads(line_str[5:])
-                print(f"   Message #{message_count}: Received")
-                break  # 只读取第一条消息
-    
+    print(f"   Session ID: {session_id}")
     print(f"   Connection: Kept alive for streaming ✅\n")
     
+    # 后续请求使用 Session ID
+    headers["Mcp-Session-Id"] = session_id
+
     # Long Running Task with SSE
     print("2. Long Running Task (SSE 实时推送)")
     response = requests.post(
@@ -169,23 +171,18 @@ def test_long_connection_sse_mode():
 
 
 def test_mixed_mode():
-    """测试混合模式：同一个 Session 同时使用短连接和长连接"""
-    session_id = str(uuid.uuid4())
-    
+    """测试混合模式：同一会话中交替使用短连接和长连接"""
     print("=" * 70)
     print("模式 3: 混合模式 (Mixed Mode - Same Session)")
     print("=" * 70)
-    print(f"Session ID: {session_id}\n")
     
-    # 先注册 Session
+    # 第一步：初始化并获取 Session ID
     headers_init = {
-        "Content-Type": "application/json",
-        "X-Session-ID": session_id,
-        "Accept": "application/json"
+        "Content-Type": "application/json"
     }
     
-    print("1. Initialize (短连接 JSON)")
-    requests.post(
+    print("\n1. Initialize (短连接 JSON)")
+    response = requests.post(
         "http://localhost:8080/mcp",
         headers=headers_init,
         json={
@@ -199,7 +196,16 @@ def test_mixed_mode():
             "id": 1
         }
     )
-    print("   ✅ Session registered\n")
+    
+    session_id = response.headers.get('Mcp-Session-Id')
+    if not session_id:
+        print(f"❌ Failed to get Mcp-Session-Id from response")
+        return
+    
+    print(f"   ✅ Session registered, ID: {session_id}\n")
+    
+    # 后续请求使用 Session ID
+    headers_init["Mcp-Session-Id"] = session_id
     
     # 短连接查询
     print("2. Quick Query (短连接)")
@@ -220,7 +226,7 @@ def test_mixed_mode():
     print("3. Subscribe to Updates (长连接 SSE)")
     headers_sse = {
         "Content-Type": "application/json",
-        "X-Session-ID": session_id,
+        "Mcp-Session-Id": session_id,
         "Accept": "text/event-stream"
     }
     

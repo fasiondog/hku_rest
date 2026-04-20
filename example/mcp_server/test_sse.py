@@ -14,8 +14,7 @@ class MCPsseTestClient:
     def __init__(self, base_url="http://localhost:8080"):
         self.base_url = base_url
         self.mcp_url = f"{base_url}/mcp"
-        self.sse_url = f"{base_url}/sse"
-        self.session_id = str(uuid.uuid4())
+        self.session_id = None  # Session ID 由服务器生成
         self.request_id = 0
         self.session = requests.Session()
         self.received_messages = []
@@ -32,19 +31,32 @@ class MCPsseTestClient:
         }
         
         headers = {
-            "Content-Type": "application/json",
-            "X-Session-ID": self.session_id
+            "Content-Type": "application/json"
         }
         
+        # 如果已有 Session ID，添加到请求头
+        if self.session_id:
+            headers["Mcp-Session-Id"] = self.session_id
+        
         response = self.session.post(self.mcp_url, json=request, headers=headers)
+        
+        # 从响应头中提取 Session ID（仅 initialize 时）
+        if 'Mcp-Session-Id' in response.headers:
+            self.session_id = response.headers['Mcp-Session-Id']
+            print(f"[INFO] Received Session ID: {self.session_id}")
+        
         return response.json()
     
     def listen_sse(self, timeout=30):
         """监听 SSE 事件（在后台线程中运行）"""
+        if not self.session_id:
+            print("❌ Error: No session ID available. Call initialize first.")
+            return
+        
         print(f"\n📡 Starting SSE listener for session: {self.session_id}")
         
         headers = {
-            "X-Session-ID": self.session_id,
+            "Mcp-Session-Id": self.session_id,
             "Accept": "text/event-stream"
         }
         

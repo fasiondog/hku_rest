@@ -10,46 +10,54 @@
 #include "hikyuu/httpd/HttpHandle.h"
 #include <nlohmann/json.hpp>
 #include "SessionManager.h"
+#include <random>
 
 namespace hku {
 
 /**
  * MCP (Model Context Protocol) Server 处理器
- * 
+ *
  * 实现 MCP 协议，为 AI 模型提供工具、资源和提示词访问能力
  * MCP 基于 JSON-RPC 2.0 协议，支持：
  * - 工具调用 (Tools)
  * - 资源访问 (Resources)
  * - 提示词模板 (Prompts)
- * 
+ *
  * 参考规范: https://modelcontextprotocol.io/
  */
 class McpHandle : public HttpHandle {
     HTTP_HANDLE_IMP(McpHandle)
 
 public:
+    /**
+     * 配置 SSE 心跳功能
+     * @param enabled 是否启用 SSE 心跳（默认 true）
+     * @param interval_seconds 心跳间隔秒数（默认 30 秒）
+     */
+    static void configureSSEHeartbeat(bool enabled = true, int interval_seconds = 30) {
+        s_sse_heartbeat_enabled = enabled;
+        s_sse_heartbeat_interval = interval_seconds;
+        HKU_INFO("SSE heartbeat configured: enabled={}, interval={}s", enabled, interval_seconds);
+    }
+
     virtual net::awaitable<VoidBizResult> run() override {
         // 1. 只接受 POST 请求
         if (getReqMethod() != "POST") {
             co_await sendJsonErrorResponse(-32600, "Invalid Request", nlohmann::json(), false);
             co_return BIZ_OK;
         }
-        
-        // 2. 检查客户端是否使用 chunked 传输请求体
-        std::string req_transfer_encoding = getReqHeader("Transfer-Encoding");
-        bool client_used_chunked = (req_transfer_encoding.find("chunked") != std::string::npos);
-        
-        // 3. 检查 Accept 头，判断客户端是否支持 SSE 流式响应
+
+        // 2. 检查 Accept 头，判断客户端是否支持 SSE 流式响应
         std::string accept_header = getReqHeader("Accept");
         bool supports_sse = (accept_header.find("text/event-stream") != std::string::npos);
-        
-        // 4. 读取请求体（框架会自动处理 chunked 解码）
+
+        // 3. 读取请求体（框架会自动处理 chunked 解码）
         std::string body = getReqData();
         if (body.empty()) {
             co_await sendJsonErrorResponse(-32700, "Parse error", nlohmann::json(), supports_sse);
             co_return BIZ_OK;
         }
-        
+
         // 用于捕获块中记录错误，稍后统一发送
         bool has_error = false;
         int error_code = 0;
@@ -59,78 +67,115 @@ public:
         try {
             // 4. 解析 JSON-RPC 请求
             nlohmann::json request = nlohmann::json::parse(body);
-            
-            // 5. 验证 JSON-RPC 版本
+
+            // 4. 验证 JSON-RPC 版本
             if (!request.contains("jsonrpc") || request["jsonrpc"] != "2.0") {
-                co_await sendJsonErrorResponse(-32600, "Invalid Request", request.contains("id") ? request["id"] : nlohmann::json(), supports_sse);
+                co_await sendJsonErrorResponse(
+                  -32600, "Invalid Request",
+                  request.contains("id") ? request["id"] : nlohmann::json(), supports_sse);
                 co_return BIZ_OK;
             }
-            
-            // 7. 获取方法名和 ID
+
+            // 5. 获取方法名和 ID
             std::string method = request.value("method", "");
             nlohmann::json id = request.contains("id") ? request["id"] : nlohmann::json();
-            nlohmann::json params = request.contains("params") ? request["params"] : nlohmann::json();
-            
-            // 8. 从请求头或 Cookie 中获取客户端提供的 Session ID
+            nlohmann::json params =
+              request.contains("params") ? request["params"] : nlohmann::json();
+
+            // 6. 从请求头中获取 Session ID
             std::string session_id = extractSessionId();
-            
-            // 9. 如果是 initialize 方法，注册新会话
+
+            // 7. 处理 initialize 方法：服务器生成并返回 Session ID
             if (method == "initialize") {
+                // 如果客户端已提供 Session ID（重连场景），验证其有效性
+                if (!session_id.empty()) {
+                    auto session = m_session_manager.getSession(session_id);
+                    if (!session) {
+                        // Session 已失效，要求客户端重新初始化
+                        HKU_WARN("Invalid session ID in initialize request: {}", session_id);
+                        co_await sendJsonErrorResponse(-32602, "Invalid or expired session", id,
+                                                       supports_sse);
+                        co_return BIZ_OK;
+                    }
+                    // 更新会话活动时间
+                    m_session_manager.touchSession(session_id);
+                    HKU_INFO("Session reconnected: {}", session_id);
+                } else {
+                    // 为新连接生成 Session ID
+                    session_id = generateSessionId();
+                    std::string client_ip = getClientIp();
+
+                    if (!m_session_manager.registerSession(session_id, client_ip)) {
+                        co_await sendJsonErrorResponse(-32603, "Failed to register session", id,
+                                                       supports_sse);
+                        co_return BIZ_OK;
+                    }
+
+                    // 在响应头中返回 Mcp-Session-Id（MCP 协议规范）
+                    setResHeader("Mcp-Session-Id", session_id.c_str());
+                    HKU_INFO("New session registered: {} from {}", session_id, client_ip);
+                }
+            } else {
+                // 8. 对于非 initialize 方法，必须携带有效的 Session ID
                 if (session_id.empty()) {
-                    co_await sendJsonErrorResponse(-32602, "Missing session ID in headers or cookie", id, supports_sse);
+                    // 返回 HTTP 400 Bad Request（通过 JSON-RPC 错误码表示）
+                    co_await sendJsonErrorResponse(-32602, "Missing Mcp-Session-Id header", id,
+                                                   supports_sse);
                     co_return BIZ_OK;
                 }
-                
-                std::string client_ip = getClientIp();
-                if (!m_session_manager.registerSession(session_id, client_ip)) {
-                    co_await sendJsonErrorResponse(-32603, "Failed to register session", id, supports_sse);
-                    co_return BIZ_OK;
-                }
-                
-                HKU_INFO("New session registered: {} from {}", session_id, client_ip);
-            } else if (!session_id.empty()) {
-                // 10. 对于其他方法，验证并更新会话
+
+                // 验证会话有效性
                 auto session = m_session_manager.getSession(session_id);
                 if (!session) {
-                    co_await sendJsonErrorResponse(-32602, "Invalid or expired session", id, supports_sse);
+                    // 返回 HTTP 404 Not Found（通过 JSON-RPC 错误码表示）
+                    co_await sendJsonErrorResponse(-32602, "Session not found or expired", id,
+                                                   supports_sse);
                     co_return BIZ_OK;
                 }
-                
+
                 // 更新会话活动时间
                 m_session_manager.touchSession(session_id);
             }
-            
-            // 11. 在响应中回显 Session ID（方便客户端确认）
+
+            // 9. 在响应中回显 Session ID（方便客户端确认，使用标准头字段）
             if (!session_id.empty()) {
-                setResHeader("X-Session-ID", session_id.c_str());
+                setResHeader("Mcp-Session-Id", session_id.c_str());
             }
-            
-            // 12. 如果客户端支持 SSE，启用流式响应
+
+            // 10. 如果客户端支持 SSE，启用流式响应并启动心跳
             if (supports_sse) {
                 setResHeader("Content-Type", "text/event-stream");
                 setResHeader("Cache-Control", "no-cache");
                 setResHeader("Connection", "keep-alive");
                 enableChunkedTransfer();
-                
+
                 HKU_INFO("Streamable HTTP mode enabled for session: {}", session_id);
+
+                // 启动 SSE 心跳任务（每 30 秒发送一次）
+                co_await startSSEHeartbeat(session_id);
             }
 
-            // 13. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
+            // 11. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
             try {
                 co_await handleMethod(method, params, session_id, id, supports_sse);
             } catch (...) {
                 // 异常已在 handleMethod 内部处理并发送响应
             }
-            
-            // 14. 如果使用 SSE，完成分块传输
+
+            // 12. 如果使用 SSE，完成分块传输
             if (supports_sse) {
                 try {
                     co_await finishChunkedTransfer();
                 } catch (...) {
                     // 忽略断开连接时的错误
+                    HKU_DEBUG("SSE connection closed for session: {}", session_id);
                 }
             }
-            
+
+            // 注意：Session 不与 HTTP 连接绑定
+            // 客户端可以在 Session 有效期内（默认3600秒）随时重连
+            // Session 由超时机制或 session/unregister 方法清理
+
         } catch (const nlohmann::json::parse_error& e) {
             HKU_ERROR("JSON parse error: {}", e.what());
             has_error = true;
@@ -144,21 +189,21 @@ public:
             error_message = fmt::format("Internal error: {}", e.what());
             error_id = nullptr;
         }
-        
+
         if (has_error) {
             co_await sendJsonErrorResponse(error_code, error_message, error_id, supports_sse);
         }
-        
+
         co_return BIZ_OK;
     }
 
     /**
-     * 获取 Session 管理器（用于外部访问）
+     * 获取 Session 管理器引用（用于后台清理线程）
      */
     static SessionManager& getSessionManager() {
         return m_session_manager;
     }
-    
+
     /**
      * 推送进度更新到 SSE 端点
      * @param session_id 会话 ID
@@ -167,35 +212,33 @@ public:
      * @param message 进度消息
      * @param data 附加数据
      */
-    static void pushProgress(const std::string& session_id,
-                            const std::string& task_id,
-                            int progress,
-                            const std::string& message,
-                            const nlohmann::json& data = nullptr) {
+    static void pushProgress(const std::string& session_id, const std::string& task_id,
+                             int progress, const std::string& message,
+                             const nlohmann::json& data = nullptr) {
         nlohmann::json progress_data;
         progress_data["task_id"] = task_id;
         progress_data["progress"] = progress;
         progress_data["message"] = message;
         progress_data["timestamp"] = getCurrentTimestamp();
-        
+
         if (!data.is_null()) {
             progress_data["data"] = data;
         }
-        
+
         // 使用数组存储多个进度更新（而不是覆盖）
         auto history_json = m_session_manager.getSessionMetadata(session_id, "progress_history");
         nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
-        
+
         history.push_back(progress_data);
-        
+
         // 限制历史记录数量（最多 50 条）
         if (history.size() > 50) {
             history.erase(history.begin());
         }
-        
+
         // 存储到 Session 元数据
         m_session_manager.setSessionMetadata(session_id, "progress_history", history);
-        
+
         // 同时设置最新的进度（用于快速访问）
         m_session_manager.setSessionMetadata(session_id, "progress_update", progress_data);
     }
@@ -209,57 +252,143 @@ private:
         ctx->timer.expires_after(duration);
         co_await ctx->timer.async_wait(net::use_awaitable);
     }
-    
+
+    /**
+     * 发送 SSE 心跳（注释格式）
+     * 用于保持长连接活跃，防止中间代理断开
+     */
+    net::awaitable<void> sendSSEHeartbeat() {
+        if (!m_beast_context) {
+            co_return;
+        }
+
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+
+        // 检查是否已启用 chunked transfer
+        if (ctx->res.body().empty()) {
+            // 首次发送，设置 SSE 头
+            setResHeader("Content-Type", "text/event-stream");
+            setResHeader("Cache-Control", "no-cache");
+            setResHeader("Connection", "keep-alive");
+            enableChunkedTransfer();
+        }
+
+        // 发送 SSE 注释格式的心跳: : ping - <timestamp>
+        auto now = std::chrono::system_clock::now();
+        auto time_t_now = std::chrono::system_clock::to_time_t(now);
+        std::tm tm_now;
+        localtime_r(&time_t_now, &tm_now);
+
+        char time_buf[64];
+        std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_now);
+
+        std::string heartbeat = fmt::format(": ping - {}\n\n", time_buf);
+
+        try {
+            co_await writeChunk(heartbeat);
+            HKU_DEBUG("SSE heartbeat sent");
+        } catch (...) {
+            // 忽略客户端断开等错误
+            HKU_DEBUG("Failed to send SSE heartbeat (client may have disconnected)");
+        }
+    }
+
+    /**
+     * 启动 SSE 心跳后台任务
+     * @param session_id 会话 ID
+     * @note 心跳间隔可通过配置文件或常量调整
+     */
+    net::awaitable<void> startSSEHeartbeat(const std::string& session_id) {
+        // 检查是否启用 SSE 心跳
+        if (!s_sse_heartbeat_enabled) {
+            HKU_DEBUG("SSE heartbeat disabled for session: {}", session_id);
+            co_return;
+        }
+
+        HKU_DEBUG("Starting SSE heartbeat for session: {} (interval: {}s)", session_id,
+                  s_sse_heartbeat_interval);
+
+        // 在后台循环发送心跳
+        while (true) {
+            // 等待指定的时间间隔
+            co_await sleep_for(std::chrono::seconds(s_sse_heartbeat_interval));
+
+            // 发送心跳
+            co_await sendSSEHeartbeat();
+
+            // 注意：如果客户端断开，writeChunk 会抛出异常，循环会自动退出
+        }
+    }
+
     /**
      * 获取当前时间戳（秒）
      */
     static long long getCurrentTimestamp() {
         auto now = std::chrono::system_clock::now();
-        return std::chrono::duration_cast<std::chrono::seconds>(
-            now.time_since_epoch()).count();
+        return std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     }
-    
+
     // 静态 Session 管理器（所有实例共享）
-    static inline SessionManager m_session_manager{3600, 10000}; // 1小时超时，最多10000个会话
-    
+    static inline SessionManager m_session_manager{3600, 10000};  // 1小时超时，最多10000个会话
+
+    // SSE 心跳配置
+    static inline bool s_sse_heartbeat_enabled = true;  // 默认启用
+    static inline int s_sse_heartbeat_interval = 30;    // 默认 30 秒
+
+    /**
+     * 生成符合 MCP 协议规范的 Session ID
+     * 使用 UUID v4 格式，仅包含可见 ASCII 字符 (0x21-0x7E)
+     */
+    static std::string generateSessionId() {
+        // 使用 UUID v4 格式: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
+        // 其中 x 是随机十六进制数字，y 是 8, 9, A, 或 B
+        static thread_local std::random_device rd;
+        static thread_local std::mt19937 gen(rd());
+        static thread_local std::uniform_int_distribution<> dis(0, 15);
+
+        auto hex_char = [&]() -> char {
+            const char hex[] = "0123456789abcdef";
+            return hex[dis(gen)];
+        };
+
+        std::string uuid;
+        uuid.reserve(36);
+
+        for (int i = 0; i < 8; i++)
+            uuid += hex_char();
+        uuid += '-';
+        for (int i = 0; i < 4; i++)
+            uuid += hex_char();
+        uuid += "-4";  // UUID version 4
+        for (int i = 0; i < 3; i++)
+            uuid += hex_char();
+        uuid += '-';
+        // Variant bits: 10xx (8, 9, a, b)
+        const char variant[] = "89ab";
+        uuid += variant[dis(gen) % 4];
+        for (int i = 0; i < 3; i++)
+            uuid += hex_char();
+        uuid += '-';
+        for (int i = 0; i < 12; i++)
+            uuid += hex_char();
+
+        return uuid;
+    }
+
     /**
      * 从请求中提取 Session ID
-     * 优先级：X-Session-ID 头 > Cookie
+     * 使用标准的 Mcp-Session-Id 头字段
      */
     std::string extractSessionId() {
-        // 尝试从自定义头部获取
-        std::string session_id = getReqHeader("X-Session-ID");
-        if (!session_id.empty()) {
-            return session_id;
-        }
-        
-        // 尝试从 Cookie 获取
-        std::string cookie = getReqHeader("Cookie");
-        if (!cookie.empty()) {
-            // 简单的 Cookie 解析
-            size_t pos = cookie.find("session_id=");
-            if (pos != std::string::npos) {
-                pos += 11; // length of "session_id="
-                size_t end = cookie.find(';', pos);
-                if (end == std::string::npos) {
-                    end = cookie.length();
-                }
-                session_id = cookie.substr(pos, end - pos);
-                return session_id;
-            }
-        }
-        
-        return "";
+        return getReqHeader("Mcp-Session-Id");
     }
 
     /**
      * 处理 MCP 方法调用（Streamable HTTP 模式）
      */
-    net::awaitable<void> handleMethod(const std::string& method, 
-                                     const nlohmann::json& params,
-                                     const std::string& session_id,
-                                     const nlohmann::json& id,
-                                     bool use_sse) {
+    net::awaitable<void> handleMethod(const std::string& method, const nlohmann::json& params,
+                                      const std::string& session_id, const nlohmann::json& id,
+                                      bool use_sse) {
         try {
             if (method == "initialize") {
                 auto result = handleInitialize(params, session_id);
@@ -284,6 +413,10 @@ private:
             } else if (method == "prompts/get") {
                 auto result = co_await handlePromptsGet(params, session_id);
                 co_await sendJsonSuccessResponse(result, id, use_sse);
+            } else if (method == "ping") {
+                // MCP 协议 ping 方法 - 用于连接健康检查
+                auto result = handlePing(params, session_id);
+                co_await sendJsonSuccessResponse(result, id, use_sse);
             } else if (method == "session/info") {
                 auto result = handleSessionInfo(session_id);
                 co_await sendJsonSuccessResponse(result, id, use_sse);
@@ -307,26 +440,22 @@ private:
      */
     nlohmann::json handleInitialize(const nlohmann::json& params, const std::string& session_id) {
         HKU_INFO("MCP initialize request (session: {})", session_id);
-        
+
         // 存储客户端信息到 Session
         if (params.contains("clientInfo")) {
-            m_session_manager.setSessionMetadata(session_id, "client_info", 
-                                                params["clientInfo"]);
+            m_session_manager.setSessionMetadata(session_id, "client_info", params["clientInfo"]);
         }
-        
+
         nlohmann::json result;
         result["protocolVersion"] = "2024-11-05";
         result["capabilities"] = {
-            {"tools", {{"listChanged", false}}},
-            {"resources", {{"subscribe", false}, {"listChanged", false}}},
-            {"prompts", {{"listChanged", false}}},
-            {"session", {{"supported", true}}}  // 声明支持 Session
+          {"tools", {{"listChanged", false}}},
+          {"resources", {{"subscribe", false}, {"listChanged", false}}},
+          {"prompts", {{"listChanged", false}}},
+          {"session", {{"supported", true}}}  // 声明支持 Session
         };
-        result["serverInfo"] = {
-            {"name", "hku_rest MCP Server"},
-            {"version", "1.0.0"}
-        };
-        
+        result["serverInfo"] = {{"name", "hku_rest MCP Server"}, {"version", "1.0.0"}};
+
         return result;
     }
 
@@ -335,106 +464,82 @@ private:
      */
     nlohmann::json handleToolsList(const nlohmann::json& params, const std::string& session_id) {
         HKU_INFO("MCP tools/list request (session: {})", session_id);
-        
+
         nlohmann::json tools = nlohmann::json::array();
-        
+
         // 示例工具 1: 计算器
-        tools.push_back({
-            {"name", "calculator"},
-            {"description", "Perform basic arithmetic calculations"},
-            {"inputSchema", {
-                {"type", "object"},
-                {"properties", {
-                    {"expression", {
-                        {"type", "string"},
-                        {"description", "Mathematical expression to evaluate (e.g., '2 + 2')"}
-                    }}
-                }},
-                {"required", {"expression"}}
-            }}
-        });
-        
+        tools.push_back(
+          {{"name", "calculator"},
+           {"description", "Perform basic arithmetic calculations"},
+           {"inputSchema",
+            {{"type", "object"},
+             {"properties",
+              {{"expression",
+                {{"type", "string"},
+                 {"description", "Mathematical expression to evaluate (e.g., '2 + 2')"}}}}},
+             {"required", {"expression"}}}}});
+
         // 示例工具 2: 时间查询
-        tools.push_back({
-            {"name", "get_current_time"},
-            {"description", "Get the current date and time"},
-            {"inputSchema", {
-                {"type", "object"},
-                {"properties", {
-                    {"format", {
-                        {"type", "string"},
-                        {"description", "Optional datetime format string"},
-                        {"default", "%Y-%m-%d %H:%M:%S"}
-                    }}
-                }}
-            }}
-        });
-        
+        tools.push_back({{"name", "get_current_time"},
+                         {"description", "Get the current date and time"},
+                         {"inputSchema",
+                          {{"type", "object"},
+                           {"properties",
+                            {{"format",
+                              {{"type", "string"},
+                               {"description", "Optional datetime format string"},
+                               {"default", "%Y-%m-%d %H:%M:%S"}}}}}}}});
+
         // 示例工具 3: 天气查询（模拟）
-        tools.push_back({
-            {"name", "get_weather"},
-            {"description", "Get weather information for a location"},
-            {"inputSchema", {
-                {"type", "object"},
-                {"properties", {
-                    {"location", {
-                        {"type", "string"},
-                        {"description", "City name or coordinates"}
-                    }}
-                }},
-                {"required", {"location"}}
-            }}
-        });
-        
+        tools.push_back(
+          {{"name", "get_weather"},
+           {"description", "Get weather information for a location"},
+           {"inputSchema",
+            {{"type", "object"},
+             {"properties",
+              {{"location", {{"type", "string"}, {"description", "City name or coordinates"}}}}},
+             {"required", {"location"}}}}});
+
         // 示例工具 4: 会话历史（需要 Session）
-        tools.push_back({
-            {"name", "get_session_history"},
-            {"description", "Get the interaction history for current session"},
-            {"inputSchema", {
-                {"type", "object"},
-                {"properties", {
-                    {"limit", {
-                        {"type", "integer"},
-                        {"description", "Maximum number of history items to return"},
-                        {"default", 10}
-                    }}
-                }}
-            }}
-        });
-        
+        tools.push_back({{"name", "get_session_history"},
+                         {"description", "Get the interaction history for current session"},
+                         {"inputSchema",
+                          {{"type", "object"},
+                           {"properties",
+                            {{"limit",
+                              {{"type", "integer"},
+                               {"description", "Maximum number of history items to return"},
+                               {"default", 10}}}}}}}});
+
         // 示例工具 5: 长时间运行任务（演示进度推送）
-        tools.push_back({
-            {"name", "long_running_task"},
-            {"description", "Simulate a long-running task with progress updates via SSE"},
-            {"inputSchema", {
-                {"type", "object"},
-                {"properties", {
-                    {"duration_seconds", {
-                        {"type", "integer"},
-                        {"description", "Task duration in seconds"},
-                        {"default", 10}
-                    }},
-                    {"task_name", {
-                        {"type", "string"},
-                        {"description", "Name of the task"},
-                        {"default", "example_task"}
-                    }}
-                }}
-            }}
-        });
-        
+        tools.push_back(
+          {{"name", "long_running_task"},
+           {"description", "Simulate a long-running task with progress updates via SSE"},
+           {"inputSchema",
+            {{"type", "object"},
+             {"properties",
+              {{"duration_seconds",
+                {{"type", "integer"},
+                 {"description", "Task duration in seconds"},
+                 {"default", 10}}},
+               {"task_name",
+                {{"type", "string"},
+                 {"description", "Name of the task"},
+                 {"default", "example_task"}}}}}}}});
+
         return {{"tools", tools}};
     }
 
     /**
      * 处理 tools/call 方法
      */
-    net::awaitable<nlohmann::json> handleToolsCall(const nlohmann::json& params, const std::string& session_id) {
+    net::awaitable<nlohmann::json> handleToolsCall(const nlohmann::json& params,
+                                                   const std::string& session_id) {
         std::string tool_name = params.value("name", "");
         nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
-        
+
         HKU_INFO("MCP tools/call request: tool={} (session: {})", tool_name, session_id);
-        
+
         if (tool_name == "calculator") {
             co_return co_await executeCalculator(arguments, session_id);
         } else if (tool_name == "get_current_time") {
@@ -453,9 +558,10 @@ private:
     /**
      * 执行计算器工具
      */
-    net::awaitable<nlohmann::json> executeCalculator(const nlohmann::json& arguments, const std::string& session_id) {
+    net::awaitable<nlohmann::json> executeCalculator(const nlohmann::json& arguments,
+                                                     const std::string& session_id) {
         std::string expression = arguments.value("expression", "");
-        
+
         // 简单的表达式求值（仅支持基本运算）
         try {
             // 注意：实际生产环境应使用安全的表达式解析库
@@ -469,18 +575,15 @@ private:
                 // 默认返回示例结果
                 result = 0.0;
             }
-            
+
             // 记录到会话历史
-            recordToolUsage(session_id, "calculator", {
-                {"expression", expression},
-                {"result", result}
-            });
-            
+            recordToolUsage(session_id, "calculator",
+                            {{"expression", expression}, {"result", result}});
+
             nlohmann::json response;
-            response["content"] = nlohmann::json::array({
-                {{"type", "text"}, {"text", fmt::format("Result: {}", result)}}
-            });
-            
+            response["content"] = nlohmann::json::array(
+              {{{"type", "text"}, {"text", fmt::format("Result: {}", result)}}});
+
             co_return response;
         } catch (const std::exception& e) {
             throw std::runtime_error(fmt::format("Calculation error: {}", e.what()));
@@ -490,72 +593,68 @@ private:
     /**
      * 执行获取当前时间工具
      */
-    nlohmann::json executeGetCurrentTime(const nlohmann::json& arguments, const std::string& session_id) {
+    nlohmann::json executeGetCurrentTime(const nlohmann::json& arguments,
+                                         const std::string& session_id) {
         std::string format = arguments.value("format", "%Y-%m-%d %H:%M:%S");
-        
+
         auto now = std::chrono::system_clock::now();
         auto time_t_now = std::chrono::system_clock::to_time_t(now);
         std::tm tm_now;
         localtime_r(&time_t_now, &tm_now);
-        
+
         char buffer[100];
         std::strftime(buffer, sizeof(buffer), format.c_str(), &tm_now);
-        
+
         // 记录到会话历史
-        recordToolUsage(session_id, "get_current_time", {
-            {"format", format},
-            {"time", std::string(buffer)}
-        });
-        
+        recordToolUsage(session_id, "get_current_time",
+                        {{"format", format}, {"time", std::string(buffer)}});
+
         nlohmann::json response;
-        response["content"] = nlohmann::json::array({
-            {{"type", "text"}, {"text", std::string(buffer)}}
-        });
-        
+        response["content"] =
+          nlohmann::json::array({{{"type", "text"}, {"text", std::string(buffer)}}});
+
         return response;
     }
 
     /**
      * 执行天气查询工具（模拟）
      */
-    nlohmann::json executeGetWeather(const nlohmann::json& arguments, const std::string& session_id) {
+    nlohmann::json executeGetWeather(const nlohmann::json& arguments,
+                                     const std::string& session_id) {
         std::string location = arguments.value("location", "Unknown");
-        
+
         // 模拟天气数据
         nlohmann::json response;
-        response["content"] = nlohmann::json::array({
-            {{"type", "text"}, {"text", fmt::format(
-                "Weather in {}: Temperature 22°C, Condition: Sunny, Humidity: 65%",
-                location
-            )}}
-        });
-        
+        response["content"] = nlohmann::json::array(
+          {{{"type", "text"},
+            {"text", fmt::format("Weather in {}: Temperature 22°C, Condition: Sunny, Humidity: 65%",
+                                 location)}}});
+
         // 记录到会话历史
-        recordToolUsage(session_id, "get_weather", {
-            {"location", location}
-        });
-        
+        recordToolUsage(session_id, "get_weather", {{"location", location}});
+
         return response;
     }
 
     /**
      * 执行获取会话历史工具
      */
-    nlohmann::json executeGetSessionHistory(const nlohmann::json& arguments, const std::string& session_id) {
+    nlohmann::json executeGetSessionHistory(const nlohmann::json& arguments,
+                                            const std::string& session_id) {
         int limit = arguments.value("limit", 10);
-        
+
         // 从 Session 元数据中获取历史记录
         auto history_json = m_session_manager.getSessionMetadata(session_id, "history");
         if (history_json.is_null()) {
             return nlohmann::json::array();
         }
-        
+
         // 限制返回的历史记录数量
         nlohmann::json history = history_json;
         if (history.size() > limit) {
             history.erase(history.begin(), history.begin() + (history.size() - limit));
         }
-        
+
         return history;
     }
 
@@ -566,103 +665,92 @@ private:
                                                           const std::string& session_id) {
         int duration = arguments.value("duration_seconds", 10);
         std::string task_name = arguments.value("task_name", "example_task");
-        
+
         // 生成任务 ID
         auto task_id = fmt::format("{}_{}", task_name, getCurrentTimestamp());
-        
-        HKU_INFO("Starting long running task: {} (session: {}, duration: {}s)", 
-                task_id, session_id, duration);
-        
+
+        HKU_INFO("Starting long running task: {} (session: {}, duration: {}s)", task_id, session_id,
+                 duration);
+
         // 推送开始消息
-        pushProgress(session_id, task_id, 0, "Task started", {
-            {"task_name", task_name},
-            {"estimated_duration", duration}
-        });
-        
+        pushProgress(session_id, task_id, 0, "Task started",
+                     {{"task_name", task_name}, {"estimated_duration", duration}});
+
         // 模拟长时间运行的任务，定期推送进度
         int steps = 10;
         int step_duration = duration / steps;
-        
+
         for (int i = 1; i <= steps; i++) {
             // 模拟工作 - 使用异步定时器
             co_await sleep_for(std::chrono::seconds(step_duration));
-            
+
             int progress = (i * 100) / steps;
             std::string message = fmt::format("Processing... {}% complete", progress);
-            
+
             // 推送进度更新
-            pushProgress(session_id, task_id, progress, message, {
-                {"current_step", i},
-                {"total_steps", steps}
-            });
-            
+            pushProgress(session_id, task_id, progress, message,
+                         {{"current_step", i}, {"total_steps", steps}});
+
             HKU_DEBUG("Task {} progress: {}%", task_id, progress);
         }
-        
+
         // 推送完成消息
-        pushProgress(session_id, task_id, 100, "Task completed successfully", {
-            {"result", "success"},
-            {"output", "Task finished"}
-        });
-        
+        pushProgress(session_id, task_id, 100, "Task completed successfully",
+                     {{"result", "success"}, {"output", "Task finished"}});
+
         // 记录到会话历史
-        recordToolUsage(session_id, "long_running_task", {
-            {"task_id", task_id},
-            {"task_name", task_name},
-            {"duration", duration},
-            {"status", "completed"}
-        });
-        
+        recordToolUsage(session_id, "long_running_task",
+                        {{"task_id", task_id},
+                         {"task_name", task_name},
+                         {"duration", duration},
+                         {"status", "completed"}});
+
         // 返回任务 ID，客户端可通过 SSE 监听进度
         nlohmann::json response;
-        response["content"] = nlohmann::json::array({
-            {{"type", "text"}, {"text", fmt::format(
-                "Task '{}' started with ID: {}\n"
-                "Monitor progress via SSE endpoint: /sse?sessionId={}\n"
-                "Estimated completion: {} seconds",
-                task_name, task_id, session_id, duration
-            )}}
-        });
+        response["content"] = nlohmann::json::array(
+          {{{"type", "text"},
+            {"text", fmt::format("Task '{}' started with ID: {}\n"
+                                 "Monitor progress via SSE endpoint: /sse?sessionId={}\n"
+                                 "Estimated completion: {} seconds",
+                                 task_name, task_id, session_id, duration)}}});
         response["task_id"] = task_id;
-        
+
         co_return response;
     }
 
     /**
      * 处理 resources/list 方法
      */
-    nlohmann::json handleResourcesList(const nlohmann::json& params, const std::string& session_id) {
+    nlohmann::json handleResourcesList(const nlohmann::json& params,
+                                       const std::string& session_id) {
         HKU_INFO("MCP resources/list request (session: {})", session_id);
-        
+
         nlohmann::json resources = nlohmann::json::array();
-        
+
         // 示例资源 1: 文档
-        resources.push_back({
-            {"uri", "doc://getting-started"},
-            {"name", "Getting Started Guide"},
-            {"description", "Introduction to using this MCP server"},
-            {"mimeType", "text/markdown"}
-        });
-        
+        resources.push_back({{"uri", "doc://getting-started"},
+                             {"name", "Getting Started Guide"},
+                             {"description", "Introduction to using this MCP server"},
+                             {"mimeType", "text/markdown"}});
+
         // 示例资源 2: API 文档
-        resources.push_back({
-            {"uri", "doc://api-reference"},
-            {"name", "API Reference"},
-            {"description", "Complete API documentation"},
-            {"mimeType", "text/markdown"}
-        });
-        
+        resources.push_back({{"uri", "doc://api-reference"},
+                             {"name", "API Reference"},
+                             {"description", "Complete API documentation"},
+                             {"mimeType", "text/markdown"}});
+
         return {{"resources", resources}};
     }
 
     /**
      * 处理 resources/read 方法
      */
-    net::awaitable<nlohmann::json> handleResourcesRead(const nlohmann::json& params, const std::string& session_id) {
+    net::awaitable<nlohmann::json> handleResourcesRead(const nlohmann::json& params,
+                                                       const std::string& session_id) {
         std::string uri = params.value("uri", "");
-        
+
         HKU_INFO("MCP resources/read request: uri={} (session: {})", uri, session_id);
-        
+
         if (uri == "doc://getting-started") {
             co_return readGettingStartedGuide();
         } else if (uri == "doc://api-reference") {
@@ -694,16 +782,11 @@ This MCP server provides various tools and resources for AI assistants.
 ## Usage
 Use your AI client to connect to this MCP server and access the provided tools and resources.
 )";
-        
+
         nlohmann::json response;
-        response["contents"] = nlohmann::json::array({
-            {
-                {"uri", "doc://getting-started"},
-                {"mimeType", "text/markdown"},
-                {"text", content}
-            }
-        });
-        
+        response["contents"] = nlohmann::json::array(
+          {{{"uri", "doc://getting-started"}, {"mimeType", "text/markdown"}, {"text", content}}});
+
         return response;
     }
 
@@ -752,16 +835,11 @@ Getting started guide
 ### doc://api-reference
 This API reference document
 )";
-        
+
         nlohmann::json response;
-        response["contents"] = nlohmann::json::array({
-            {
-                {"uri", "doc://api-reference"},
-                {"mimeType", "text/markdown"},
-                {"text", content}
-            }
-        });
-        
+        response["contents"] = nlohmann::json::array(
+          {{{"uri", "doc://api-reference"}, {"mimeType", "text/markdown"}, {"text", content}}});
+
         return response;
     }
 
@@ -771,57 +849,42 @@ This API reference document
      */
     nlohmann::json handlePromptsList(const nlohmann::json& params, const std::string& session_id) {
         HKU_INFO("MCP prompts/list request (session: {})", session_id);
-        
+
         nlohmann::json prompts = nlohmann::json::array();
-        
+
         // 示例提示词 1: 代码审查
-        prompts.push_back({
-            {"name", "code_review"},
-            {"description", "Review code for best practices and potential issues"},
-            {"arguments", nlohmann::json::array({
-                {
-                    {"name", "language"},
-                    {"description", "Programming language"},
-                    {"required", true}
-                },
-                {
-                    {"name", "code"},
-                    {"description", "Code to review"},
-                    {"required", true}
-                }
-            })}
-        });
-        
+        prompts.push_back(
+          {{"name", "code_review"},
+           {"description", "Review code for best practices and potential issues"},
+           {"arguments",
+            nlohmann::json::array(
+              {{{"name", "language"}, {"description", "Programming language"}, {"required", true}},
+               {{"name", "code"}, {"description", "Code to review"}, {"required", true}}})}});
+
         // 示例提示词 2: 文档生成
-        prompts.push_back({
-            {"name", "generate_docs"},
-            {"description", "Generate documentation for code"},
-            {"arguments", nlohmann::json::array({
-                {
-                    {"name", "code"},
-                    {"description", "Code to document"},
-                    {"required", true}
-                },
-                {
-                    {"name", "style"},
-                    {"description", "Documentation style (e.g., doxygen, javadoc)"},
-                    {"required", false}
-                }
-            })}
-        });
-        
+        prompts.push_back(
+          {{"name", "generate_docs"},
+           {"description", "Generate documentation for code"},
+           {"arguments",
+            nlohmann::json::array(
+              {{{"name", "code"}, {"description", "Code to document"}, {"required", true}},
+               {{"name", "style"},
+                {"description", "Documentation style (e.g., doxygen, javadoc)"},
+                {"required", false}}})}});
+
         return {{"prompts", prompts}};
     }
 
     /**
      * 处理 prompts/get 方法
      */
-    net::awaitable<nlohmann::json> handlePromptsGet(const nlohmann::json& params, const std::string& session_id) {
+    net::awaitable<nlohmann::json> handlePromptsGet(const nlohmann::json& params,
+                                                    const std::string& session_id) {
         std::string prompt_name = params.value("name", "");
         nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
-        
+
         HKU_INFO("MCP prompts/get request: prompt={} (session: {})", prompt_name, session_id);
-        
+
         if (prompt_name == "code_review") {
             co_return getCodeReviewPrompt(arguments, session_id);
         } else if (prompt_name == "generate_docs") {
@@ -834,12 +897,13 @@ This API reference document
     /**
      * 获取代码审查提示词
      */
-    nlohmann::json getCodeReviewPrompt(const nlohmann::json& arguments, const std::string& session_id) {
+    nlohmann::json getCodeReviewPrompt(const nlohmann::json& arguments,
+                                       const std::string& session_id) {
         std::string language = arguments.value("language", "unknown");
         std::string code = arguments.value("code", "");
-        
+
         std::string prompt = fmt::format(
-            R"(Please review the following {} code for:
+          R"(Please review the following {} code for:
 1. Best practices and coding standards
 2. Potential bugs or security issues
 3. Performance optimizations
@@ -851,33 +915,26 @@ Code:
 ```
 
 Provide detailed feedback and suggestions for improvement.)",
-            language, language, code
-        );
-        
+          language, language, code);
+
         nlohmann::json response;
         response["description"] = "Code review prompt";
-        response["messages"] = nlohmann::json::array({
-            {
-                {"role", "user"},
-                {"content", {
-                    {"type", "text"},
-                    {"text", prompt}
-                }}
-            }
-        });
-        
+        response["messages"] = nlohmann::json::array(
+          {{{"role", "user"}, {"content", {{"type", "text"}, {"text", prompt}}}}});
+
         return response;
     }
 
     /**
      * 获取文档生成提示词
      */
-    nlohmann::json getGenerateDocsPrompt(const nlohmann::json& arguments, const std::string& session_id) {
+    nlohmann::json getGenerateDocsPrompt(const nlohmann::json& arguments,
+                                         const std::string& session_id) {
         std::string code = arguments.value("code", "");
         std::string style = arguments.value("style", "doxygen");
-        
+
         std::string prompt = fmt::format(
-            R"(Generate {} style documentation for the following code:
+          R"(Generate {} style documentation for the following code:
 
 ```
 {}
@@ -888,22 +945,27 @@ Include:
 - Parameter explanations
 - Return value descriptions
 - Usage examples where appropriate)",
-            style, code
-        );
-        
+          style, code);
+
         nlohmann::json response;
         response["description"] = "Documentation generation prompt";
-        response["messages"] = nlohmann::json::array({
-            {
-                {"role", "user"},
-                {"content", {
-                    {"type", "text"},
-                    {"text", prompt}
-                }}
-            }
-        });
-        
+        response["messages"] = nlohmann::json::array(
+          {{{"role", "user"}, {"content", {{"type", "text"}, {"text", prompt}}}}});
+
         return response;
+    }
+
+    /**
+     * 处理 ping 方法（MCP 协议健康检查）
+     */
+    nlohmann::json handlePing(const nlohmann::json& params, const std::string& session_id) {
+        HKU_DEBUG("MCP ping request (session: {})", session_id);
+
+        // 更新会话活动时间
+        m_session_manager.touchSession(session_id);
+
+        // 返回空结果（MCP 规范要求）
+        return nlohmann::json::object();
     }
 
     /**
@@ -911,21 +973,23 @@ Include:
      */
     nlohmann::json handleSessionInfo(const std::string& session_id) {
         HKU_INFO("MCP session/info request (session: {})", session_id);
-        
+
         auto session = m_session_manager.getSession(session_id);
         if (!session) {
             throw std::runtime_error("Session not found or expired");
         }
-        
+
         nlohmann::json info;
         info["session_id"] = session->session_id;
         info["client_info"] = session->client_info;
-        info["created_at"] = std::chrono::duration_cast<std::chrono::seconds>(
-            session->created_at.time_since_epoch()).count();
-        info["last_active"] = std::chrono::duration_cast<std::chrono::seconds>(
-            session->last_active.time_since_epoch()).count();
+        info["created_at"] =
+          std::chrono::duration_cast<std::chrono::seconds>(session->created_at.time_since_epoch())
+            .count();
+        info["last_active"] =
+          std::chrono::duration_cast<std::chrono::seconds>(session->last_active.time_since_epoch())
+            .count();
         info["metadata"] = session->metadata;
-        
+
         return info;
     }
 
@@ -933,23 +997,23 @@ Include:
      * 处理 session/set_metadata 方法
      */
     nlohmann::json handleSetSessionMetadata(const nlohmann::json& params,
-                                           const std::string& session_id) {
+                                            const std::string& session_id) {
         std::string key = params.value("key", "");
         nlohmann::json value = params.value("value", nlohmann::json());
-        
+
         if (key.empty()) {
             throw std::runtime_error("Missing 'key' parameter");
         }
-        
+
         bool success = m_session_manager.setSessionMetadata(session_id, key, value);
         if (!success) {
             throw std::runtime_error("Failed to set session metadata");
         }
-        
+
         nlohmann::json result;
         result["status"] = "success";
         result["message"] = fmt::format("Metadata '{}' updated", key);
-        
+
         return result;
     }
 
@@ -958,46 +1022,45 @@ Include:
      */
     nlohmann::json handleUnregisterSession(const std::string& session_id) {
         HKU_INFO("MCP session/unregister request (session: {})", session_id);
-        
+
         bool success = m_session_manager.unregisterSession(session_id);
         if (!success) {
             throw std::runtime_error("Session not found or already unregistered");
         }
-        
+
         nlohmann::json result;
         result["status"] = "success";
         result["message"] = "Session unregistered successfully";
-        
+
         return result;
     }
 
     /**
      * 记录工具使用到会话历史
      */
-    void recordToolUsage(const std::string& session_id,
-                        const std::string& tool_name,
-                        const nlohmann::json& details) {
+    void recordToolUsage(const std::string& session_id, const std::string& tool_name,
+                         const nlohmann::json& details) {
         auto now = std::chrono::system_clock::now();
-        auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(
-            now.time_since_epoch()).count();
-        
+        auto timestamp =
+          std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
         nlohmann::json record;
         record["timestamp"] = timestamp;
         record["tool"] = tool_name;
         record["details"] = details;
-        
+
         // 获取现有历史
         auto history_json = m_session_manager.getSessionMetadata(session_id, "history");
         nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
-        
+
         // 添加新记录
         history.push_back(record);
-        
+
         // 限制历史记录数量（最多 100 条）
         if (history.size() > 100) {
             history.erase(history.begin());
         }
-        
+
         // 保存回 Session
         m_session_manager.setSessionMetadata(session_id, "history", history);
     }
@@ -1005,21 +1068,20 @@ Include:
     /**
      * 发送 JSON-RPC 成功响应（支持 Streamable HTTP）
      */
-    net::awaitable<void> sendJsonSuccessResponse(const nlohmann::json& result, 
-                                                  const nlohmann::json& id,
-                                                  bool use_sse = false) {
+    net::awaitable<void> sendJsonSuccessResponse(const nlohmann::json& result,
+                                                 const nlohmann::json& id, bool use_sse = false) {
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
         response["result"] = result;
         response["id"] = id;
-        
+
         if (use_sse) {
             // SSE 格式：event: message\ndata: {...}\n\n
             std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
-            
+
             if (m_beast_context) {
                 auto* ctx = static_cast<BeastContext*>(m_beast_context);
-                
+
                 // 首次发送时设置 SSE 响应头并启用 chunked
                 if (ctx->res.body().empty()) {
                     setResHeader("Content-Type", "text/event-stream");
@@ -1027,13 +1089,13 @@ Include:
                     setResHeader("Connection", "keep-alive");
                     enableChunkedTransfer();
                 }
-                
+
                 co_await writeChunk(sse_msg);
             }
         } else {
             // 传统 JSON 响应 - 使用标准 HTTP（Content-Length）
             std::string response_str = response.dump();
-            
+
             if (m_beast_context) {
                 auto* ctx = static_cast<BeastContext*>(m_beast_context);
                 ctx->res.body() = response_str;
@@ -1045,36 +1107,32 @@ Include:
     /**
      * 发送 JSON-RPC 错误响应（支持 Streamable HTTP）
      */
-    net::awaitable<void> sendJsonErrorResponse(int code, const std::string& message, 
-                                                const nlohmann::json& id,
-                                                bool use_sse = false) {
+    net::awaitable<void> sendJsonErrorResponse(int code, const std::string& message,
+                                               const nlohmann::json& id, bool use_sse = false) {
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
-        response["error"] = {
-            {"code", code},
-            {"message", message}
-        };
+        response["error"] = {{"code", code}, {"message", message}};
         response["id"] = id;
-        
+
         if (use_sse) {
             std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
-            
+
             if (m_beast_context) {
                 auto* ctx = static_cast<BeastContext*>(m_beast_context);
-                
+
                 if (ctx->res.body().empty()) {
                     setResHeader("Content-Type", "text/event-stream");
                     setResHeader("Cache-Control", "no-cache");
                     setResHeader("Connection", "keep-alive");
                     enableChunkedTransfer();
                 }
-                
+
                 co_await writeChunk(sse_msg);
             }
         } else {
             // 错误响应也使用标准 HTTP
             std::string response_str = response.dump();
-            
+
             if (m_beast_context) {
                 auto* ctx = static_cast<BeastContext*>(m_beast_context);
                 ctx->res.body() = response_str;
@@ -1083,4 +1141,4 @@ Include:
     }
 };
 
-} // namespace hku
+}  // namespace hku

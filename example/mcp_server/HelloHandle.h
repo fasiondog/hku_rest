@@ -25,4 +25,4 @@ public:
     }
 };
 
-} // namespace hku
+}  // namespace hku
