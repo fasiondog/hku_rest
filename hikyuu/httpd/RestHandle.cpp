@@ -98,6 +98,11 @@ VoidBizResult BizHandle::after_run() noexcept {
 }
 
 net::awaitable<VoidBizResult> BizHandle::run() {
+    auto before_result = before_biz_run();
+    if (!before_result) {
+        co_return before_result;
+    }
+
     co_return co_await co_run(pod::CommonPod::executor(),
                               [this]() -> VoidBizResult { return biz_run(); });
 }
