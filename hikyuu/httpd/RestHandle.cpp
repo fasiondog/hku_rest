@@ -102,7 +102,6 @@ net::awaitable<VoidBizResult> BizHandle::run() {
     if (!before_result) {
         co_return before_result;
     }
-
     co_return co_await co_run(pod::CommonPod::executor(),
                               [this]() -> VoidBizResult { return biz_run(); });
 }

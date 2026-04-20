@@ -12,6 +12,7 @@
 #include <string_view>
 #include <string>
 #include <vector>
+#include "hikyuu/utilities/thread/algorithm.h"
 #include "HttpHandle.h"
 #include "pod/all.h"
 
@@ -38,15 +39,15 @@ using ordered_json = nlohmann::ordered_json;  // 保持插入排序
  * - **参数校验工具**: 提供 check_missing_param() 模板方法快速校验必填参数
  *
  * ## 适用场景
- * ✅ 简单的 CRUD 操作
- * ✅ CPU 密集型计算任务
- * ✅ 不涉及复杂异步 IO 的业务逻辑
- * ✅ 需要快速响应的轻量级接口
+ * - 简单的 CRUD 操作
+ * - CPU 密集型计算任务
+ * - 不涉及复杂异步 IO 的业务逻辑
+ * - 需要快速响应的轻量级接口
  *
  * ## 不适用场景
- * ❌ 需要调用外部异步服务（如数据库异步查询、远程 RPC）
- * ❌ 长时间运行的 IO 操作会阻塞线程池
- * ❌ 需要精细控制协程生命周期的场景
+ * - 需要调用外部异步服务（如数据库异步查询、远程 RPC）
+ * - 长时间运行的 IO 操作会阻塞线程池
+ * - 需要精细控制协程生命周期的场景
  *
  * ## 使用示例
  * ```cpp
@@ -111,6 +112,46 @@ protected:
         return check_missing_param(rest...);
     }
 
+    /**
+     * @brief 将同步函数投递到业务线程池中异步执行（自动使用 CommonPod::executor）
+     *
+     * 在协程环境中，此方法可以将阻塞型或 CPU 密集型任务投递到 CommonPod 的业务线程池执行器中，
+     * 避免阻塞当前的 HTTP 工作线程。通过 co_await 等待任务完成并获取返回值。
+     *
+     * ## 使用场景
+     * - 在 BizHandle 的 biz_run() 中调用外部同步 API
+     * - 执行 CPU 密集型计算任务
+     * - 调用不支持异步的第三方库
+     * - 文件 IO 等阻塞操作
+     *
+     * ## 使用示例
+     * ```cpp
+     * virtual net::awaitable<VoidBizResult> biz_run() override {
+     *     // 将耗时的同步操作投递到业务线程池执行
+     *     std::string ip = req["ip"];
+     *     auto info = co_await biz_run([ip]() { return getIPInfoFromTianXing(ip); });
+     *
+     *     res["ip_info"] = info;
+     *     co_return BIZ_OK;
+     * }
+     * ```
+     *
+     * ## 参数说明
+     * @param func 要执行的 callable 对象（lambda、函数指针、std::function 等）
+     * @return 返回 func 的执行结果，类型为 decltype(func())
+     *
+     * @note 此函数必须在协程上下文中使用（需要 co_await）
+     * @note func 应该是可拷贝或可移动的，因为会被传递到另一个线程执行
+     * @note 如果 func 抛出异常，异常会被传播到当前协程
+     * @note 内部自动使用 pod::CommonPod::executor() 作为执行器，无需手动传入
+     *
+     * @see pod::CommonPod::executor() 获取业务线程池执行器
+     */
+    template <typename Func>
+    auto biz_run(Func&& func) -> boost::asio::awaitable<std::invoke_result_t<Func>> {
+        return hku::co_run(pod::CommonPod::executor(), std::forward<Func>(func));
+    }
+
 protected:
     json req;  // 子类在 run 方法中，直接使用此 req
     json res;
@@ -125,10 +166,13 @@ public:                                                              \
  * @brief 业务逻辑请求处理器基类（异步协程模式）
  *
  * BizHandle 用于处理复杂的业务逻辑请求，采用**异步协程执行模型**。
- * 通过 biz_run() 方法在独立线程池中执行业务逻辑，避免阻塞 HTTP 工作线程。
+ * 整个 biz_run() 方法会被投递到 CommonPod::executor() 线程池中执行，避免阻塞 HTTP 工作线程。
+ * 适用于内部服务，基本无参数缺失、错误等情况。否则建议使用 RestHandle，通过 ResHande 的 biz_run
+ * 控制阻塞或计算任务。
  *
  * ## 核心特性
- * - **异步执行**: run() 方法将 biz_run() 投递到 CommonPod::executor() 线程池执行
+ * - **整体投递**: run() 方法将整个 biz_run() 投递到业务线程池执行
+ * - **前置校验**: 支持 before_biz_run() 在主线程进行快速参数校验
  * - **协程支持**: 基于 Boost.Asio co_await 机制，支持真正的异步 IO
  * - **非阻塞 IO**: 适合数据库查询、远程调用等耗时操作
  * - **自动 JSON 处理**: 与 RestHandle 相同的 JSON 解析和响应封装机制
@@ -136,27 +180,31 @@ public:                                                              \
  * - **参数校验工具**: 提供 check_missing_param() 模板方法
  *
  * ## 适用场景
- * ✅ 需要调用数据库异步查询（MySQL/SQLite）
- * ✅ 需要发起远程 RPC 或 HTTP 请求
- * ✅ 文件 IO 或其他阻塞型操作
- * ✅ 需要并发执行多个子任务
- * ✅ 长时间运行的业务流程
+ * - 需要调用数据库异步查询（MySQL/SQLite）
+ * - 需要发起远程 RPC 或 HTTP 请求
+ * - 文件 IO 或其他阻塞型操作
+ * - 需要并发执行多个子任务
+ * - 长时间运行的业务流程
  *
  * ## 不适用场景
- * ❌ 简单的内存计算（使用 RestHandle 更轻量）
- * ❌ 对延迟极度敏感的微操作（协程调度有额外开销）
+ * - 简单的内存计算（使用 RestHandle 更轻量）
+ * - 对延迟极度敏感的微操作（协程调度有额外开销）
  *
  * ## 使用示例
  * ```cpp
  * class OrderCreateHandle : public BizHandle {
  *     BIZ_HANDLE_IMP(OrderCreateHandle)
  *
- *     virtual net::awaitable<VoidBizResult> biz_run() override {
- *         // 1. 校验参数
+ *     // 在主线程执行参数校验
+ *     virtual VoidBizResult before_biz_run() noexcept override {
  *         auto ret = check_missing_param("product_id", "quantity");
- *         if (!ret) co_return ret;
+ *         if (!ret) return ret;  // 快速失败
+ *         return BIZ_OK;
+ *     }
  *
- *         // 2. 异步数据库操作（不会阻塞 HTTP 线程）
+ *     // 在线程池执行业务逻辑
+ *     virtual net::awaitable<VoidBizResult> biz_run() override {
+ *         // 异步数据库操作（不会阻塞 HTTP 线程）
  *         auto db = co_await pod::MySQLPod::getInstance()->getConnection();
  *         auto result = co_await db->executeAsync(
  *             "INSERT INTO orders ...",
@@ -164,9 +212,7 @@ public:                                                              \
  *             req["quantity"]
  *         );
  *
- *         // 3. 构建响应
  *         res["order_id"] = result.insertId();
- *
  *         co_return BIZ_OK;
  *     }
  * };
@@ -174,22 +220,35 @@ public:                                                              \
  *
  * ## 生命周期方法
  * 1. **before_run()**: 解析 JSON → 设置 Content-Type（在主线程执行）
- * 2. **run()**: 框架自动将 biz_run() 投递到线程池（final 方法，不可重写）
- * 3. **biz_run()**: 子类实现具体业务逻辑（在线程池中异步执行）
- * 4. **after_run()**: 封装响应 → GZIP 压缩 → 返回结果（在主线程执行）
+ * 2. **run()**: 先执行 before_biz_run()，再将 biz_run() 整体投递到线程池（final 方法，不可重写）
+ * 3. **before_biz_run()**: 子类可重写此方法进行参数校验（在主线程执行，可选）
+ * 4. **biz_run()**: 子类实现具体业务逻辑（在线程池中异步执行）
+ * 5. **after_run()**: 封装响应 → GZIP 压缩 → 返回结果（在主线程执行）
  *
  * ## 执行流程对比
  *
  * | 阶段 | RestHandle | BizHandle |
  * |------|-----------|-----------|
  * | before_run | 主线程 | 主线程 |
- * | 业务逻辑 | 主线程（同步） | 线程池（异步协程） |
+ * | 前置校验 | - | 主线程（before_biz_run，可选） |
+ * | 业务逻辑 | 主线程（同步） | 线程池（整体投递，异步协程） |
  * | after_run | 主线程 | 主线程 |
+ *
+ * ## 与 RestHandle 的对比
+ *
+ * **RestHandle 更灵活的场景**：
+ * - 可在 run() 中自由控制哪些部分在主线程执行，哪些部分投递到线程池
+ * - 使用 `co_await biz_run(func)` 细粒度控制子任务
+ * - 适合混合场景：部分轻量级逻辑 + 部分耗时操作
+ *
+ * **BizHandle 更适合的场景**：
+ * - 整个业务逻辑都是耗时操作，需要完全脱离 HTTP 线程
+ * - 不需要精细控制执行位置
+ * - 代码结构更简单直观
  *
  * @note biz_run() 必须声明为 `virtual net::awaitable<VoidBizResult> biz_run() override`
  * @note 在 biz_run() 中可以使用 co_await 进行异步操作
- * @see RestHandle 同步 REST 处理器
- * @see pod::CommonPod::executor() 业务线程池
+ * @see RestHandle 同步 REST 处理器（更灵活的控制方式）
  */
 class HKU_HTTPD_API BizHandle : public HttpHandle {
     CLASS_LOGGER_IMP(BizHandle)
@@ -205,7 +264,7 @@ public:
     virtual VoidBizResult after_run() noexcept override;
     virtual net::awaitable<VoidBizResult> run() final override;
 
-    // 参数检查等前置逻辑，在协程中执行
+    // 前置逻辑，通常进行参数检查，在协程中执行
     virtual VoidBizResult before_biz_run() noexcept {
         return BIZ_OK;
     }
