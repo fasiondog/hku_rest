@@ -13,6 +13,7 @@ option("log_level", {description = "set log level.", default = 2, values = {1, 2
 option("async_log", {description = "Use async log.", default = false})
 option("leak_check", {description = "Enable leak check for test", default = false})
 option("mqtt", {description = "Enable mqtt broker support.", default = false})
+option("mcp", {description = "Enable mcp server support.", default = true})
 
 option("use_hikyuu", {description = "Use hikyuu as hku_utils.", default = false})
 
@@ -227,6 +228,11 @@ target("hku_httpd")
     if has_config("mqtt") then
         add_headerfiles("$(projectdir)/(hikyuu/mqtt/**.h)")
         add_files("hikyuu/mqtt/*.cpp")
+    end
+
+    if has_config("mcp") then 
+        add_headerfiles("$(projectdir)/(hikyuu/mcp/**.h)")
+        add_files("hikyuu/mcp/*.cpp")
     end
 
     if has_config("sqlite") then
