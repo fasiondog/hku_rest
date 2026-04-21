@@ -103,21 +103,11 @@ net::awaitable<void> HttpHandle::operator()() {
     co_return;
 }
 
-static http::status transBizErrToHttpStatus(int32_t err) noexcept {
-    auto mod = get_biz_mod(err);
-    if (mod == BIZ_MOD_BASE) {
-        return http::status::bad_request;
-    } else if (mod == BIZ_MOD_AUTH) {
-        return http::status::unauthorized;
-    }
-    return http::status::ok;  // 其他以200返回
-}
-
 void HttpHandle::processError(int32_t err) noexcept {
     try {
         // 直接设置错误响应的状态码和数据
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
-        ctx->res.result(transBizErrToHttpStatus(err));
+        ctx->res.result(http::status::ok);  // 传输成功，统一返回200
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
         ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", err, biz_err_msg(err));
         ctx->res.prepare_payload();
@@ -136,7 +126,7 @@ void HttpHandle::processBizException(const BizException& e) noexcept {
     try {
         CLS_ERROR("{}", e.what());
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
-        ctx->res.result(transBizErrToHttpStatus(e.errcode()));
+        ctx->res.result(http::status::ok);  // 传输成功，统一返回200
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
         ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", e.errcode(), e.what());
         ctx->res.prepare_payload();
