@@ -106,6 +106,8 @@ public:
 
         // 检查是否达到最大会话数
         if (m_sessions.size() >= m_max_sessions) {
+            lock.unlock();
+
             // 清理过期会话
             cleanupExpiredSessions();
 
@@ -114,6 +116,8 @@ public:
                 HKU_WARN("Session limit reached ({}), rejecting new session", m_max_sessions);
                 return false;
             }
+
+            lock.lock();
         }
 
         SessionData session(session_id, client_info);
