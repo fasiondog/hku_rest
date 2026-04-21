@@ -306,7 +306,8 @@ public:
 
 private:
     mutable std::shared_mutex m_mutex;
-    std::unordered_map<std::string, SessionData> m_sessions;
+    std::map<std::string, SessionData>
+      m_sessions;  // 频繁增删，不使用unordered_map，防止内存占用累积
     int m_timeout_seconds;
     int m_max_sessions;
 };
