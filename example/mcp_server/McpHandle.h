@@ -29,15 +29,6 @@ class McpHandle : public HttpHandle {
     HTTP_HANDLE_IMP(McpHandle)
 
 public:
-    /**
-     * 配置 SSE 心跳功能（已弃用）
-     * @deprecated Streamable HTTP 不需要独立的心跳机制
-     */
-    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
-    static void configureSSEHeartbeat(bool enabled = true, int interval_seconds = 30) {
-        // No-op: Streamable HTTP relies on HTTP keep-alive for connection management
-    }
-
     virtual net::awaitable<VoidBizResult> run() override {
         // 1. 只接受 POST 请求
         if (getReqMethod() != "POST") {
