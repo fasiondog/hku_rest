@@ -84,7 +84,7 @@ static const char* biz_mcp_err_msg(BizErrCode ec) noexcept {
 
 // 全局自动注册
 static inline bool mcp_mod_reg = [] {
-    register_mcp_error_module(BIZ_MOD_MCP, biz_mcp_err_msg);
+    register_biz_error_module(BIZ_MOD_MCP, biz_mcp_err_msg);
     return true;
 }();
 

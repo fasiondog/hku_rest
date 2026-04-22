@@ -527,6 +527,26 @@ private:
                  {"description", "Name of the task"},
                  {"default", "example_task"}}}}}}}});
 
+        // 示例工具 6: 分页数据查询（演示 MCP 分页机制）
+        tools.push_back({{"name", "query_paginated_data"},
+                         {"description",
+                          "Query a large dataset with pagination support. Returns items in pages "
+                          "using cursor-based pagination."},
+                         {"inputSchema",
+                          {{"type", "object"},
+                           {"properties",
+                            {{"page_size",
+                              {{"type", "integer"},
+                               {"description",
+                                "Number of items per page (default: 10, max: 100)"},
+                               {"default", 10},
+                               {"minimum", 1},
+                               {"maximum", 100}}},
+                             {"cursor",
+                              {{"type", "string"},
+                               {"description",
+                                "Opaque cursor string for pagination (omit for first page)"}}}}}}}});
+
         return {{"tools", tools}};
     }
 
@@ -550,6 +570,8 @@ private:
             co_return executeGetSessionHistory(arguments, session_id);
         } else if (tool_name == "long_running_task") {
             co_return co_await executeLongRunningTask(arguments, session_id);
+        } else if (tool_name == "query_paginated_data") {
+            co_return executeQueryPaginatedData(arguments, session_id);
         } else {
             throw std::runtime_error("Unknown tool: " + tool_name);
         }
@@ -716,6 +738,206 @@ private:
         response["task_id"] = task_id;
 
         co_return response;
+    }
+
+    /**
+     * 执行分页数据查询工具（演示 MCP 分页机制）
+     * 
+     * 模拟一个大型数据集，支持基于游标的分页查询
+     * 符合 MCP 协议规范：
+     * - 使用 cursor 参数进行分页
+     * - 返回 nextCursor 指示是否有更多数据
+     * - cursor 是不透明的字符串标记
+     */
+    nlohmann::json executeQueryPaginatedData(const nlohmann::json& arguments,
+                                             const std::string& session_id) {
+        int page_size = arguments.value("page_size", 10);
+        std::string cursor = arguments.value("cursor", "");
+
+        // 限制页面大小
+        if (page_size < 1) page_size = 1;
+        if (page_size > 100) page_size = 100;
+
+        HKU_INFO("MCP query_paginated_data: page_size={}, cursor={} (session: {})", page_size,
+                 cursor.empty() ? "none" : cursor, session_id);
+
+        // 模拟一个包含 250 条记录的大型数据集
+        // 在实际应用中，这里应该是数据库查询或 API 调用
+        const int total_items = 250;
+
+        // 解析游标（游标是 base64 编码的偏移量）
+        int start_idx = 0;
+        if (!cursor.empty()) {
+            try {
+                // 解码 base64 游标
+                std::string decoded_cursor = decodeBase64(cursor);
+                start_idx = std::stoi(decoded_cursor);
+
+                // 验证游标有效性
+                if (start_idx < 0 || start_idx >= total_items) {
+                    throw std::runtime_error("Invalid cursor");
+                }
+            } catch (const std::exception& e) {
+                HKU_WARN("Invalid cursor '{}': {}", cursor, e.what());
+                // 对于无效游标，返回错误（MCP 规范要求）
+                throw std::runtime_error(fmt::format("Invalid cursor: {}", cursor));
+            }
+        }
+
+        // 计算当前页的数据范围
+        int end_idx = std::min(start_idx + page_size, total_items);
+        int actual_count = end_idx - start_idx;
+
+        // 生成当前页的数据项
+        nlohmann::json items = nlohmann::json::array();
+        for (int i = start_idx; i < end_idx; ++i) {
+            nlohmann::json item;
+            item["id"] = i + 1;  // ID 从 1 开始
+            item["name"] = fmt::format("Item_{}", i + 1);
+            item["value"] = fmt::format("Value for item {}", i + 1);
+            item["index"] = i;
+            item["created_at"] =
+              std::chrono::duration_cast<std::chrono::seconds>(
+                std::chrono::system_clock::now().time_since_epoch())
+                  .count() -
+              (total_items - i) * 60;  // 模拟不同的创建时间
+
+            items.push_back(item);
+        }
+
+        // 计算下一页的游标
+        std::string next_cursor;
+        if (end_idx < total_items) {
+            // 还有更多数据，生成下一个游标
+            int next_start = end_idx;
+            next_cursor = encodeBase64(std::to_string(next_start));
+        }
+        // 如果 end_idx >= total_items，next_cursor 保持为空，表示没有更多数据
+
+        // 构建响应
+        nlohmann::json response;
+        response["content"] = nlohmann::json::array({{{"type", "text"},
+                                                      {"text", fmt::format(
+                                                         "Retrieved {} items (total: {}, page "
+                                                         "size: {})",
+                                                         actual_count, total_items, page_size)}}});
+
+        // 添加分页元数据（符合 MCP 规范）
+        response["items"] = items;
+        response["pagination"] = {{"total_items", total_items},
+                                  {"current_page_start", start_idx},
+                                  {"current_page_end", end_idx - 1},
+                                  {"returned_count", actual_count},
+                                  {"has_more", !next_cursor.empty()}};
+
+        // 如果有更多数据，添加 nextCursor 字段
+        if (!next_cursor.empty()) {
+            response["nextCursor"] = next_cursor;
+        }
+
+        // 记录到会话历史
+        recordToolUsage(session_id, "query_paginated_data",
+                        {{"page_size", page_size},
+                         {"cursor", cursor.empty() ? "first_page" : cursor},
+                         {"returned_count", actual_count},
+                         {"has_more", !next_cursor.empty()}});
+
+        return response;
+    }
+
+    /**
+     * Base64 编码（简化版本，仅用于游标编码）
+     */
+    static std::string encodeBase64(const std::string& input) {
+        static const char base64_chars[] =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        std::string encoded;
+        int i = 0;
+        unsigned char char_array_3[3];
+        unsigned char char_array_4[4];
+        int in_len = input.size();
+        const char* bytes_to_encode = input.c_str();
+
+        while (in_len--) {
+            char_array_3[i++] = *(bytes_to_encode++);
+            if (i == 3) {
+                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+                char_array_4[3] = char_array_3[2] & 0x3f;
+
+                for (i = 0; i < 4; i++)
+                    encoded += base64_chars[char_array_4[i]];
+                i = 0;
+            }
+        }
+
+        if (i) {
+            for (int j = i; j < 3; j++)
+                char_array_3[j] = '\0';
+
+            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
+            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
+            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
+            char_array_4[3] = char_array_3[2] & 0x3f;
+
+            for (int j = 0; j < i + 1; j++)
+                encoded += base64_chars[char_array_4[j]];
+
+            while (i++ < 3)
+                encoded += '=';
+        }
+
+        return encoded;
+    }
+
+    /**
+     * Base64 解码（简化版本，仅用于游标解码）
+     */
+    static std::string decodeBase64(const std::string& encoded) {
+        static const char base64_chars[] =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+        int in_len = encoded.size();
+        int i = 0;
+        int in_ = 0;
+        unsigned char char_array_4[4], char_array_3[3];
+        std::string decoded;
+
+        while (in_len-- && (encoded[in_] != '=') && isalnum(encoded[in_])) {
+            char_array_4[i++] = encoded[in_];
+            in_++;
+            if (i == 4) {
+                for (i = 0; i < 4; i++)
+                    char_array_4[i] = strchr(base64_chars, char_array_4[i]) - base64_chars;
+
+                char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+                char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+                char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+                for (i = 0; i < 3; i++)
+                    decoded += char_array_3[i];
+                i = 0;
+            }
+        }
+
+        if (i) {
+            for (int j = i; j < 4; j++)
+                char_array_4[j] = 0;
+
+            for (int j = 0; j < 4; j++)
+                char_array_4[j] = strchr(base64_chars, char_array_4[j]) - base64_chars;
+
+            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
+            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
+            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
+
+            for (int j = 0; j < i - 1; j++)
+                decoded += char_array_3[j];
+        }
+
+        return decoded;
     }
 
     /**

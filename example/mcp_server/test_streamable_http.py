@@ -84,18 +84,17 @@ def test_long_connection_sse_mode():
     print("模式 2: 长连接 SSE 流式响应 (Long Connection with SSE)")
     print("=" * 70)
     
-    # 第一步：初始化并获取 Session ID
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream"  # 请求 SSE 流式响应
+    # 第一步：初始化并获取 Session ID（使用普通 JSON 响应）
+    headers_init = {
+        "Content-Type": "application/json"
     }
     
-    # Initialize with SSE
-    print("\n1. Initialize (SSE 流式，获取 Session ID)")
+    # Initialize with JSON response (not SSE)
+    print("\n1. Initialize (短连接 JSON，获取 Session ID)")
     start = time.time()
     response = requests.post(
         "http://localhost:8080/mcp",
-        headers=headers,
+        headers=headers_init,
         json={
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -105,8 +104,7 @@ def test_long_connection_sse_mode():
                 "clientInfo": {"name": "sse-test", "version": "1.0"}
             },
             "id": 1
-        },
-        stream=True  # 启用流式读取
+        }
     )
     
     # 提取 Session ID
@@ -118,13 +116,16 @@ def test_long_connection_sse_mode():
     elapsed = time.time() - start
     print(f"   Status: {response.status_code}")
     print(f"   Content-Type: {response.headers.get('Content-Type')}")
-    print(f"   Transfer-Encoding: {response.headers.get('Transfer-Encoding')}")
     print(f"   Response Time: {elapsed*1000:.2f}ms")
     print(f"   Session ID: {session_id}")
-    print(f"   Connection: Kept alive for streaming ✅\n")
+    print(f"   Connection: Closed immediately ✅\n")
     
-    # 后续请求使用 Session ID
-    headers["Mcp-Session-Id"] = session_id
+    # 后续请求使用 Session ID，并启用 SSE 模式
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",  # 请求 SSE 流式响应
+        "Mcp-Session-Id": session_id
+    }
 
     # Long Running Task with SSE
     print("2. Long Running Task (SSE 实时推送)")
@@ -138,7 +139,7 @@ def test_long_connection_sse_mode():
                 "name": "long_running_task",
                 "arguments": {
                     "task_name": "sse_demo",
-                    "duration_seconds": 2
+                    "duration_seconds": 5
                 }
             },
             "id": 2
