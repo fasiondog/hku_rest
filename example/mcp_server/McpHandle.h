@@ -30,14 +30,12 @@ class McpHandle : public HttpHandle {
 
 public:
     /**
-     * 配置 SSE 心跳功能
-     * @param enabled 是否启用 SSE 心跳（默认 true）
-     * @param interval_seconds 心跳间隔秒数（默认 30 秒）
+     * 配置 SSE 心跳功能（已弃用）
+     * @deprecated Streamable HTTP 不需要独立的心跳机制
      */
+    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
     static void configureSSEHeartbeat(bool enabled = true, int interval_seconds = 30) {
-        s_sse_heartbeat_enabled = enabled;
-        s_sse_heartbeat_interval = interval_seconds;
-        HKU_INFO("SSE heartbeat configured: enabled={}, interval={}s", enabled, interval_seconds);
+        // No-op: Streamable HTTP relies on HTTP keep-alive for connection management
     }
 
     virtual net::awaitable<VoidBizResult> run() override {
@@ -150,9 +148,6 @@ public:
                 enableChunkedTransfer();
 
                 HKU_INFO("Streamable HTTP mode enabled for session: {}", session_id);
-
-                // 启动 SSE 心跳任务（每 30 秒发送一次）
-                co_await startSSEHeartbeat(session_id);
             }
 
             // 11. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
@@ -254,70 +249,23 @@ private:
     }
 
     /**
-     * 发送 SSE 心跳（注释格式）
-     * 用于保持长连接活跃，防止中间代理断开
+     * 发送 SSE 心跳（已弃用）
+     * @deprecated Streamable HTTP 不需要独立的心跳机制
      */
+    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
     net::awaitable<void> sendSSEHeartbeat() {
-        if (!m_beast_context) {
-            co_return;
-        }
-
-        auto* ctx = static_cast<BeastContext*>(m_beast_context);
-
-        // 检查是否已启用 chunked transfer
-        if (ctx->res.body().empty()) {
-            // 首次发送，设置 SSE 头
-            setResHeader("Content-Type", "text/event-stream");
-            setResHeader("Cache-Control", "no-cache");
-            setResHeader("Connection", "keep-alive");
-            enableChunkedTransfer();
-        }
-
-        // 发送 SSE 注释格式的心跳: : ping - <timestamp>
-        auto now = std::chrono::system_clock::now();
-        auto time_t_now = std::chrono::system_clock::to_time_t(now);
-        std::tm tm_now;
-        localtime_r(&time_t_now, &tm_now);
-
-        char time_buf[64];
-        std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S", &tm_now);
-
-        std::string heartbeat = fmt::format(": ping - {}\n\n", time_buf);
-
-        try {
-            co_await writeChunk(heartbeat);
-            HKU_DEBUG("SSE heartbeat sent");
-        } catch (...) {
-            // 忽略客户端断开等错误
-            HKU_DEBUG("Failed to send SSE heartbeat (client may have disconnected)");
-        }
+        // No-op
+        co_return;
     }
 
     /**
-     * 启动 SSE 心跳后台任务
-     * @param session_id 会话 ID
-     * @note 心跳间隔可通过配置文件或常量调整
+     * 启动 SSE 心跳后台任务（已弃用）
+     * @deprecated Streamable HTTP 不需要独立的心跳机制
      */
+    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
     net::awaitable<void> startSSEHeartbeat(const std::string& session_id) {
-        // 检查是否启用 SSE 心跳
-        if (!s_sse_heartbeat_enabled) {
-            HKU_DEBUG("SSE heartbeat disabled for session: {}", session_id);
-            co_return;
-        }
-
-        HKU_DEBUG("Starting SSE heartbeat for session: {} (interval: {}s)", session_id,
-                  s_sse_heartbeat_interval);
-
-        // 在后台循环发送心跳
-        while (true) {
-            // 等待指定的时间间隔
-            co_await sleep_for(std::chrono::seconds(s_sse_heartbeat_interval));
-
-            // 发送心跳
-            co_await sendSSEHeartbeat();
-
-            // 注意：如果客户端断开，writeChunk 会抛出异常，循环会自动退出
-        }
+        // No-op
+        co_return;
     }
 
     /**
@@ -331,9 +279,9 @@ private:
     // 静态 Session 管理器（所有实例共享）
     static inline SessionManager m_session_manager{3600, 10000};  // 1小时超时，最多10000个会话
 
-    // SSE 心跳配置
-    static inline bool s_sse_heartbeat_enabled = true;  // 默认启用
-    static inline int s_sse_heartbeat_interval = 30;    // 默认 30 秒
+    // SSE 心跳配置（已弃用，保留仅用于向后兼容）
+    static inline bool s_sse_heartbeat_enabled = false;  // 默认禁用
+    static inline int s_sse_heartbeat_interval = 30;     // 保留但不再使用
 
     /**
      * 生成符合 MCP 协议规范的 Session ID
@@ -528,24 +476,24 @@ private:
                  {"default", "example_task"}}}}}}}});
 
         // 示例工具 6: 分页数据查询（演示 MCP 分页机制）
-        tools.push_back({{"name", "query_paginated_data"},
-                         {"description",
-                          "Query a large dataset with pagination support. Returns items in pages "
-                          "using cursor-based pagination."},
-                         {"inputSchema",
-                          {{"type", "object"},
-                           {"properties",
-                            {{"page_size",
-                              {{"type", "integer"},
-                               {"description",
-                                "Number of items per page (default: 10, max: 100)"},
-                               {"default", 10},
-                               {"minimum", 1},
-                               {"maximum", 100}}},
-                             {"cursor",
-                              {{"type", "string"},
-                               {"description",
-                                "Opaque cursor string for pagination (omit for first page)"}}}}}}}});
+        tools.push_back(
+          {{"name", "query_paginated_data"},
+           {"description",
+            "Query a large dataset with pagination support. Returns items in pages "
+            "using cursor-based pagination."},
+           {"inputSchema",
+            {{"type", "object"},
+             {"properties",
+              {{"page_size",
+                {{"type", "integer"},
+                 {"description", "Number of items per page (default: 10, max: 100)"},
+                 {"default", 10},
+                 {"minimum", 1},
+                 {"maximum", 100}}},
+               {"cursor",
+                {{"type", "string"},
+                 {"description",
+                  "Opaque cursor string for pagination (omit for first page)"}}}}}}}});
 
         return {{"tools", tools}};
     }
@@ -742,7 +690,7 @@ private:
 
     /**
      * 执行分页数据查询工具（演示 MCP 分页机制）
-     * 
+     *
      * 模拟一个大型数据集，支持基于游标的分页查询
      * 符合 MCP 协议规范：
      * - 使用 cursor 参数进行分页
@@ -755,8 +703,10 @@ private:
         std::string cursor = arguments.value("cursor", "");
 
         // 限制页面大小
-        if (page_size < 1) page_size = 1;
-        if (page_size > 100) page_size = 100;
+        if (page_size < 1)
+            page_size = 1;
+        if (page_size > 100)
+            page_size = 100;
 
         HKU_INFO("MCP query_paginated_data: page_size={}, cursor={} (session: {})", page_size,
                  cursor.empty() ? "none" : cursor, session_id);
@@ -796,11 +746,10 @@ private:
             item["name"] = fmt::format("Item_{}", i + 1);
             item["value"] = fmt::format("Value for item {}", i + 1);
             item["index"] = i;
-            item["created_at"] =
-              std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::system_clock::now().time_since_epoch())
-                  .count() -
-              (total_items - i) * 60;  // 模拟不同的创建时间
+            item["created_at"] = std::chrono::duration_cast<std::chrono::seconds>(
+                                   std::chrono::system_clock::now().time_since_epoch())
+                                   .count() -
+                                 (total_items - i) * 60;  // 模拟不同的创建时间
 
             items.push_back(item);
         }
@@ -816,11 +765,11 @@ private:
 
         // 构建响应
         nlohmann::json response;
-        response["content"] = nlohmann::json::array({{{"type", "text"},
-                                                      {"text", fmt::format(
-                                                         "Retrieved {} items (total: {}, page "
-                                                         "size: {})",
-                                                         actual_count, total_items, page_size)}}});
+        response["content"] =
+          nlohmann::json::array({{{"type", "text"},
+                                  {"text", fmt::format("Retrieved {} items (total: {}, page "
+                                                       "size: {})",
+                                                       actual_count, total_items, page_size)}}});
 
         // 添加分页元数据（符合 MCP 规范）
         response["items"] = items;

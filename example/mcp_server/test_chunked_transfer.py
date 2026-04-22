@@ -168,16 +168,15 @@ def test_sse_streaming_response():
     print("测试 3: SSE Streaming Response (Server → Client)")
     print("=" * 70)
     
-    headers = {
-        "Content-Type": "application/json",
-        "Accept": "text/event-stream"
+    # Step 1: Initialize with standard JSON (not SSE)
+    headers_init = {
+        "Content-Type": "application/json"
     }
     
-    # 先初始化并获取 Session ID
-    print("\nStep 1: Initialize session...")
+    print("\nStep 1: Initialize session (standard JSON)...")
     response = requests.post(
         "http://localhost:8080/mcp",
-        headers=headers,
+        headers=headers_init,
         json={
             "jsonrpc": "2.0",
             "method": "initialize",
@@ -197,8 +196,12 @@ def test_sse_streaming_response():
     
     print(f"  ✅ Session initialized, ID: {session_id}\n")
     
-    # 后续请求使用 Session ID
-    headers["Mcp-Session-Id"] = session_id
+    # Step 2: Use SSE for long-running task
+    headers = {
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+        "Mcp-Session-Id": session_id
+    }
     
     print("Step 2: Requesting long_running_task with SSE streaming...")
     start = time.time()

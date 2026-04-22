@@ -74,16 +74,8 @@ int main(int argc, char* argv[]) {
         // 2. 创建 HTTP 服务器
         HttpServer server("0.0.0.0", 8080);
 
-        // 3. 配置 SSE 心跳（从配置文件读取，或使用默认值）
-        // 可通过 mcp_server.ini 中的 [mcp] sse_heartbeat_enabled 和 sse_heartbeat_interval 配置
-        bool heartbeat_enabled = true;  // 默认启用
-        int heartbeat_interval = 30;    // 默认 30 秒
-
-        // TODO: 从配置文件读取（如果需要）
-        // heartbeat_enabled = pod::get_config("mcp", "sse_heartbeat_enabled", true);
-        // heartbeat_interval = pod::get_config("mcp", "sse_heartbeat_interval", 30);
-
-        McpHandle::configureSSEHeartbeat(heartbeat_enabled, heartbeat_interval);
+        // 3. SSE 心跳已弃用（Streamable HTTP 不需要）
+        // McpHandle::configureSSEHeartbeat(false, 0);
 
         // 4. 注册 MCP 服务
         McpService mcp_service("");
