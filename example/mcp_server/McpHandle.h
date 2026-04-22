@@ -140,14 +140,20 @@ public:
                 setResHeader("Mcp-Session-Id", session_id.c_str());
             }
 
-            // 10. 如果客户端支持 SSE，启用流式响应并启动心跳
-            if (supports_sse) {
-                setResHeader("Content-Type", "text/event-stream");
-                setResHeader("Cache-Control", "no-cache");
-                setResHeader("Connection", "keep-alive");
-                enableChunkedTransfer();
-
-                HKU_INFO("Streamable HTTP mode enabled for session: {}", session_id);
+            // 10. 对于长任务，如果客户端支持 SSE，启用流式响应
+            // 注意：不是所有请求都启用 SSE，只有真正需要流式推送的长任务才启用
+            bool enable_streaming = false;
+            if (supports_sse && method == "tools/call") {
+                std::string tool_name = params.value("name", "");
+                if (tool_name == "long_running_task") {
+                    enable_streaming = true;
+                    setResHeader("Content-Type", "text/event-stream");
+                    setResHeader("Cache-Control", "no-cache");
+                    setResHeader("Connection", "keep-alive");
+                    enableChunkedTransfer();
+                    HKU_INFO("SSE streaming enabled for long_running_task (session: {})",
+                             session_id);
+                }
             }
 
             // 11. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
@@ -157,8 +163,8 @@ public:
                 // 异常已在 handleMethod 内部处理并发送响应
             }
 
-            // 12. 如果使用 SSE，完成分块传输
-            if (supports_sse) {
+            // 12. 如果使用了 SSE，完成分块传输
+            if (enable_streaming) {
                 try {
                     co_await finishChunkedTransfer();
                 } catch (...) {
@@ -200,16 +206,44 @@ public:
     }
 
     /**
-     * 推送进度更新到 SSE 端点
+     * 推送进度更新到 SSE 端点（实时流式推送 + 存储历史）
      * @param session_id 会话 ID
      * @param task_id 任务 ID
      * @param progress 进度百分比 (0-100)
      * @param message 进度消息
      * @param data 附加数据
      */
-    static void pushProgress(const std::string& session_id, const std::string& task_id,
-                             int progress, const std::string& message,
-                             const nlohmann::json& data = nullptr) {
+    net::awaitable<void> pushProgress(const std::string& session_id, const std::string& task_id,
+                                      int progress, const std::string& message,
+                                      const nlohmann::json& data = nullptr) {
+        // 1. 构建 JSON-RPC 进度通知消息
+        nlohmann::json progress_notification;
+        progress_notification["jsonrpc"] = "2.0";
+        progress_notification["method"] = "notifications/progress";
+
+        nlohmann::json params;
+        params["progressToken"] = task_id;  // 使用 task_id 作为 progressToken
+        params["progress"] = progress;
+        params["total"] = 100;
+        params["message"] = message;
+
+        if (!data.is_null()) {
+            params["data"] = data;
+        }
+
+        progress_notification["params"] = params;
+
+        // 2. 如果启用了 chunked transfer，实时推送给客户端
+        if (m_beast_context && m_chunked_transfer) {
+            // 推送 SSE 格式的消息
+            std::string sse_msg = "data: " + progress_notification.dump() + "\n\n";
+            co_await writeChunk(sse_msg);
+
+            HKU_DEBUG("Pushed progress notification: {}% - {} (session: {})", progress, message,
+                      session_id);
+        }
+
+        // 3. 同时存储到 Session 元数据（用于历史记录和查询）
         nlohmann::json progress_data;
         progress_data["task_id"] = task_id;
         progress_data["progress"] = progress;
@@ -643,8 +677,8 @@ private:
                  duration);
 
         // 推送开始消息
-        pushProgress(session_id, task_id, 0, "Task started",
-                     {{"task_name", task_name}, {"estimated_duration", duration}});
+        co_await pushProgress(session_id, task_id, 0, "Task started",
+                              {{"task_name", task_name}, {"estimated_duration", duration}});
 
         // 模拟长时间运行的任务，定期推送进度
         int steps = 10;
@@ -658,15 +692,15 @@ private:
             std::string message = fmt::format("Processing... {}% complete", progress);
 
             // 推送进度更新
-            pushProgress(session_id, task_id, progress, message,
-                         {{"current_step", i}, {"total_steps", steps}});
+            co_await pushProgress(session_id, task_id, progress, message,
+                                  {{"current_step", i}, {"total_steps", steps}});
 
             HKU_DEBUG("Task {} progress: {}%", task_id, progress);
         }
 
         // 推送完成消息
-        pushProgress(session_id, task_id, 100, "Task completed successfully",
-                     {{"result", "success"}, {"output", "Task finished"}});
+        co_await pushProgress(session_id, task_id, 100, "Task completed successfully",
+                              {{"result", "success"}, {"output", "Task finished"}});
 
         // 记录到会话历史
         recordToolUsage(session_id, "long_running_task",
@@ -679,10 +713,10 @@ private:
         nlohmann::json response;
         response["content"] = nlohmann::json::array(
           {{{"type", "text"},
-            {"text", fmt::format("Task '{}' started with ID: {}\n"
-                                 "Monitor progress via SSE endpoint: /sse?sessionId={}\n"
-                                 "Estimated completion: {} seconds",
-                                 task_name, task_id, session_id, duration)}}});
+            {"text", fmt::format("Task '{}' completed with ID: {}\n"
+                                 "Total duration: {} seconds\n"
+                                 "Received {} progress updates via SSE stream",
+                                 task_name, task_id, duration, steps)}}});
         response["task_id"] = task_id;
 
         co_return response;
@@ -1251,16 +1285,7 @@ Include:
             std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
 
             if (m_beast_context) {
-                auto* ctx = static_cast<BeastContext*>(m_beast_context);
-
-                // 首次发送时设置 SSE 响应头并启用 chunked
-                if (ctx->res.body().empty()) {
-                    setResHeader("Content-Type", "text/event-stream");
-                    setResHeader("Cache-Control", "no-cache");
-                    setResHeader("Connection", "keep-alive");
-                    enableChunkedTransfer();
-                }
-
+                // 注意：enableChunkedTransfer 已在 handleRequest 中调用，这里不需要再次调用
                 co_await writeChunk(sse_msg);
             }
         } else {
@@ -1282,7 +1307,11 @@ Include:
                                                const nlohmann::json& id, bool use_sse = false) {
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
-        response["error"] = {{"code", code}, {"message", message}};
+
+        nlohmann::json error;
+        error["code"] = code;
+        error["message"] = message;
+        response["error"] = error;
         response["id"] = id;
 
         if (use_sse) {

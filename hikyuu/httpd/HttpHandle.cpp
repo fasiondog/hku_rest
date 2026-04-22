@@ -452,34 +452,15 @@ net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) noexcept {
         if (!m_headers_sent) {
             m_headers_sent = true;
 
-            // 设置 Transfer-Encoding: chunked
-            ctx->res.set(http::field::transfer_encoding, "chunked");
-
             // 准备空的响应体（重要：这会移除 Content-Length）
             ctx->res.body() = "";
 
-            // 不要调用 prepare_payload()！它会设置 Content-Length，而分块传输不需要
-            // ctx->res.prepare_payload();
+            // 创建 serializer 用于分块传输
+            http::response_serializer<http::string_body> sr(ctx->res);
 
-            // 手动构造 HTTP 响应头字符串
-            std::string header_str;
-            header_str.reserve(512);
-
-            // 状态行
-            header_str +=
-              fmt::format("HTTP/1.1 {} {}\r\n", ctx->res.result_int(), ctx->res.reason());
-
-            // 所有响应头
-            for (const auto& field : ctx->res) {
-                header_str += fmt::format("{}: {}\r\n", field.name_string(), field.value());
-            }
-
-            // 空行表示头结束
-            header_str += "\r\n";
-
-            // 同步写入响应头
+            // 发送响应头
             beast::error_code ec;
-            net::write(ctx->socket, net::buffer(header_str), ec);
+            co_await http::async_write_header(ctx->socket, sr, net::use_awaitable);
 
             if (ec.failed()) {
                 CLS_ERROR("Failed to send response headers: {}", ec.message());
@@ -497,10 +478,20 @@ net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) noexcept {
         beast::error_code ec;
         co_await net::async_write(ctx->socket, net::buffer(chunk), net::use_awaitable);
 
+        if (ec.failed()) {
+            CLS_ERROR("Failed to write chunk: {}", ec.message());
+        }
+
         co_return !ec.failed();
 
     } catch (const std::exception& e) {
-        CLS_ERROR("writeChunk error: {}", e.what());
+        std::string error_msg = e.what();
+        if (error_msg.find("Broken pipe") != std::string::npos ||
+            error_msg.find("Connection reset by peer") != std::string::npos) {
+            HKU_DEBUG("[HttpHandle] Client disconnected during chunk write: {}", error_msg);
+        } else {
+            CLS_ERROR("writeChunk error: {}", error_msg);
+        }
         co_return false;
     } catch (...) {
         CLS_ERROR("writeChunk unknown error");
@@ -566,7 +557,13 @@ bool HttpHandle::writeChunkSync(const std::string& data) noexcept {
         return !ec.failed();
 
     } catch (const std::exception& e) {
-        CLS_ERROR("writeChunkSync error: {}", e.what());
+        std::string error_msg = e.what();
+        if (error_msg.find("Broken pipe") != std::string::npos ||
+            error_msg.find("Connection reset by peer") != std::string::npos) {
+            HKU_DEBUG("[HttpHandle] Client disconnected during chunk write: {}", error_msg);
+        } else {
+            CLS_ERROR("writeChunkSync error: {}", error_msg);
+        }
         return false;
     } catch (...) {
         return false;
@@ -596,7 +593,15 @@ net::awaitable<bool> HttpHandle::finishChunkedTransfer() noexcept {
         co_return !ec.failed();
 
     } catch (const std::exception& e) {
-        CLS_ERROR("finishChunkedTransfer error: {}", e.what());
+        // 客户端断开连接属于预期行为，不应记录为 ERROR
+        std::string error_msg = e.what();
+        if (error_msg.find("Broken pipe") != std::string::npos ||
+            error_msg.find("Connection reset by peer") != std::string::npos) {
+            HKU_DEBUG("[HttpHandle] Client disconnected during chunked transfer: {}", error_msg);
+        } else {
+            CLS_ERROR("finishChunkedTransfer error: {}", error_msg);
+        }
+
         // 即使出错也要标记响应已发送，防止框架再次发送响应
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);

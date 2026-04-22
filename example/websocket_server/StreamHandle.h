@@ -122,7 +122,7 @@ public:
             std::string message = fmt::format("data: Message {} at {}\n\n", i, std::time(nullptr));
 
             if (!co_await writeChunk(message)) {
-                HKU_ERROR("Failed to send SSE message {}", i);
+                HKU_DEBUG("Client disconnected during SSE stream");
                 break;
             }
 
@@ -190,7 +190,7 @@ public:
             // 每达到 BATCH_SIZE 条发送一批
             if ((i + 1) % BATCH_SIZE == 0) {
                 if (!co_await writeChunk(batch.str())) {
-                    HKU_ERROR("Failed to write CSV batch");
+                    HKU_DEBUG("Client disconnected during CSV export");
                     break;
                 }
                 batch.str("");  // 清空缓冲区

@@ -1355,7 +1355,8 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
             if (!session->response_sent) {
                 co_await writeResponse(session);
             } else {
-                HKU_ERROR("Skipping writeResponse: response already sent");
+                HKU_DEBUG(
+                  "Skipping writeResponse: response already sent (chunked transfer completed)");
             }
 
             // ========== 检查是否需要保持连接 ==========
