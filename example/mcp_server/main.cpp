@@ -11,8 +11,9 @@
 #include <thread>
 #include "hikyuu/httpd/HttpServer.h"
 #include "hikyuu/httpd/pod/all.h"
-#include "McpService.h"
-#include "SessionManager.h"
+#include "hikyuu/mcp/McpService.h"
+#include "hikyuu/mcp/SessionManager.h"
+#include "HelloHandle.h"
 
 using namespace hku;
 
@@ -80,6 +81,8 @@ int main(int argc, char* argv[]) {
         // 4. 注册 MCP 服务
         McpService mcp_service("");
         mcp_service.bind(&server);
+
+        server.GET<HelloHandle>("/health");
 
         // 5. 启动 Session 清理后台线程
         std::thread cleanup_thread(session_cleanup_thread);

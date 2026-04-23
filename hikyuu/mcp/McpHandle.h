@@ -7,10 +7,12 @@
 
 #pragma once
 
-#include "hikyuu/httpd/HttpHandle.h"
-#include <nlohmann/json.hpp>
-#include "SessionManager.h"
 #include <random>
+#include <nlohmann/json.hpp>
+#include "hikyuu/utilities/base64.h"
+#include "hikyuu/httpd/HttpHandle.h"
+#include "McpError.h"
+#include "SessionManager.h"
 
 namespace hku {
 
@@ -31,10 +33,10 @@ class McpHandle : public HttpHandle {
 public:
     virtual net::awaitable<VoidBizResult> run() override {
         // 1. 只接受 POST 请求
-        if (getReqMethod() != "POST") {
-            co_await sendJsonErrorResponse(-32600, "Invalid Request", nlohmann::json(), false);
-            co_return BIZ_OK;
-        }
+        // if (getReqMethod() != "POST") {
+        //     co_await sendMcpErrorResponse(BIZ_JSONRPC_INVALID_REQUEST, nlohmann::json(), false);
+        //     co_return BIZ_OK;
+        // }
 
         // 2. 检查 Accept 头，判断客户端是否支持 SSE 流式响应
         std::string accept_header = getReqHeader("Accept");
@@ -43,14 +45,13 @@ public:
         // 3. 读取请求体（框架会自动处理 chunked 解码）
         std::string body = getReqData();
         if (body.empty()) {
-            co_await sendJsonErrorResponse(-32700, "Parse error", nlohmann::json(), supports_sse);
+            co_await sendMcpErrorResponse(BIZ_JSONRPC_PARSE_ERROR, nlohmann::json(), supports_sse);
             co_return BIZ_OK;
         }
 
         // 用于捕获块中记录错误，稍后统一发送
         bool has_error = false;
         int error_code = 0;
-        std::string error_message;
         nlohmann::json error_id = nullptr;
 
         try {
@@ -59,8 +60,8 @@ public:
 
             // 4. 验证 JSON-RPC 版本
             if (!request.contains("jsonrpc") || request["jsonrpc"] != "2.0") {
-                co_await sendJsonErrorResponse(
-                  -32600, "Invalid Request",
+                co_await sendMcpErrorResponse(
+                  BIZ_JSONRPC_INVALID_REQUEST,
                   request.contains("id") ? request["id"] : nlohmann::json(), supports_sse);
                 co_return BIZ_OK;
             }
@@ -78,25 +79,23 @@ public:
             if (method == "initialize") {
                 // 如果客户端已提供 Session ID（重连场景），验证其有效性
                 if (!session_id.empty()) {
-                    auto session = m_session_manager.getSession(session_id);
+                    auto session = getSessionManager().getSession(session_id);
                     if (!session) {
                         // Session 已失效，要求客户端重新初始化
                         HKU_WARN("Invalid session ID in initialize request: {}", session_id);
-                        co_await sendJsonErrorResponse(-32602, "Invalid or expired session", id,
-                                                       supports_sse);
+                        co_await sendMcpErrorResponse(BIZ_JSONRPC_INVALID_PARAMS, id, supports_sse);
                         co_return BIZ_OK;
                     }
                     // 更新会话活动时间
-                    m_session_manager.touchSession(session_id);
+                    getSessionManager().touchSession(session_id);
                     HKU_INFO("Session reconnected: {}", session_id);
                 } else {
                     // 为新连接生成 Session ID
                     session_id = generateSessionId();
                     std::string client_ip = getClientIp();
 
-                    if (!m_session_manager.registerSession(session_id, client_ip)) {
-                        co_await sendJsonErrorResponse(-32603, "Failed to register session", id,
-                                                       supports_sse);
+                    if (!getSessionManager().registerSession(session_id, client_ip)) {
+                        co_await sendMcpErrorResponse(BIZ_JSONRPC_INTERNAL_ERROR, id, supports_sse);
                         co_return BIZ_OK;
                     }
 
@@ -108,22 +107,20 @@ public:
                 // 8. 对于非 initialize 方法，必须携带有效的 Session ID
                 if (session_id.empty()) {
                     // 返回 HTTP 400 Bad Request（通过 JSON-RPC 错误码表示）
-                    co_await sendJsonErrorResponse(-32602, "Missing Mcp-Session-Id header", id,
-                                                   supports_sse);
+                    co_await sendMcpErrorResponse(BIZ_MCP_VERSION_MISMATCH, id, supports_sse);
                     co_return BIZ_OK;
                 }
 
                 // 验证会话有效性
-                auto session = m_session_manager.getSession(session_id);
+                auto session = getSessionManager().getSession(session_id);
                 if (!session) {
                     // 返回 HTTP 404 Not Found（通过 JSON-RPC 错误码表示）
-                    co_await sendJsonErrorResponse(-32602, "Session not found or expired", id,
-                                                   supports_sse);
+                    co_await sendMcpErrorResponse(BIZ_MCP_UNAUTHORIZED, id, supports_sse);
                     co_return BIZ_OK;
                 }
 
                 // 更新会话活动时间
-                m_session_manager.touchSession(session_id);
+                getSessionManager().touchSession(session_id);
             }
 
             // 9. 在响应中回显 Session ID（方便客户端确认，使用标准头字段）
@@ -171,19 +168,17 @@ public:
         } catch (const nlohmann::json::parse_error& e) {
             HKU_ERROR("JSON parse error: {}", e.what());
             has_error = true;
-            error_code = -32700;
-            error_message = "Parse error";
+            error_code = BIZ_JSONRPC_PARSE_ERROR;
             error_id = nullptr;
         } catch (const std::exception& e) {
             HKU_ERROR("MCP handler error: {}", e.what());
             has_error = true;
-            error_code = -32603;
-            error_message = fmt::format("Internal error: {}", e.what());
+            error_code = BIZ_JSONRPC_INTERNAL_ERROR;
             error_id = nullptr;
         }
 
         if (has_error) {
-            co_await sendJsonErrorResponse(error_code, error_message, error_id, supports_sse);
+            co_await sendMcpErrorResponse(error_code, error_id, supports_sse);
         }
 
         co_return BIZ_OK;
@@ -246,7 +241,7 @@ public:
         }
 
         // 使用数组存储多个进度更新（而不是覆盖）
-        auto history_json = m_session_manager.getSessionMetadata(session_id, "progress_history");
+        auto history_json = getSessionManager().getSessionMetadata(session_id, "progress_history");
         nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
 
         history.push_back(progress_data);
@@ -257,11 +252,15 @@ public:
         }
 
         // 存储到 Session 元数据
-        m_session_manager.setSessionMetadata(session_id, "progress_history", history);
+        getSessionManager().setSessionMetadata(session_id, "progress_history", history);
 
         // 同时设置最新的进度（用于快速访问）
-        m_session_manager.setSessionMetadata(session_id, "progress_update", progress_data);
+        getSessionManager().setSessionMetadata(session_id, "progress_update", progress_data);
     }
+
+private:
+    // 静态 Session 管理器（所有实例共享）
+    static inline SessionManager m_session_manager{3600, 10000};  // 1小时超时，最多10000个会话
 
 private:
     /**
@@ -274,39 +273,12 @@ private:
     }
 
     /**
-     * 发送 SSE 心跳（已弃用）
-     * @deprecated Streamable HTTP 不需要独立的心跳机制
-     */
-    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
-    net::awaitable<void> sendSSEHeartbeat() {
-        // No-op
-        co_return;
-    }
-
-    /**
-     * 启动 SSE 心跳后台任务（已弃用）
-     * @deprecated Streamable HTTP 不需要独立的心跳机制
-     */
-    [[deprecated("Streamable HTTP does not require separate heartbeat mechanism")]]
-    net::awaitable<void> startSSEHeartbeat(const std::string& session_id) {
-        // No-op
-        co_return;
-    }
-
-    /**
      * 获取当前时间戳（秒）
      */
     static long long getCurrentTimestamp() {
         auto now = std::chrono::system_clock::now();
         return std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     }
-
-    // 静态 Session 管理器（所有实例共享）
-    static inline SessionManager m_session_manager{3600, 10000};  // 1小时超时，最多10000个会话
-
-    // SSE 心跳配置（已弃用，保留仅用于向后兼容）
-    static inline bool s_sse_heartbeat_enabled = false;  // 默认禁用
-    static inline int s_sse_heartbeat_interval = 30;     // 保留但不再使用
 
     /**
      * 生成符合 MCP 协议规范的 Session ID
@@ -400,7 +372,7 @@ private:
                 auto result = handleUnregisterSession(session_id);
                 co_await sendJsonSuccessResponse(result, id, use_sse);
             } else {
-                co_await sendJsonErrorResponse(-32601, "Method not found", id, use_sse);
+                co_await sendMcpErrorResponse(BIZ_JSONRPC_METHOD_NOT_FOUND, id, use_sse);
             }
         } catch (const std::exception& e) {
             HKU_ERROR("Error handling method {}: {}", method, e.what());
@@ -416,7 +388,7 @@ private:
 
         // 存储客户端信息到 Session
         if (params.contains("clientInfo")) {
-            m_session_manager.setSessionMetadata(session_id, "client_info", params["clientInfo"]);
+            getSessionManager().setSessionMetadata(session_id, "client_info", params["clientInfo"]);
         }
 
         nlohmann::json result;
@@ -639,7 +611,7 @@ private:
         int limit = arguments.value("limit", 10);
 
         // 从 Session 元数据中获取历史记录
-        auto history_json = m_session_manager.getSessionMetadata(session_id, "history");
+        auto history_json = getSessionManager().getSessionMetadata(session_id, "history");
         if (history_json.is_null()) {
             return nlohmann::json::array();
         }
@@ -745,7 +717,7 @@ private:
         if (!cursor.empty()) {
             try {
                 // 解码 base64 游标
-                std::string decoded_cursor = decodeBase64(cursor);
+                std::string decoded_cursor = base64_decode(cursor);
                 start_idx = std::stoi(decoded_cursor);
 
                 // 验证游标有效性
@@ -784,7 +756,7 @@ private:
         if (end_idx < total_items) {
             // 还有更多数据，生成下一个游标
             int next_start = end_idx;
-            next_cursor = encodeBase64(std::to_string(next_start));
+            next_cursor = base64_encode(std::to_string(next_start));
         }
         // 如果 end_idx >= total_items，next_cursor 保持为空，表示没有更多数据
 
@@ -817,101 +789,6 @@ private:
                          {"has_more", !next_cursor.empty()}});
 
         return response;
-    }
-
-    /**
-     * Base64 编码（简化版本，仅用于游标编码）
-     */
-    static std::string encodeBase64(const std::string& input) {
-        static const char base64_chars[] =
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-        std::string encoded;
-        int i = 0;
-        unsigned char char_array_3[3];
-        unsigned char char_array_4[4];
-        int in_len = input.size();
-        const char* bytes_to_encode = input.c_str();
-
-        while (in_len--) {
-            char_array_3[i++] = *(bytes_to_encode++);
-            if (i == 3) {
-                char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-                char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-                char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-                char_array_4[3] = char_array_3[2] & 0x3f;
-
-                for (i = 0; i < 4; i++)
-                    encoded += base64_chars[char_array_4[i]];
-                i = 0;
-            }
-        }
-
-        if (i) {
-            for (int j = i; j < 3; j++)
-                char_array_3[j] = '\0';
-
-            char_array_4[0] = (char_array_3[0] & 0xfc) >> 2;
-            char_array_4[1] = ((char_array_3[0] & 0x03) << 4) + ((char_array_3[1] & 0xf0) >> 4);
-            char_array_4[2] = ((char_array_3[1] & 0x0f) << 2) + ((char_array_3[2] & 0xc0) >> 6);
-            char_array_4[3] = char_array_3[2] & 0x3f;
-
-            for (int j = 0; j < i + 1; j++)
-                encoded += base64_chars[char_array_4[j]];
-
-            while (i++ < 3)
-                encoded += '=';
-        }
-
-        return encoded;
-    }
-
-    /**
-     * Base64 解码（简化版本，仅用于游标解码）
-     */
-    static std::string decodeBase64(const std::string& encoded) {
-        static const char base64_chars[] =
-          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-        int in_len = encoded.size();
-        int i = 0;
-        int in_ = 0;
-        unsigned char char_array_4[4], char_array_3[3];
-        std::string decoded;
-
-        while (in_len-- && (encoded[in_] != '=') && isalnum(encoded[in_])) {
-            char_array_4[i++] = encoded[in_];
-            in_++;
-            if (i == 4) {
-                for (i = 0; i < 4; i++)
-                    char_array_4[i] = strchr(base64_chars, char_array_4[i]) - base64_chars;
-
-                char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-                char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-                char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-                for (i = 0; i < 3; i++)
-                    decoded += char_array_3[i];
-                i = 0;
-            }
-        }
-
-        if (i) {
-            for (int j = i; j < 4; j++)
-                char_array_4[j] = 0;
-
-            for (int j = 0; j < 4; j++)
-                char_array_4[j] = strchr(base64_chars, char_array_4[j]) - base64_chars;
-
-            char_array_3[0] = (char_array_4[0] << 2) + ((char_array_4[1] & 0x30) >> 4);
-            char_array_3[1] = ((char_array_4[1] & 0xf) << 4) + ((char_array_4[2] & 0x3c) >> 2);
-            char_array_3[2] = ((char_array_4[2] & 0x3) << 6) + char_array_4[3];
-
-            for (int j = 0; j < i - 1; j++)
-                decoded += char_array_3[j];
-        }
-
-        return decoded;
     }
 
     /**
@@ -1158,7 +1035,7 @@ Include:
         HKU_DEBUG("MCP ping request (session: {})", session_id);
 
         // 更新会话活动时间
-        m_session_manager.touchSession(session_id);
+        getSessionManager().touchSession(session_id);
 
         // 返回空结果（MCP 规范要求）
         return nlohmann::json::object();
@@ -1170,7 +1047,7 @@ Include:
     nlohmann::json handleSessionInfo(const std::string& session_id) {
         HKU_INFO("MCP session/info request (session: {})", session_id);
 
-        auto session = m_session_manager.getSession(session_id);
+        auto session = getSessionManager().getSession(session_id);
         if (!session) {
             throw std::runtime_error("Session not found or expired");
         }
@@ -1201,7 +1078,7 @@ Include:
             throw std::runtime_error("Missing 'key' parameter");
         }
 
-        bool success = m_session_manager.setSessionMetadata(session_id, key, value);
+        bool success = getSessionManager().setSessionMetadata(session_id, key, value);
         if (!success) {
             throw std::runtime_error("Failed to set session metadata");
         }
@@ -1219,7 +1096,7 @@ Include:
     nlohmann::json handleUnregisterSession(const std::string& session_id) {
         HKU_INFO("MCP session/unregister request (session: {})", session_id);
 
-        bool success = m_session_manager.unregisterSession(session_id);
+        bool success = getSessionManager().unregisterSession(session_id);
         if (!success) {
             throw std::runtime_error("Session not found or already unregistered");
         }
@@ -1246,7 +1123,7 @@ Include:
         record["details"] = details;
 
         // 获取现有历史
-        auto history_json = m_session_manager.getSessionMetadata(session_id, "history");
+        auto history_json = getSessionManager().getSessionMetadata(session_id, "history");
         nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
 
         // 添加新记录
@@ -1258,7 +1135,7 @@ Include:
         }
 
         // 保存回 Session
-        m_session_manager.setSessionMetadata(session_id, "history", history);
+        getSessionManager().setSessionMetadata(session_id, "history", history);
     }
 
     /**
@@ -1294,14 +1171,14 @@ Include:
     /**
      * 发送 JSON-RPC 错误响应（支持 Streamable HTTP）
      */
-    net::awaitable<void> sendJsonErrorResponse(int code, const std::string& message,
-                                               const nlohmann::json& id, bool use_sse = false) {
+    net::awaitable<void> sendMcpErrorResponse(int32_t code, const nlohmann::json& id,
+                                              bool use_sse = false) {
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
 
         nlohmann::json error;
         error["code"] = code;
-        error["message"] = message;
+        error["message"] = biz_err_msg(code);
         response["error"] = error;
         response["id"] = id;
 

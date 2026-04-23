@@ -23,6 +23,10 @@ public:
             HKU_ERROR("server is null");
             return false;
         }
+        if (m_server) [[unlikely]] {
+            HKU_ERROR("m_server has been binded!");
+            return false;
+        }
         m_server = server;
         regHandle();
         return true;

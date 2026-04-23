@@ -12,19 +12,19 @@ namespace hku {
 static const char* biz_mcp_err_msg(BizErrCode ec) noexcept {
     switch (get_biz_code(ec)) {
         // Standard JSON-RPC 2.0 error codes
-        case BIZ_MCP_PARSE_ERROR:
+        case BIZ_JSONRPC_PARSE_ERROR:
             return "Parse error";
 
-        case BIZ_MCP_INVALID_REQUEST:
+        case BIZ_JSONRPC_INVALID_REQUEST:
             return "Invalid request";
 
-        case BIZ_MCP_METHOD_NOT_FOUND:
+        case BIZ_JSONRPC_METHOD_NOT_FOUND:
             return "Method not found";
 
-        case BIZ_MCP_INVALID_PARAMS:
+        case BIZ_JSONRPC_INVALID_PARAMS:
             return "Invalid params";
 
-        case BIZ_MCP_INTERNAL_ERROR:
+        case BIZ_JSONRPC_INTERNAL_ERROR:
             return "Internal error";
 
         // MCP application-level error codes
@@ -53,7 +53,7 @@ static const char* biz_mcp_err_msg(BizErrCode ec) noexcept {
             return "Permission denied";
 
         case BIZ_MCP_VERSION_MISMATCH:
-            return "Protocol version mismatch";
+            return "Not initialized or Protocol version mismatch";
 
         // Additional MCP error codes
         case BIZ_MCP_PROMPT_NOT_FOUND:

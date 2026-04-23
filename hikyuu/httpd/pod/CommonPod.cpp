@@ -19,16 +19,19 @@ CommonPod::snowflake_t CommonPod::ms_msgid_generator;
 void CommonPod::init() {
     auto& config = PodConfig::instance();
     int thread_num = config.get<int>("pod_task_thread_num", 0);
-    CLS_INFO("pod_task_thread_num: {}", thread_num);
     if (thread_num <= 0) {
         thread_num = std::thread::hardware_concurrency();
     }
+    CLS_INFO("pod_task_thread_num: {}", thread_num);
     ms_tg = std::make_unique<TaskGroup>(thread_num);
     CLS_CHECK(ms_tg, "Failed allocate TaskPod::ms_tg!");
 
     thread_num = config.get<int>("pod_timer_thread_num", 1);
+    if (thread_num <= 0) {
+        thread_num = 1;
+    }
     CLS_INFO("pod_timer_thread_num: {}", thread_num);
-    CLS_CHECK(thread_num > 0, "pod_timer_thread_num must > 0");
+
     ms_scheduler = std::make_unique<TimerManager>(thread_num);
     CLS_CHECK(ms_scheduler, "Failed allocate TaskPod::ms_scheduler!");
     ms_scheduler->start();

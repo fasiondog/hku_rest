@@ -8,10 +8,18 @@
 #pragma once
 
 #include "hikyuu/httpd/HttpService.h"
+#include "hikyuu/httpd/HttpServer.h"
 #include "McpHandle.h"
-#include "HelloHandle.h"
 
 namespace hku {
+
+template <>
+inline void HttpServer::POST<McpHandle>(const char* path) {
+    registerHttpHandle("POST", path, [](void* ctx) -> net::awaitable<void> {
+        McpHandle x(ctx);
+        co_await x();
+    });
+}
 
 /**
  * MCP Server 服务注册类
@@ -28,9 +36,6 @@ public:
     virtual void regHandle() override {
         // 注册 MCP 主端点（Streamable HTTP - 统一端点）
         POST<McpHandle>("mcp");
-
-        // 可选：注册健康检查端点
-        GET<HelloHandle>("health");
     }
 };
 
