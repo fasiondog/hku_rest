@@ -11,6 +11,8 @@
 
 namespace hku {
 
+extern bool mcp_mod_reg;
+
 constexpr BizErrCode BIZ_MOD_MCP = -3;
 #define BIZ_MCP_ERR(code) MAKE_ERR(BIZ_MOD_MCP, code);
 constexpr BizErrCode BIZ_JSONRPC_PARSE_ERROR = BIZ_MCP_ERR(-2700);  // 收到无效 JSON

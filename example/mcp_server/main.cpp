@@ -36,29 +36,29 @@ void signal_handle(int signal) {
  * Session 清理后台线程
  * 定期清理过期的 Session
  */
-void session_cleanup_thread() {
-    HKU_INFO("Session cleanup thread started");
+// void session_cleanup_thread() {
+//     HKU_INFO("Session cleanup thread started");
 
-    while (!g_shutdown_flag.load()) {
-        // 每 60 秒清理一次过期会话
-        std::this_thread::sleep_for(std::chrono::seconds(60));
+//     while (!g_shutdown_flag.load()) {
+//         // 每 60 秒清理一次过期会话
+//         std::this_thread::sleep_for(std::chrono::seconds(60));
 
-        if (g_shutdown_flag.load()) {
-            break;
-        }
+//         if (g_shutdown_flag.load()) {
+//             break;
+//         }
 
-        try {
-            int cleaned = McpHandle::getSessionManager().cleanupExpiredSessions();
-            if (cleaned > 0) {
-                HKU_INFO("Cleaned up {} expired sessions", cleaned);
-            }
-        } catch (const std::exception& e) {
-            HKU_ERROR("Session cleanup error: {}", e.what());
-        }
-    }
+//         try {
+//             int cleaned = McpHandle::getSessionManager().cleanupExpiredSessions();
+//             if (cleaned > 0) {
+//                 HKU_INFO("Cleaned up {} expired sessions", cleaned);
+//             }
+//         } catch (const std::exception& e) {
+//             HKU_ERROR("Session cleanup error: {}", e.what());
+//         }
+//     }
 
-    HKU_INFO("Session cleanup thread stopped");
-}
+//     HKU_INFO("Session cleanup thread stopped");
+// }
 
 int main(int argc, char* argv[]) {
     // 设置 locale
@@ -74,19 +74,20 @@ int main(int argc, char* argv[]) {
 
         // 2. 创建 HTTP 服务器
         HttpServer server("0.0.0.0", 8080);
+        HttpHandle::enableTrace(true, false);
 
         // 3. SSE 心跳已弃用（Streamable HTTP 不需要）
         // McpHandle::configureSSEHeartbeat(false, 0);
 
         // 4. 注册 MCP 服务
-        McpService mcp_service("");
+        McpService mcp_service;
         mcp_service.bind(&server);
 
         server.GET<HelloHandle>("/health");
 
         // 5. 启动 Session 清理后台线程
-        std::thread cleanup_thread(session_cleanup_thread);
-        cleanup_thread.detach();  // 分离线程，让它在后台运行
+        // std::thread cleanup_thread(session_cleanup_thread);
+        // cleanup_thread.detach();  // 分离线程，让它在后台运行
 
         // 6. 启动服务器
         HKU_INFO("Starting MCP Server...");

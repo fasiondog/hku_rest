@@ -82,9 +82,10 @@ static const char* biz_mcp_err_msg(BizErrCode ec) noexcept {
     }
 }
 
-// 全局自动注册
-static inline bool mcp_mod_reg = [] {
+// 全局自动注册 - 使用非 static 变量确保符号可见性
+bool mcp_mod_reg = [] {
     register_biz_error_module(BIZ_MOD_MCP, biz_mcp_err_msg);
+    fmt::print("Register MCP error module\n");
     return true;
 }();
 

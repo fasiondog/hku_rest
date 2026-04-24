@@ -11,10 +11,13 @@
 #include <nlohmann/json.hpp>
 #include "hikyuu/utilities/base64.h"
 #include "hikyuu/httpd/HttpHandle.h"
+#include "hikyuu/utilities/datetime/Datetime.h"
 #include "McpError.h"
 #include "SessionManager.h"
 
 namespace hku {
+
+class McpService;
 
 /**
  * MCP (Model Context Protocol) Server 处理器
@@ -31,165 +34,15 @@ class McpHandle : public HttpHandle {
     HTTP_HANDLE_IMP(McpHandle)
 
 public:
-    virtual net::awaitable<VoidBizResult> run() override {
-        // 1. 只接受 POST 请求
-        // if (getReqMethod() != "POST") {
-        //     co_await sendMcpErrorResponse(BIZ_JSONRPC_INVALID_REQUEST, nlohmann::json(), false);
-        //     co_return BIZ_OK;
-        // }
+    McpHandle(void* beast_context, McpService* service)
+    : HttpHandle(beast_context), m_service(service) {}
 
-        // 2. 检查 Accept 头，判断客户端是否支持 SSE 流式响应
-        std::string accept_header = getReqHeader("Accept");
-        bool supports_sse = (accept_header.find("text/event-stream") != std::string::npos);
-
-        // 3. 读取请求体（框架会自动处理 chunked 解码）
-        std::string body = getReqData();
-        if (body.empty()) {
-            co_await sendMcpErrorResponse(BIZ_JSONRPC_PARSE_ERROR, nlohmann::json(), supports_sse);
-            co_return BIZ_OK;
-        }
-
-        // 用于捕获块中记录错误，稍后统一发送
-        bool has_error = false;
-        int error_code = 0;
-        nlohmann::json error_id = nullptr;
-
-        try {
-            // 4. 解析 JSON-RPC 请求
-            nlohmann::json request = nlohmann::json::parse(body);
-
-            // 4. 验证 JSON-RPC 版本
-            if (!request.contains("jsonrpc") || request["jsonrpc"] != "2.0") {
-                co_await sendMcpErrorResponse(
-                  BIZ_JSONRPC_INVALID_REQUEST,
-                  request.contains("id") ? request["id"] : nlohmann::json(), supports_sse);
-                co_return BIZ_OK;
-            }
-
-            // 5. 获取方法名和 ID
-            std::string method = request.value("method", "");
-            nlohmann::json id = request.contains("id") ? request["id"] : nlohmann::json();
-            nlohmann::json params =
-              request.contains("params") ? request["params"] : nlohmann::json();
-
-            // 6. 从请求头中获取 Session ID
-            std::string session_id = extractSessionId();
-
-            // 7. 处理 initialize 方法：服务器生成并返回 Session ID
-            if (method == "initialize") {
-                // 如果客户端已提供 Session ID（重连场景），验证其有效性
-                if (!session_id.empty()) {
-                    auto session = getSessionManager().getSession(session_id);
-                    if (!session) {
-                        // Session 已失效，要求客户端重新初始化
-                        HKU_WARN("Invalid session ID in initialize request: {}", session_id);
-                        co_await sendMcpErrorResponse(BIZ_JSONRPC_INVALID_PARAMS, id, supports_sse);
-                        co_return BIZ_OK;
-                    }
-                    // 更新会话活动时间
-                    getSessionManager().touchSession(session_id);
-                    HKU_INFO("Session reconnected: {}", session_id);
-                } else {
-                    // 为新连接生成 Session ID
-                    session_id = generateSessionId();
-                    std::string client_ip = getClientIp();
-
-                    if (!getSessionManager().registerSession(session_id, client_ip)) {
-                        co_await sendMcpErrorResponse(BIZ_JSONRPC_INTERNAL_ERROR, id, supports_sse);
-                        co_return BIZ_OK;
-                    }
-
-                    // 在响应头中返回 Mcp-Session-Id（MCP 协议规范）
-                    setResHeader("Mcp-Session-Id", session_id.c_str());
-                    HKU_INFO("New session registered: {} from {}", session_id, client_ip);
-                }
-            } else {
-                // 8. 对于非 initialize 方法，必须携带有效的 Session ID
-                if (session_id.empty()) {
-                    // 返回 HTTP 400 Bad Request（通过 JSON-RPC 错误码表示）
-                    co_await sendMcpErrorResponse(BIZ_MCP_VERSION_MISMATCH, id, supports_sse);
-                    co_return BIZ_OK;
-                }
-
-                // 验证会话有效性
-                auto session = getSessionManager().getSession(session_id);
-                if (!session) {
-                    // 返回 HTTP 404 Not Found（通过 JSON-RPC 错误码表示）
-                    co_await sendMcpErrorResponse(BIZ_MCP_UNAUTHORIZED, id, supports_sse);
-                    co_return BIZ_OK;
-                }
-
-                // 更新会话活动时间
-                getSessionManager().touchSession(session_id);
-            }
-
-            // 9. 在响应中回显 Session ID（方便客户端确认，使用标准头字段）
-            if (!session_id.empty()) {
-                setResHeader("Mcp-Session-Id", session_id.c_str());
-            }
-
-            // 10. 对于长任务，如果客户端支持 SSE，启用流式响应
-            // 注意：不是所有请求都启用 SSE，只有真正需要流式推送的长任务才启用
-            bool enable_streaming = false;
-            if (supports_sse && method == "tools/call") {
-                std::string tool_name = params.value("name", "");
-                if (tool_name == "long_running_task") {
-                    enable_streaming = true;
-                    setResHeader("Content-Type", "text/event-stream");
-                    setResHeader("Cache-Control", "no-cache");
-                    setResHeader("Connection", "keep-alive");
-                    enableChunkedTransfer();
-                    HKU_INFO("SSE streaming enabled for long_running_task (session: {})",
-                             session_id);
-                }
-            }
-
-            // 11. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
-            try {
-                co_await handleMethod(method, params, session_id, id, supports_sse);
-            } catch (...) {
-                // 异常已在 handleMethod 内部处理并发送响应
-            }
-
-            // 12. 如果使用了 SSE，完成分块传输
-            if (enable_streaming) {
-                try {
-                    co_await finishChunkedTransfer();
-                } catch (...) {
-                    // 忽略断开连接时的错误
-                    HKU_DEBUG("SSE connection closed for session: {}", session_id);
-                }
-            }
-
-            // 注意：Session 不与 HTTP 连接绑定
-            // 客户端可以在 Session 有效期内（默认3600秒）随时重连
-            // Session 由超时机制或 session/unregister 方法清理
-
-        } catch (const nlohmann::json::parse_error& e) {
-            HKU_ERROR("JSON parse error: {}", e.what());
-            has_error = true;
-            error_code = BIZ_JSONRPC_PARSE_ERROR;
-            error_id = nullptr;
-        } catch (const std::exception& e) {
-            HKU_ERROR("MCP handler error: {}", e.what());
-            has_error = true;
-            error_code = BIZ_JSONRPC_INTERNAL_ERROR;
-            error_id = nullptr;
-        }
-
-        if (has_error) {
-            co_await sendMcpErrorResponse(error_code, error_id, supports_sse);
-        }
-
-        co_return BIZ_OK;
-    }
+    virtual net::awaitable<VoidBizResult> run() override;
 
     /**
      * 获取 Session 管理器引用（用于后台清理线程）
      */
-    static SessionManager& getSessionManager() {
-        return m_session_manager;
-    }
+    SessionManager& getSessionManager();
 
     /**
      * 推送进度更新到 SSE 端点（实时流式推送 + 存储历史）
@@ -259,8 +112,7 @@ public:
     }
 
 private:
-    // 静态 Session 管理器（所有实例共享）
-    static inline SessionManager m_session_manager{3600, 10000};  // 1小时超时，最多10000个会话
+    McpService* m_service{nullptr};
 
 private:
     /**
@@ -337,40 +189,40 @@ private:
         try {
             if (method == "initialize") {
                 auto result = handleInitialize(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "initialized") {
                 // initialized 是通知，不需要响应
             } else if (method == "tools/list") {
                 auto result = handleToolsList(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "tools/call") {
                 auto result = co_await handleToolsCall(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "resources/list") {
                 auto result = handleResourcesList(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "resources/read") {
                 auto result = co_await handleResourcesRead(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "prompts/list") {
                 auto result = handlePromptsList(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "prompts/get") {
                 auto result = co_await handlePromptsGet(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "ping") {
                 // MCP 协议 ping 方法 - 用于连接健康检查
                 auto result = handlePing(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "session/info") {
                 auto result = handleSessionInfo(session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "session/set_metadata") {
                 auto result = handleSetSessionMetadata(params, session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else if (method == "session/unregister") {
                 auto result = handleUnregisterSession(session_id);
-                co_await sendJsonSuccessResponse(result, id, use_sse);
+                co_await sendMcpSuccessResponse(result, id, use_sse);
             } else {
                 co_await sendMcpErrorResponse(BIZ_JSONRPC_METHOD_NOT_FOUND, id, use_sse);
             }
@@ -564,21 +416,12 @@ private:
                                          const std::string& session_id) {
         std::string format = arguments.value("format", "%Y-%m-%d %H:%M:%S");
 
-        auto now = std::chrono::system_clock::now();
-        auto time_t_now = std::chrono::system_clock::to_time_t(now);
-        std::tm tm_now;
-        localtime_r(&time_t_now, &tm_now);
-
-        char buffer[100];
-        std::strftime(buffer, sizeof(buffer), format.c_str(), &tm_now);
-
+        auto now = Datetime::now();
         // 记录到会话历史
-        recordToolUsage(session_id, "get_current_time",
-                        {{"format", format}, {"time", std::string(buffer)}});
+        recordToolUsage(session_id, "get_current_time", {{"format", format}, {"time", now.str()}});
 
         nlohmann::json response;
-        response["content"] =
-          nlohmann::json::array({{{"type", "text"}, {"text", std::string(buffer)}}});
+        response["content"] = nlohmann::json::array({{{"type", "text"}, {"text", now.str()}}});
 
         return response;
     }
@@ -1141,8 +984,8 @@ Include:
     /**
      * 发送 JSON-RPC 成功响应（支持 Streamable HTTP）
      */
-    net::awaitable<void> sendJsonSuccessResponse(const nlohmann::json& result,
-                                                 const nlohmann::json& id, bool use_sse = false) {
+    net::awaitable<void> sendMcpSuccessResponse(const nlohmann::json& result,
+                                                const nlohmann::json& id, bool use_sse = false) {
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
         response["result"] = result;
