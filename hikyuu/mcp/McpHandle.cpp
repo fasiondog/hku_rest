@@ -124,10 +124,20 @@ net::awaitable<VoidBizResult> McpHandle::run() {
         }
 
         // 11. 路由到对应的处理方法（传递 session_id, id 和 supports_sse 标志）
-        try {
-            co_await handleMethod(method, params, session_id, id, supports_sse);
-        } catch (...) {
-            // 异常已在 handleMethod 内部处理并发送响应
+        // initialized 是通知，不需要响应
+        if (method != "initialized") {
+            try {
+                // co_await handleMethod(method, params, session_id, id, supports_sse);
+                auto result = co_await m_service->dispatchMethod(this, method, params, session_id,
+                                                                 id, supports_sse);
+                if (result) {
+                    co_await sendMcpSuccessResponse(result.value(), id, supports_sse);
+                } else {
+                    co_await sendMcpErrorResponse(result.error(), id, supports_sse);
+                }
+            } catch (...) {
+                // 异常已在 handleMethod 内部处理并发送响应
+            }
         }
 
         // 12. 如果使用了 SSE，完成分块传输

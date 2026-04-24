@@ -19,6 +19,8 @@ namespace hku {
 
 class McpService;
 
+using JsonResult = BizResult<nlohmann::json>;
+
 /**
  * MCP (Model Context Protocol) Server 处理器
  *
@@ -32,6 +34,7 @@ class McpService;
  */
 class McpHandle : public HttpHandle {
     HTTP_HANDLE_IMP(McpHandle)
+    friend class McpService;
 
 public:
     McpHandle(void* beast_context, McpService* service)
@@ -956,6 +959,9 @@ Include:
      */
     void recordToolUsage(const std::string& session_id, const std::string& tool_name,
                          const nlohmann::json& details) {
+        if (session_id.empty()) {
+            return;  // 无效会话 ID，无法记录
+        }
         auto now = std::chrono::system_clock::now();
         auto timestamp =
           std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -986,6 +992,10 @@ Include:
      */
     net::awaitable<void> sendMcpSuccessResponse(const nlohmann::json& result,
                                                 const nlohmann::json& id, bool use_sse = false) {
+        if (result.is_null()) {
+            co_return;
+        }
+
         nlohmann::json response;
         response["jsonrpc"] = "2.0";
         response["result"] = result;

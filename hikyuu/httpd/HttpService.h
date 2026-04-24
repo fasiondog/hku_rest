@@ -15,6 +15,7 @@ class HttpService {
 public:
     HttpService() : HttpService("") {}
     HttpService(const char* url) : m_url(url) {}
+    virtual ~HttpService() = default;
 
     virtual void regHandle() = 0;
 
