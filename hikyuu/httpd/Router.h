@@ -39,6 +39,11 @@ public:
 
     void registerHandler(std::string method, std::string path, HandlerFunc handler);
     HandlerFunc findHandler(const std::string& method, const std::string& path);
+    
+    // 获取所有注册的路由
+    const std::vector<std::pair<RouteKey, HandlerFunc>>& getRoutes() const {
+        return m_routes;
+    }
 
 private:
     // 使用 vector 存储路由表，避免 map 的哈希开销和动态分配
@@ -55,6 +60,11 @@ public:
 
     void registerHandler(std::string path, HandleFactory factory);
     HandleFactory findHandler(const std::string& path);
+    
+    // 获取所有注册的路由
+    const std::vector<std::pair<std::string, HandleFactory>>& getRoutes() const {
+        return m_routes;
+    }
 
 private:
     std::vector<std::pair<std::string, HandleFactory>> m_routes;

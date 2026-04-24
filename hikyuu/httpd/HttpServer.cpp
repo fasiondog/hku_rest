@@ -477,7 +477,7 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
     auto handler = m_ws_router->findHandler(path);
 
     if (!handler) {
-        HKU_TRACE("WebSocket handler not found for path: {}", path);
+        HKU_INFO("WebSocket handler not found for path: {}", path);
         // 发送 404 响应并关闭
         m_ws_stream->close(websocket::close_code::policy_error);
         close();
@@ -1477,7 +1477,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
     if (!handler) {
         // 未找到路由，返回 404
-        HKU_TRACE("not found: {}", target);
+        HKU_INFO("not found: {}", target);
         context->res.result(http::status::not_found);
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":404, "errcode":404, "errmsg":"Not Found"})";
@@ -1962,6 +1962,17 @@ void HttpServer::start() {
     }
 
     CLS_INFO("HttpServer::start() begin");
+
+    // 打印所有的路由信息，含有完整的路由地址，如 http://localhost:8080/api/v1/resource, 包括 ws
+    const auto& routes = m_router.getRoutes();
+    for (const auto& route : routes) {
+        CLS_INFO("Registered route: [{}] {}{}", route.first.method, m_root_url, route.first.path);
+    }
+
+    const auto& ws_routes = m_ws_router.getRoutes();
+    for (const auto& route : ws_routes) {
+        CLS_INFO("Registered WebSocket route: {}{}", m_root_url, route.first);
+    }
 
     try {
         // ========== 初始化连接管理器（如果未配置） ==========
