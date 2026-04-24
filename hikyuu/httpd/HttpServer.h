@@ -741,9 +741,9 @@ private:
 
     size_t m_io_thread_count{0};
     net::io_context* m_io_context{nullptr};
-    bool m_use_external_io{false};    // 是否使用外部 io_context
-    bool m_websocket_enabled{false};  // WebSocket 功能是否已启用（默认 false）
-    bool m_enable_fast_path{true};                           // 是否启用快速路径（P99 延迟优化）
+    bool m_use_external_io{false};      // 是否使用外部 io_context
+    bool m_websocket_enabled{false};    // WebSocket 功能是否已启用（默认 false）
+    bool m_enable_fast_path{true};      // 是否启用快速路径（P99 延迟优化）
     bool m_probe_close_enabled{false};  // 是否启用探测连接快速关闭（识别 cpolar 探测）
     std::atomic<bool> m_running{false};
 
@@ -756,9 +756,5 @@ private:
     size_t m_ws_max_concurrent_connections{128};  // 默认 WebSocket 最大并发连接数
     size_t m_ws_wait_timeout_ms{5000};            // 默认 WebSocket 等待超时时间（毫秒）
 };
-
-#define HTTP_HANDLE_IMP(cls) \
-public:                      \
-    explicit cls(void* beast_context) : HttpHandle(beast_context) {}
 
 }  // namespace hku
