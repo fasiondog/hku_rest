@@ -67,7 +67,7 @@ public:
         m_server->PATCH<Handle>(url.c_str());
     }
 
-private:
+protected:
     std::string m_url;
     HttpServer* m_server{nullptr};
 };

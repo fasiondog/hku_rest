@@ -163,7 +163,7 @@ public:
     /** 获取 query 参数 */
     BizResult<QueryParams> getQueryParams() const noexcept;
 
-    void setResHeader(const char* key, const char* val) {
+    void setResHeader(std::string_view key, std::string_view val) {
         // 直接写入 BeastContext，避免中间存储
         if (m_beast_context) {
             auto* ctx = static_cast<BeastContext*>(m_beast_context);
@@ -307,8 +307,9 @@ private:
     static bool ms_enable_only_traceid;
 };
 
-#define HTTP_HANDLE_IMP(cls) \
-public:                      \
-    explicit cls(void* beast_context) : HttpHandle(beast_context) {}
+#define HTTP_HANDLE_IMP(cls)                                         \
+public:                                                              \
+    explicit cls(void* beast_context) : HttpHandle(beast_context) {} \
+    virtual ~cls() override = default;
 
 }  // namespace hku
