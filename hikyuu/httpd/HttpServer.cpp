@@ -1625,7 +1625,7 @@ void Connection::close() {
 // HttpServer 实现 - 使用协程 + SSL/TLS
 // ============================================================================
 
-HttpServer::HttpServer(const char* host, uint16_t port)
+HttpServer::HttpServer(std::string_view host, uint16_t port)
 : m_root_url(fmt::format("{}:{}", host, port)), m_host(host), m_port(port) {}
 
 HttpServer::~HttpServer() {
@@ -2150,22 +2150,13 @@ void HttpServer::stop() {
     }
 }
 
-void HttpServer::registerHttpHandle(const std::string& method, const std::string& path,
+void HttpServer::registerHttpHandle(std::string method, std::string path,
                                     HttpHandleFactory handler) {
-    m_router.registerHandler(method, path, handler);
+    m_router.registerHandler(std::move(method), std::move(path), std::move(handler));
 }
 
-void HttpServer::registerHttpHandle(const char* method, const char* path,
-                                    HttpHandleFactory handler) {
-    registerHttpHandle(std::string(method), std::string(path), std::move(handler));
-}
-
-void HttpServer::registerWsHandle(const std::string& path, WsHandleFactory handler) {
-    m_ws_router.registerHandler(path, std::move(handler));
-}
-
-void HttpServer::registerWsHandle(const char* path, WsHandleFactory handler) {
-    registerWsHandle(std::string(path), std::move(handler));
+void HttpServer::registerWsHandle(std::string path, WsHandleFactory handler) {
+    m_ws_router.registerHandler(std::move(path), std::move(handler));
 }
 
 void HttpServer::setTls(const char* ca_key_file, const char* password, int mode) {

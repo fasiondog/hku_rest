@@ -37,7 +37,7 @@ public:
         }
     };
 
-    void registerHandler(const std::string& method, const std::string& path, HandlerFunc handler);
+    void registerHandler(std::string method, std::string path, HandlerFunc handler);
     HandlerFunc findHandler(const std::string& method, const std::string& path);
 
 private:
@@ -53,7 +53,7 @@ class WebSocketRouter {
 public:
     using HandleFactory = std::function<std::shared_ptr<WebSocketHandle>(void*)>;
 
-    void registerHandler(const std::string& path, HandleFactory factory);
+    void registerHandler(std::string path, HandleFactory factory);
     HandleFactory findHandler(const std::string& path);
 
 private:

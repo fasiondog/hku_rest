@@ -137,7 +137,7 @@ void HttpHandle::processBizException(const BizException& e) noexcept {
     }
 }
 
-void HttpHandle::processException(const char* err_msg) noexcept {
+void HttpHandle::processException(std::string_view err_msg) noexcept {
     CLS_ERROR("{}", err_msg);
     try {
         // 直接设置错误响应的状态码和数据
@@ -218,7 +218,7 @@ std::string HttpHandle::getReqUrl() const noexcept {
     return ret;
 }
 
-std::string HttpHandle::getReqHeader(const char* name) const noexcept {
+std::string HttpHandle::getReqHeader(std::string_view name) const noexcept {
     std::string ret;
     auto* ctx = static_cast<BeastContext*>(m_beast_context);
     auto& req = ctx->req;

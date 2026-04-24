@@ -12,9 +12,8 @@ namespace hku {
 // ============================================================================
 // Router 实现
 // ============================================================================
-void Router::registerHandler(const std::string& method, const std::string& path,
-                             HandlerFunc handler) {
-    m_routes.emplace_back(RouteKey{method, path}, std::move(handler));
+void Router::registerHandler(std::string method, std::string path, HandlerFunc handler) {
+    m_routes.emplace_back(RouteKey{std::move(method), std::move(path)}, std::move(handler));
 }
 
 Router::HandlerFunc Router::findHandler(const std::string& method, const std::string& path) {
@@ -51,8 +50,8 @@ Router::HandlerFunc Router::findHandler(const std::string& method, const std::st
 // WebSocketRouter 实现
 // ============================================================================
 
-void WebSocketRouter::registerHandler(const std::string& path, HandleFactory factory) {
-    m_routes.emplace_back(path, std::move(factory));
+void WebSocketRouter::registerHandler(std::string path, HandleFactory factory) {
+    m_routes.emplace_back(std::move(path), std::move(factory));
 }
 
 WebSocketRouter::HandleFactory WebSocketRouter::findHandler(const std::string& path) {

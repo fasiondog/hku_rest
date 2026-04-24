@@ -349,7 +349,7 @@ public:
     using HttpHandleFactory = std::function<net::awaitable<void>(void*)>;
     using WsHandleFactory = std::function<std::shared_ptr<WebSocketHandle>(void*)>;
 
-    HttpServer(const char* host, uint16_t port);
+    HttpServer(std::string_view host, uint16_t port);
     virtual ~HttpServer();
 
     void start();
@@ -414,25 +414,14 @@ public:
      * @param path 请求路径
      * @param handler Handle 工厂函数
      */
-    void registerHttpHandle(const std::string& method, const std::string& path,
-                            HttpHandleFactory handler);
-
-    /**
-     * @brief 注册 HTTP Handle (const char* 重载)
-     */
-    void registerHttpHandle(const char* method, const char* path, HttpHandleFactory handler);
+    void registerHttpHandle(std::string method, std::string path, HttpHandleFactory handler);
 
     /**
      * @brief 注册 WebSocket Handle
      * @param path WebSocket 路径
      * @param handler WebSocketHandle 工厂函数
      */
-    void registerWsHandle(const std::string& path, WsHandleFactory handler);
-
-    /**
-     * @brief 注册 WebSocket Handle (const char* 重载)
-     */
-    void registerWsHandle(const char* path, WsHandleFactory handler);
+    void registerWsHandle(std::string path, WsHandleFactory handler);
 
     /**
      * @brief 启用或禁用 WebSocket 支持（默认禁用）
@@ -668,40 +657,40 @@ public:
 public:
     // HTTP 方法快捷注册 (模板方式)
     template <typename Handle>
-    void GET(const char* path) {
-        registerHttpHandle("GET", path, [](void* ctx) -> net::awaitable<void> {
+    void GET(std::string path) {
+        registerHttpHandle("GET", std::move(path), [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
     }
 
     template <typename Handle>
-    void POST(const char* path) {
-        registerHttpHandle("POST", path, [](void* ctx) -> net::awaitable<void> {
+    void POST(std::string path) {
+        registerHttpHandle("POST", std::move(path), [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
     }
 
     template <typename Handle>
-    void PUT(const char* path) {
-        registerHttpHandle("PUT", path, [](void* ctx) -> net::awaitable<void> {
+    void PUT(std::string path) {
+        registerHttpHandle("PUT", std::move(path), [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
     }
 
     template <typename Handle>
-    void DEL(const char* path) {
-        registerHttpHandle("DELETE", path, [](void* ctx) -> net::awaitable<void> {
+    void DEL(std::string path) {
+        registerHttpHandle("DELETE", std::move(path), [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
     }
 
     template <typename Handle>
-    void PATCH(const char* path) {
-        registerHttpHandle("PATCH", path, [](void* ctx) -> net::awaitable<void> {
+    void PATCH(std::string path) {
+        registerHttpHandle("PATCH", std::move(path), [](void* ctx) -> net::awaitable<void> {
             Handle x(ctx);
             co_await x();
         });
@@ -709,8 +698,8 @@ public:
 
     // WebSocket 快捷注册
     template <typename Handle>
-    void WS(const char* path) {
-        registerWsHandle(path, [](void* ctx) -> std::shared_ptr<WebSocketHandle> {
+    void WS(std::string path) {
+        registerWsHandle(std::move(path), [](void* ctx) -> std::shared_ptr<WebSocketHandle> {
             return std::make_shared<Handle>(ctx);
         });
     }

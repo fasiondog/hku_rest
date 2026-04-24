@@ -141,16 +141,7 @@ public:
      * @param name 头部信息名称
      * @return 如果获取不到将返回""
      */
-    std::string getReqHeader(const char* name) const noexcept;
-
-    /**
-     * 获取请求头部信息
-     * @param name 头部信息名称
-     * @return 如果获取不到将返回""
-     */
-    std::string getReqHeader(const std::string& name) const noexcept {
-        return getReqHeader(name.c_str());
-    }
+    std::string getReqHeader(std::string_view name) const noexcept;
 
     /** 如果 Content-Encoding 为 gzip，则返回解压后的数据，其他直接返回原始body数据 */
     std::string getReqData() const noexcept;
@@ -281,7 +272,7 @@ public:
 
 private:
     void processBizException(const BizException& e) noexcept;
-    void processException(const char* err_msg) noexcept;
+    void processException(std::string_view err_msg) noexcept;
     void processError(int32_t err) noexcept;
 
 protected:
