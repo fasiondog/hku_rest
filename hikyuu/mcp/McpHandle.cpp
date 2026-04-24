@@ -106,9 +106,7 @@ net::awaitable<VoidBizResult> McpHandle::run() {
         }
 
         // 9. 在响应中回显 Session ID（方便客户端确认，使用标准头字段）
-        if (!session_id.empty()) {
-            setResHeader("Mcp-Session-Id", session_id);
-        }
+        setResHeader("Mcp-Session-Id", session_id);
 
         // 10. 对于长任务，如果客户端支持 SSE，启用流式响应
         // 注意：不是所有请求都启用 SSE，只有真正需要流式推送的长任务才启用
