@@ -505,7 +505,7 @@ public:
      * @param password 私钥密码 (可为空)
      * @param mode 客户端验证模式：0-无需认证 | 1-可选认证 | 2-必须认证
      */
-    void setTls(const char* ca_key_file, const char* password = "", int mode = 0);
+    void setTls(std::string ca_key_file, std::string password = "", int mode = 0);
 
     /**
      * @brief 设置IP访问控制配置

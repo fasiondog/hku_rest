@@ -2159,9 +2159,9 @@ void HttpServer::registerWsHandle(std::string path, WsHandleFactory handler) {
     m_ws_router.registerHandler(std::move(path), std::move(handler));
 }
 
-void HttpServer::setTls(const char* ca_key_file, const char* password, int mode) {
-    m_ssl_config.ca_key_file = ca_key_file;
-    m_ssl_config.password = password ? password : "";
+void HttpServer::setTls(std::string ca_key_file, std::string password, int mode) {
+    m_ssl_config.ca_key_file = std::move(ca_key_file);
+    m_ssl_config.password = std::move(password);
     m_ssl_config.verify_mode = mode;
     m_ssl_config.enabled = true;
 }
