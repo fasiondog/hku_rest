@@ -477,7 +477,8 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
     auto handler = m_ws_router->findHandler(path);
 
     if (!handler) {
-        HKU_INFO("WebSocket handler not found for path: {}", path);
+        HKU_INFO("WebSocket handler not found for path: {}! {}:{}", path, m_client_ip,
+                 m_client_port);
         // 发送 404 响应并关闭
         m_ws_stream->close(websocket::close_code::policy_error);
         close();
@@ -1477,7 +1478,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
 
     if (!handler) {
         // 未找到路由，返回 404
-        HKU_INFO("not found: {}", target);
+        HKU_INFO("not found handle: {}! {}:{}", target, m_client_ip, m_client_port);
         context->res.result(http::status::not_found);
         context->res.set(http::field::content_type, "application/json");
         context->res.body() = R"({"ret":404, "errcode":404, "errmsg":"Not Found"})";
