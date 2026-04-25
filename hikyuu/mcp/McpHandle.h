@@ -9,6 +9,9 @@
 
 #include <random>
 #include <nlohmann/json.hpp>
+#include <boost/uuid/uuid.hpp>
+#include <boost/uuid/uuid_generators.hpp>
+#include <boost/uuid/uuid_io.hpp>
 #include "hikyuu/utilities/base64.h"
 #include "hikyuu/httpd/HttpHandle.h"
 #include "hikyuu/utilities/datetime/Datetime.h"
@@ -46,6 +49,39 @@ public:
      * 获取 Session 管理器引用（用于后台清理线程）
      */
     SessionManager& getSessionManager();
+
+    /**
+     * 记录工具使用到会话历史
+     */
+    void recordToolUsage(const std::string& session_id, const std::string& tool_name,
+                         const nlohmann::json& details) {
+        if (session_id.empty()) {
+            return;  // 无效会话 ID，无法记录
+        }
+        auto now = std::chrono::system_clock::now();
+        auto timestamp =
+          std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+
+        nlohmann::json record;
+        record["timestamp"] = timestamp;
+        record["tool"] = tool_name;
+        record["details"] = details;
+
+        // 获取现有历史
+        auto history_json = getSessionManager().getSessionMetadata(session_id, "history");
+        nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
+
+        // 添加新记录
+        history.push_back(record);
+
+        // 限制历史记录数量（最多 100 条）
+        if (history.size() > 100) {
+            history.erase(history.begin());
+        }
+
+        // 保存回 Session
+        getSessionManager().setSessionMetadata(session_id, "history", history);
+    }
 
     /**
      * 推送进度更新到 SSE 端点（实时流式推送 + 存储历史）
@@ -114,6 +150,80 @@ public:
         getSessionManager().setSessionMetadata(session_id, "progress_update", progress_data);
     }
 
+private: /**
+          * 发送 JSON-RPC 成功响应（支持 Streamable HTTP）
+          */
+    net::awaitable<void> sendMcpSuccessResponse(const nlohmann::json& result,
+                                                const nlohmann::json& id, bool use_sse = false) {
+        if (result.is_null()) {
+            co_return;
+        }
+
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+        response["result"] = result;
+        response["id"] = id;
+
+        if (use_sse) {
+            // SSE 格式：event: message\ndata: {...}\n\n
+            std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
+
+            if (m_beast_context) {
+                // 注意：enableChunkedTransfer 已在 handleRequest 中调用，这里不需要再次调用
+                co_await writeChunk(sse_msg);
+            }
+        } else {
+            // 传统 JSON 响应 - 使用标准 HTTP（Content-Length）
+            std::string response_str = response.dump();
+
+            if (m_beast_context) {
+                auto* ctx = static_cast<BeastContext*>(m_beast_context);
+                ctx->res.body() = response_str;
+                // 不设置 Content-Type，让框架自动处理
+            }
+        }
+    }
+
+    /**
+     * 发送 JSON-RPC 错误响应（支持 Streamable HTTP）
+     */
+    net::awaitable<void> sendMcpErrorResponse(int32_t code, const nlohmann::json& id,
+                                              bool use_sse = false) {
+        nlohmann::json response;
+        response["jsonrpc"] = "2.0";
+
+        nlohmann::json error;
+        error["code"] = code;
+        error["message"] = biz_err_msg(code);
+        response["error"] = error;
+        response["id"] = id;
+
+        if (use_sse) {
+            std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
+
+            if (m_beast_context) {
+                auto* ctx = static_cast<BeastContext*>(m_beast_context);
+
+                if (ctx->res.body().empty()) {
+                    setResHeader("Content-Type", "text/event-stream");
+                    setResHeader("Cache-Control", "no-cache");
+                    setResHeader("Connection", "keep-alive");
+                    enableChunkedTransfer();
+                }
+
+                co_await writeChunk(sse_msg);
+            }
+        } else {
+            // 错误响应也使用标准 HTTP
+            std::string response_str = response.dump();
+
+            if (m_beast_context) {
+                auto* ctx = static_cast<BeastContext*>(m_beast_context);
+                ctx->res.body() = response_str;
+            }
+        }
+    }
+
 private:
     McpService* m_service{nullptr};
 
@@ -140,39 +250,10 @@ private:
      * 使用 UUID v4 格式，仅包含可见 ASCII 字符 (0x21-0x7E)
      */
     static std::string generateSessionId() {
-        // 使用 UUID v4 格式: xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx
-        // 其中 x 是随机十六进制数字，y 是 8, 9, A, 或 B
-        static thread_local std::random_device rd;
-        static thread_local std::mt19937 gen(rd());
-        static thread_local std::uniform_int_distribution<> dis(0, 15);
-
-        auto hex_char = [&]() -> char {
-            const char hex[] = "0123456789abcdef";
-            return hex[dis(gen)];
-        };
-
-        std::string uuid;
-        uuid.reserve(36);
-
-        for (int i = 0; i < 8; i++)
-            uuid += hex_char();
-        uuid += '-';
-        for (int i = 0; i < 4; i++)
-            uuid += hex_char();
-        uuid += "-4";  // UUID version 4
-        for (int i = 0; i < 3; i++)
-            uuid += hex_char();
-        uuid += '-';
-        // Variant bits: 10xx (8, 9, a, b)
-        const char variant[] = "89ab";
-        uuid += variant[dis(gen) % 4];
-        for (int i = 0; i < 3; i++)
-            uuid += hex_char();
-        uuid += '-';
-        for (int i = 0; i < 12; i++)
-            uuid += hex_char();
-
-        return uuid;
+        // 使用 Boost.UUID 生成 UUID v4
+        static thread_local boost::uuids::random_generator generator;
+        boost::uuids::uuid uuid = generator();
+        return boost::uuids::to_string(uuid);
     }
 
     /**
@@ -952,113 +1033,6 @@ Include:
         result["message"] = "Session unregistered successfully";
 
         return result;
-    }
-
-    /**
-     * 记录工具使用到会话历史
-     */
-    void recordToolUsage(const std::string& session_id, const std::string& tool_name,
-                         const nlohmann::json& details) {
-        if (session_id.empty()) {
-            return;  // 无效会话 ID，无法记录
-        }
-        auto now = std::chrono::system_clock::now();
-        auto timestamp =
-          std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-
-        nlohmann::json record;
-        record["timestamp"] = timestamp;
-        record["tool"] = tool_name;
-        record["details"] = details;
-
-        // 获取现有历史
-        auto history_json = getSessionManager().getSessionMetadata(session_id, "history");
-        nlohmann::json history = history_json.is_array() ? history_json : nlohmann::json::array();
-
-        // 添加新记录
-        history.push_back(record);
-
-        // 限制历史记录数量（最多 100 条）
-        if (history.size() > 100) {
-            history.erase(history.begin());
-        }
-
-        // 保存回 Session
-        getSessionManager().setSessionMetadata(session_id, "history", history);
-    }
-
-    /**
-     * 发送 JSON-RPC 成功响应（支持 Streamable HTTP）
-     */
-    net::awaitable<void> sendMcpSuccessResponse(const nlohmann::json& result,
-                                                const nlohmann::json& id, bool use_sse = false) {
-        if (result.is_null()) {
-            co_return;
-        }
-
-        nlohmann::json response;
-        response["jsonrpc"] = "2.0";
-        response["result"] = result;
-        response["id"] = id;
-
-        if (use_sse) {
-            // SSE 格式：event: message\ndata: {...}\n\n
-            std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
-
-            if (m_beast_context) {
-                // 注意：enableChunkedTransfer 已在 handleRequest 中调用，这里不需要再次调用
-                co_await writeChunk(sse_msg);
-            }
-        } else {
-            // 传统 JSON 响应 - 使用标准 HTTP（Content-Length）
-            std::string response_str = response.dump();
-
-            if (m_beast_context) {
-                auto* ctx = static_cast<BeastContext*>(m_beast_context);
-                ctx->res.body() = response_str;
-                // 不设置 Content-Type，让框架自动处理
-            }
-        }
-    }
-
-    /**
-     * 发送 JSON-RPC 错误响应（支持 Streamable HTTP）
-     */
-    net::awaitable<void> sendMcpErrorResponse(int32_t code, const nlohmann::json& id,
-                                              bool use_sse = false) {
-        nlohmann::json response;
-        response["jsonrpc"] = "2.0";
-
-        nlohmann::json error;
-        error["code"] = code;
-        error["message"] = biz_err_msg(code);
-        response["error"] = error;
-        response["id"] = id;
-
-        if (use_sse) {
-            std::string sse_msg = "event: message\ndata: " + response.dump() + "\n\n";
-
-            if (m_beast_context) {
-                auto* ctx = static_cast<BeastContext*>(m_beast_context);
-
-                if (ctx->res.body().empty()) {
-                    setResHeader("Content-Type", "text/event-stream");
-                    setResHeader("Cache-Control", "no-cache");
-                    setResHeader("Connection", "keep-alive");
-                    enableChunkedTransfer();
-                }
-
-                co_await writeChunk(sse_msg);
-            }
-        } else {
-            // 错误响应也使用标准 HTTP
-            std::string response_str = response.dump();
-
-            if (m_beast_context) {
-                auto* ctx = static_cast<BeastContext*>(m_beast_context);
-                ctx->res.body() = response_str;
-            }
-        }
     }
 };
 
