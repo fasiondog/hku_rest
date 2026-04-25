@@ -53,6 +53,16 @@ public:
       McpHandle* handle, const nlohmann::json&, const std::string&)>;
     void addTool(const nlohmann::json& description, ToolMethod&& tool);
 
+    void addPrompt(const json& description, const json& prompt);
+
+    void addResource(const json& resource);
+
+    using ResourceMethod = std::function<net::awaitable<JsonResult>(
+      McpHandle* handle, const nlohmann::json&, const std::string&)>;
+    void addResourceRead(ResourceMethod&& method) {
+        m_resource_read_method = std::move(method);
+    }
+
     net::awaitable<JsonResult> dispatchMethod(McpHandle* handle, const std::string& method,
                                               const nlohmann::json& params,
                                               const std::string& session_id,
@@ -71,20 +81,40 @@ private:
     // 验证嵌套对象类型的属性
     void validate_nested_object_property(const std::string& prop_name, const json& prop_schema);
 
-    net::awaitable<nlohmann::json> toolsCallMethod(McpHandle* handle, const nlohmann::json& params,
-                                                   const std::string& session_id);
+    // 验证 prompt 描述的必需字段
+    void validate_prompt_description_fields(const json& description);
+
+    // 验证 prompt arguments 的内部结构
+    void validate_prompt_arguments(const json& description);
+
+    net::awaitable<JsonResult> toolsCallMethod(McpHandle* handle, const json& params,
+                                               const std::string& session_id);
+
+    JsonResult promptsGetMethod(const json& params, const std::string& session_id);
+
+    json resourceGetMethod(const nlohmann::json& params, const std::string& session_id);
 
     json pingMethod(const std::string& session_id);
 
-    json sessionInfoMethod(const std::string& session_id);
+    JsonResult sessionInfoMethod(const std::string& session_id);
+
+    JsonResult sessionMetadataMethod(const json& params, const std::string& session_id);
+
+    JsonResult unregisterSessionMethod(const std::string& session_id);
 
 private:
     SessionManager m_session_manager{3600, 10000};
 
     InitializeMethod m_initialize_method;
 
-    std::map<std::string, ToolMethod> m_tools;
-    nlohmann::json m_tool_descriptions{json::array()};
+    std::unordered_map<std::string, ToolMethod> m_tools;
+    json m_tool_descriptions{json::array()};
+
+    json m_prompt_descriptions{json::array()};
+    std::unordered_map<std::string, json> m_prompts;
+
+    std::unordered_map<std::string, json> m_resource_map;
+    ResourceMethod m_resource_read_method;
 };
 
 }  // namespace hku

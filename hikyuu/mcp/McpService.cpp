@@ -68,26 +68,23 @@ net::awaitable<JsonResult> McpService::dispatchMethod(McpHandle* handle, const s
             co_return JsonResult{{"tools", m_tool_descriptions}};
         } else if (method == "tools/call") {
             co_return co_await toolsCallMethod(handle, params, session_id);
-            // } else if (method == "resources/list") {
-            //     auto result = handleResourcesList(params, session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
-            // } else if (method == "resources/read") {
-            //     auto result = co_await handleResourcesRead(params, session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
-            // } else if (method == "prompts/list") {
-            //     auto result = handlePromptsList(params, session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
-            // } else if (method == "prompts/get") {
-            //     auto result = co_await handlePromptsGet(params, session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
+        } else if (method == "resources/list") {
+            co_return resourceGetMethod(params, session_id);
+        } else if (method == "resources/read") {
+            if (!m_resource_read_method) {
+                co_return BIZ_JSONRPC_INTERNAL_ERROR;
+            }
+            co_return co_await m_resource_read_method(handle, params, session_id);
+        } else if (method == "prompts/list") {
+            co_return JsonResult{{"prompts", m_prompt_descriptions}};
+        } else if (method == "prompts/get") {
+            co_return promptsGetMethod(params, session_id);
         } else if (method == "session/info") {
             co_return sessionInfoMethod(session_id);
-            // } else if (method == "session/set_metadata") {
-            //     auto result = handleSetSessionMetadata(params, session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
-            // } else if (method == "session/unregister") {
-            //     auto result = handleUnregisterSession(session_id);
-            //     co_await sendMcpSuccessResponse(result, id, use_sse);
+        } else if (method == "session/set_metadata") {
+            co_return sessionMetadataMethod(params, session_id);
+        } else if (method == "session/unregister") {
+            co_return unregisterSessionMethod(session_id);
         } else {
             co_return BIZ_JSONRPC_METHOD_NOT_FOUND;
         }
@@ -100,7 +97,7 @@ net::awaitable<JsonResult> McpService::dispatchMethod(McpHandle* handle, const s
 }
 
 nlohmann::json McpService::pingMethod(const std::string& session_id) {
-    HKU_DEBUG("MCP ping request (session: {})", session_id);
+    HKU_TRACE("MCP ping request (session: {})", session_id);
 
     // 更新会话活动时间
     if (!session_id.empty()) {
@@ -111,12 +108,12 @@ nlohmann::json McpService::pingMethod(const std::string& session_id) {
     return nlohmann::json::object();
 }
 
-nlohmann::json McpService::sessionInfoMethod(const std::string& session_id) {
-    HKU_INFO("MCP session/info request (session: {})", session_id);
+JsonResult McpService::sessionInfoMethod(const std::string& session_id) {
+    HKU_TRACE("MCP session/info request (session: {})", session_id);
 
     auto session = getSessionManager().getSession(session_id);
     if (!session) {
-        throw std::runtime_error("Session not found or expired");
+        return BIZ_JSONRPC_INVALID_REQUEST;
     }
 
     nlohmann::json info;
@@ -133,6 +130,40 @@ nlohmann::json McpService::sessionInfoMethod(const std::string& session_id) {
     return info;
 }
 
+JsonResult McpService::sessionMetadataMethod(const nlohmann::json& params,
+                                             const std::string& session_id) {
+    std::string key = params.value("key", "");
+    if (key.empty()) {
+        return BIZ_JSONRPC_INVALID_PARAMS;
+    }
+
+    nlohmann::json value = params.value("value", nlohmann::json());
+
+    bool success = getSessionManager().setSessionMetadata(session_id, key, value);
+    if (!success) {
+        return BIZ_JSONRPC_INVALID_REQUEST;
+    }
+
+    nlohmann::json result;
+    result["status"] = "success";
+    result["message"] = fmt::format("Metadata '{}' updated", key);
+    return result;
+}
+
+JsonResult McpService::unregisterSessionMethod(const std::string& session_id) {
+    HKU_TRACE("MCP session/unregister request (session: {})", session_id);
+
+    bool success = getSessionManager().unregisterSession(session_id);
+    if (!success) {
+        return BIZ_JSONRPC_INVALID_REQUEST;
+    }
+
+    nlohmann::json result;
+    result["status"] = "success";
+    result["message"] = "Session unregistered successfully";
+    return result;
+}
+
 void McpService::addTool(const nlohmann::json& description, ToolMethod&& tool) {
     HKU_ASSERT(tool);
     validate_required_fields(description);
@@ -141,12 +172,11 @@ void McpService::addTool(const nlohmann::json& description, ToolMethod&& tool) {
     m_tool_descriptions.push_back(description);
 }
 
-net::awaitable<nlohmann::json> McpService::toolsCallMethod(McpHandle* handle,
-                                                           const nlohmann::json& params,
-                                                           const std::string& session_id) {
+net::awaitable<JsonResult> McpService::toolsCallMethod(McpHandle* handle, const json& params,
+                                                       const std::string& session_id) {
     try {
         std::string tool_name = params.value("name", "");
-        nlohmann::json arguments = params.value("arguments", nlohmann::json::object());
+        json arguments = params.value("arguments", json::object());
 
         HKU_TRACE("MCP tools/call request: tool={} (session: {})", tool_name, session_id);
 
@@ -164,7 +194,8 @@ net::awaitable<nlohmann::json> McpService::toolsCallMethod(McpHandle* handle,
             co_return BIZ_MCP_TOOL_EXECUTION_ERROR;
         }
 
-        co_return result.value();
+        co_return result;
+
     } catch (const std::exception& e) {
         HKU_ERROR("Error in toolsCall: {}", e.what());
         co_return BIZ_MCP_TOOL_EXECUTION_ERROR;
@@ -365,6 +396,135 @@ void McpService::validate_input_schema(const json& tool) {
               "inputSchema 'additionalProperties' must be a boolean or JSON Schema object.");
         }
     }
+}
+
+void McpService::addPrompt(const json& description, const json& prompt) {
+    // 验证 prompt 描述字段
+    validate_prompt_description_fields(description);
+
+    // 如果存在 arguments，验证其结构
+    if (description.contains("arguments")) {
+        validate_prompt_arguments(description);
+    }
+
+    m_prompt_descriptions.push_back(description);
+    m_prompts[description.get<std::string>()] = prompt;
+}
+
+// 验证 prompt 描述的必需字段
+void McpService::validate_prompt_description_fields(const json& description) {
+    // 检查 name
+    if (!description.contains("name") || !description["name"].is_string() ||
+        description["name"].get<std::string>().empty()) {
+        throw std::logic_error("Field 'name' is required and must be a non-empty string.");
+    }
+
+    // 检查 description
+    if (!description.contains("description") || !description["description"].is_string() ||
+        description["description"].get<std::string>().empty()) {
+        throw std::logic_error("Field 'description' is required and must be a non-empty string.");
+    }
+
+    // 如果存在 arguments，必须是数组
+    if (description.contains("arguments")) {
+        if (!description["arguments"].is_array()) {
+            throw std::logic_error("Field 'arguments' must be an array if present.");
+        }
+    }
+}
+
+// 验证 prompt arguments 的内部结构
+void McpService::validate_prompt_arguments(const json& description) {
+    const json& arguments = description["arguments"];
+
+    // 验证每个参数
+    for (size_t i = 0; i < arguments.size(); ++i) {
+        const json& arg = arguments[i];
+
+        // 每个参数必须是对象
+        if (!arg.is_object()) {
+            throw std::logic_error(fmt::format("Argument at index {} must be a JSON object.", i));
+        }
+
+        // 验证 name 字段（必需）
+        if (!arg.contains("name") || !arg["name"].is_string() ||
+            arg["name"].get<std::string>().empty()) {
+            throw std::logic_error(
+              fmt::format("Argument at index {} must have a non-empty 'name' field.", i));
+        }
+
+        // 验证 description 字段（推荐但不强制，如果存在必须是字符串）
+        if (arg.contains("description") && !arg["description"].is_string()) {
+            throw std::logic_error(fmt::format("Argument '{}' description must be a string.",
+                                               arg["name"].get<std::string>()));
+        }
+
+        // 验证 required 字段（可选，如果存在必须是布尔值）
+        if (arg.contains("required")) {
+            if (!arg["required"].is_boolean()) {
+                throw std::logic_error(
+                  fmt::format("Argument '{}' required field must be a boolean.",
+                              arg["name"].get<std::string>()));
+            }
+        }
+    }
+}
+
+JsonResult McpService::promptsGetMethod(const json& params, const std::string& session_id) {
+    try {
+        std::string prompt_name = params.value("name", "");
+        json arguments = params.value("arguments", nlohmann::json::object());
+        HKU_TRACE("MCP prompts/get request: prompt={} (session: {})", prompt_name, session_id);
+
+        auto iter = m_prompts.find(prompt_name);
+        if (iter == m_prompts.end()) {
+            return BIZ_MCP_PROMPT_NOT_FOUND;
+        }
+        return iter->second;
+
+    } catch (const std::exception& e) {
+        HKU_ERROR("MCP prompts/get request error: {} (session: {})", e.what(), session_id);
+        return BIZ_JSONRPC_INVALID_REQUEST;
+    } catch (...) {
+        HKU_ERROR("MCP prompts/get request error: unknown error (session: {})", session_id);
+        return BIZ_JSONRPC_INVALID_REQUEST;
+    }
+}
+
+void McpService::addResource(const json& resource) {
+    // 验证 resource 必需字段
+    // uri: 必须是非空字符串
+    if (!resource.contains("uri") || !resource["uri"].is_string() ||
+        resource["uri"].get<std::string>().empty()) {
+        throw std::logic_error("Field 'uri' is required and must be a non-empty string.");
+    }
+
+    // name: 必须是非空字符串
+    if (!resource.contains("name") || !resource["name"].is_string() ||
+        resource["name"].get<std::string>().empty()) {
+        throw std::logic_error("Field 'name' is required and must be a non-empty string.");
+    }
+
+    // description: 如果存在，必须是字符串（可选字段）
+    if (resource.contains("description") && !resource["description"].is_string()) {
+        throw std::logic_error("Field 'description' must be a string if present.");
+    }
+
+    // mimeType: 如果存在，必须是字符串（可选字段）
+    if (resource.contains("mimeType") && !resource["mimeType"].is_string()) {
+        throw std::logic_error("Field 'mimeType' must be a string if present.");
+    }
+
+    m_resource_map[resource["uri"].get<std::string>()] = resource;
+}
+
+McpService::json McpService::resourceGetMethod(const nlohmann::json& params,
+                                               const std::string& session_id) {
+    json result = json::array();
+    for (auto& resource : m_resource_map) {
+        result.push_back(resource.second);
+    }
+    return {{"resources", result}};
 }
 
 }  // namespace hku
