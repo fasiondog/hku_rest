@@ -53,7 +53,25 @@ public:
       McpHandle* handle, const nlohmann::json&, const std::string&)>;
     void addTool(const nlohmann::json& description, ToolMethod&& tool);
 
-    void addPrompt(const json& description, const json& prompt);
+    void addPrompt(const json& description);
+    void addPrompts(const std::vector<json>& descriptions) {
+        for (auto& desc : descriptions) {
+            addPrompt(desc);
+        }
+    }
+
+    void addPrompts(const json& description_array) {
+        CLS_CHECK(!description_array.is_array(), "addPrompts requires a JSON array");
+        for (auto& desc : description_array) {
+            addPrompt(desc);
+        }
+    }
+
+    using PromptReadMethod = std::function<net::awaitable<JsonResult>(
+      McpHandle* handle, const nlohmann::json&, const std::string&)>;
+    void addPromptRead(PromptReadMethod&& method) {
+        m_prompt_read_method = std::move(method);
+    }
 
     void addResource(const json& resource);
 
@@ -90,9 +108,7 @@ private:
     net::awaitable<JsonResult> toolsCallMethod(McpHandle* handle, const json& params,
                                                const std::string& session_id);
 
-    JsonResult promptsGetMethod(const json& params, const std::string& session_id);
-
-    json resourceGetMethod(const nlohmann::json& params, const std::string& session_id);
+    json resourceListMethod(const nlohmann::json& params, const std::string& session_id);
 
     json pingMethod(const std::string& session_id);
 
@@ -111,7 +127,7 @@ private:
     json m_tool_descriptions{json::array()};
 
     json m_prompt_descriptions{json::array()};
-    std::unordered_map<std::string, json> m_prompts;
+    PromptReadMethod m_prompt_read_method;
 
     std::unordered_map<std::string, json> m_resource_map;
     ResourceMethod m_resource_read_method;

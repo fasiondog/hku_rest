@@ -69,16 +69,19 @@ net::awaitable<JsonResult> McpService::dispatchMethod(McpHandle* handle, const s
         } else if (method == "tools/call") {
             co_return co_await toolsCallMethod(handle, params, session_id);
         } else if (method == "resources/list") {
-            co_return resourceGetMethod(params, session_id);
+            co_return resourceListMethod(params, session_id);
         } else if (method == "resources/read") {
             if (!m_resource_read_method) {
-                co_return BIZ_JSONRPC_INTERNAL_ERROR;
+                co_return BIZ_MCP_RESOURCE_NOT_FOUND;
             }
             co_return co_await m_resource_read_method(handle, params, session_id);
         } else if (method == "prompts/list") {
             co_return JsonResult{{"prompts", m_prompt_descriptions}};
         } else if (method == "prompts/get") {
-            co_return promptsGetMethod(params, session_id);
+            if (!m_prompt_read_method) {
+                co_return BIZ_MCP_PROMPT_NOT_FOUND;
+            }
+            co_return co_await m_prompt_read_method(handle, params, session_id);
         } else if (method == "session/info") {
             co_return sessionInfoMethod(session_id);
         } else if (method == "session/set_metadata") {
@@ -398,7 +401,7 @@ void McpService::validate_input_schema(const json& tool) {
     }
 }
 
-void McpService::addPrompt(const json& description, const json& prompt) {
+void McpService::addPrompt(const json& description) {
     // 验证 prompt 描述字段
     validate_prompt_description_fields(description);
 
@@ -408,7 +411,6 @@ void McpService::addPrompt(const json& description, const json& prompt) {
     }
 
     m_prompt_descriptions.push_back(description);
-    m_prompts[description.get<std::string>()] = prompt;
 }
 
 // 验证 prompt 描述的必需字段
@@ -470,27 +472,6 @@ void McpService::validate_prompt_arguments(const json& description) {
     }
 }
 
-JsonResult McpService::promptsGetMethod(const json& params, const std::string& session_id) {
-    try {
-        std::string prompt_name = params.value("name", "");
-        json arguments = params.value("arguments", nlohmann::json::object());
-        HKU_TRACE("MCP prompts/get request: prompt={} (session: {})", prompt_name, session_id);
-
-        auto iter = m_prompts.find(prompt_name);
-        if (iter == m_prompts.end()) {
-            return BIZ_MCP_PROMPT_NOT_FOUND;
-        }
-        return iter->second;
-
-    } catch (const std::exception& e) {
-        HKU_ERROR("MCP prompts/get request error: {} (session: {})", e.what(), session_id);
-        return BIZ_JSONRPC_INVALID_REQUEST;
-    } catch (...) {
-        HKU_ERROR("MCP prompts/get request error: unknown error (session: {})", session_id);
-        return BIZ_JSONRPC_INVALID_REQUEST;
-    }
-}
-
 void McpService::addResource(const json& resource) {
     // 验证 resource 必需字段
     // uri: 必须是非空字符串
@@ -518,8 +499,8 @@ void McpService::addResource(const json& resource) {
     m_resource_map[resource["uri"].get<std::string>()] = resource;
 }
 
-McpService::json McpService::resourceGetMethod(const nlohmann::json& params,
-                                               const std::string& session_id) {
+McpService::json McpService::resourceListMethod(const nlohmann::json& params,
+                                                const std::string& session_id) {
     json result = json::array();
     for (auto& resource : m_resource_map) {
         result.push_back(resource.second);
