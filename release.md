@@ -1,6 +1,48 @@
 # 版本发布说明
 
-## 1.2.1 - 
+## 1.2.2 - 2026年4月25日
+
+### 新功能
+
+- **MCP (Model Context Protocol) 服务器支持**: 完整实现 MCP 协议服务器，支持 Streamable HTTP 传输模式
+
+  - 统一端点 `/mcp` 处理所有 JSON-RPC 请求
+  - 动态响应格式：根据 `Accept` 头自动切换标准 JSON 或 SSE 流式响应
+  - 完整的会话管理（Session ID、超时清理、元数据存储）
+  - 支持工具（Tools）、资源（Resources）、提示词（Prompts）的注册和调用
+  - 基于游标的分页机制（cursor-based pagination）
+  - 实时进度推送（通过 SSE 流式传输）
+  - 工具使用历史记录跟踪
+- **SSE (Server-Sent Events) 服务器示例**: 新增 SSE 流式推送示例程序
+
+  - 基于分块传输编码实现 SSE 协议
+  - 支持实时数据推送、日志流式输出等场景
+- **RESTful 和异步业务处理器基类**: 新增 `RestHandle` 和 `BizHandle` 基类
+
+  - `RestHandle`: 自动封装统一响应结构（含 ret、data 字段）
+  - `BizHandle`: 支持同步业务处理，简化轻量级 CRUD 操作
+  - 完善的文档注释和使用示例
+- **HTTP 连接信息增强**: WebSocket 和 HTTP 连接日志中添加客户端 IP 和端口信息
+- **路由信息打印**: 添加路由注册信息打印功能，便于调试
+
+### 优化与重构
+
+- **HTTP 性能优化**:
+  - 将参数类型从 `const char*` 和 `std::string` 改为 `std::string_view` 提升性能
+  - 更新 `HttpHandle` 接口参数类型并改进类继承结构
+  - 统一 HTTP 响应状态码为 200（符合 JSON-RPC 规范）
+- **代码质量改进**:
+  - 调整头文件包含顺序，提升编译效率
+  - 移除未使用的头文件和宏定义
+  - 为 `RestHandle` 和 `BizHandle` 添加虚析构函数
+  - 标记 `run` 方法为 `final`，防止意外重写
+- **CI/CD 优化**:
+  - 更新 xmake 版本至 3.0.8
+  - 移除 Ubuntu AArch64 musl cross 构建工作流
+  - 修正并发组标识中的操作系统名称
+  - 将分支名称从 master 更新为 main
+
+## 1.2.1 - 2026年4月18日
 
 ### 新功能
 
