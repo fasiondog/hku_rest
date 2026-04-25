@@ -65,21 +65,23 @@ class MCPClient:
         )
 
         print(f"Protocol Version: {result['result']['protocolVersion']}")
-        print(f"Server: {result['result']['serverInfo']['name']} v{result['result']['serverInfo']['version']}")
+        print(
+            f"Server: {result['result']['serverInfo']['name']} v{result['result']['serverInfo']['version']}")
         print()
 
         # 发送 initialized 通知（不需要等待响应）
         headers = {"Content-Type": "application/json"}
         if self.session_id:
             headers["Mcp-Session-Id"] = self.session_id
-        
+
         notification = {
             "jsonrpc": "2.0",
             "method": "initialized",
             "params": {},
         }
-        
-        requests.post(f"{self.base_url}/mcp", headers=headers, json=notification)
+
+        requests.post(f"{self.base_url}/mcp",
+                      headers=headers, json=notification)
         print("✓ Initialized\n")
 
     def list_tools(self):
@@ -136,7 +138,8 @@ class MCPClient:
             # 显示分页元数据
             pagination = result.get("pagination", {})
             print(f"Total Items: {pagination.get('total_items', 'N/A')}")
-            print(f"Current Range: {pagination.get('current_page_start', 'N/A')} - {pagination.get('current_page_end', 'N/A')}")
+            print(
+                f"Current Range: {pagination.get('current_page_start', 'N/A')} - {pagination.get('current_page_end', 'N/A')}")
             print(f"Returned Count: {pagination.get('returned_count', 'N/A')}")
             print(f"Has More: {pagination.get('has_more', False)}")
 
@@ -144,7 +147,8 @@ class MCPClient:
             items = result.get("items", [])
             print(f"\nItems on this page ({len(items)}):")
             for item in items:
-                print(f"  - ID: {item['id']}, Name: {item['name']}, Value: {item['value']}")
+                print(
+                    f"  - ID: {item['id']}, Name: {item['name']}, Value: {item['value']}")
 
             all_items.extend(items)
 
@@ -160,7 +164,8 @@ class MCPClient:
 
             # 为了演示，只获取前 3 页
             if page_num > 3:
-                print(f"\n... (stopping after {page_num - 1} pages for demo)\n")
+                print(
+                    f"\n... (stopping after {page_num - 1} pages for demo)\n")
                 break
 
         print(f"\nSummary:")
@@ -178,7 +183,8 @@ class MCPClient:
         print()
 
         try:
-            result = self.query_paginated_data(page_size=5, cursor="invalid_cursor_!!!")
+            result = self.query_paginated_data(
+                page_size=5, cursor="invalid_cursor_!!!")
             print("✗ Should have raised an error!")
         except Exception as e:
             print(f"✓ Correctly handled invalid cursor")

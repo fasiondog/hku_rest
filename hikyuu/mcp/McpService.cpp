@@ -37,7 +37,12 @@ static net::awaitable<JsonResult> defaultInitializeMethod(McpHandle* handle,
     co_return result;
 }
 
-McpService::McpService() : HttpService(), m_initialize_method(defaultInitializeMethod) {
+McpService::McpService()
+: HttpService(),
+  m_initialize_method(defaultInitializeMethod),
+  m_tool_descriptions(json::array()),
+  m_prompt_descriptions(json::array()),
+  m_resource_descriptions(json::array()) {
     HKU_INFO("Registering MCP error module: {}", mcp_mod_reg);
     pod::CommonPod::getScheduler()->addDurationFunc(
       std::numeric_limits<int>::max(), Minutes(1), [this]() {
@@ -65,18 +70,24 @@ net::awaitable<JsonResult> McpService::dispatchMethod(McpHandle* handle, const s
             // MCP 协议 ping 方法 - 用于连接健康检查
             co_return pingMethod(session_id);
         } else if (method == "tools/list") {
-            co_return JsonResult{{"tools", m_tool_descriptions}};
+            nlohmann::json result;
+            result["tools"] = m_tool_descriptions;
+            co_return JsonResult{result};
         } else if (method == "tools/call") {
             co_return co_await toolsCallMethod(handle, params, session_id);
         } else if (method == "resources/list") {
-            co_return JsonResult{{"resources", m_resource_descriptions}};
+            nlohmann::json result;
+            result["resources"] = m_resource_descriptions;
+            co_return JsonResult{result};
         } else if (method == "resources/read") {
             if (!m_resource_read_method) {
                 co_return BIZ_MCP_RESOURCE_NOT_FOUND;
             }
             co_return co_await m_resource_read_method(handle, params, session_id);
         } else if (method == "prompts/list") {
-            co_return JsonResult{{"prompts", m_prompt_descriptions}};
+            nlohmann::json result;
+            result["prompts"] = m_prompt_descriptions;
+            co_return JsonResult{result};
         } else if (method == "prompts/get") {
             if (!m_prompt_read_method) {
                 co_return BIZ_MCP_PROMPT_NOT_FOUND;

@@ -145,10 +145,10 @@ private:
 
     InitializeMethod m_initialize_method;
 
+    json m_tool_descriptions;
     std::unordered_map<std::string, ToolMethod> m_tools;
-    json m_tool_descriptions{json::array()};
 
-    json m_prompt_descriptions{json::array()};
+    json m_prompt_descriptions;
     PromptReadMethod m_prompt_read_method;
 
     json m_resource_descriptions;
