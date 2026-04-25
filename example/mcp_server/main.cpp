@@ -13,6 +13,7 @@
 #include "hikyuu/httpd/pod/all.h"
 #include "hikyuu/mcp/McpService.h"
 #include "hikyuu/mcp/SessionManager.h"
+#include "mcp_method.h"
 #include "HelloHandle.h"
 
 using namespace hku;
@@ -76,14 +77,25 @@ int main(int argc, char* argv[]) {
         HttpServer server("0.0.0.0", 8080);
         HttpHandle::enableTrace(true, false);
 
-        // 3. SSE 心跳已弃用（Streamable HTTP 不需要）
-        // McpHandle::configureSSEHeartbeat(false, 0);
+        server.GET<HelloHandle>("/health");
 
         // 4. 注册 MCP 服务
         McpService mcp_service;
         mcp_service.bind(&server);
 
-        server.GET<HelloHandle>("/health");
+        mcp_service.addPrompts(prompts_list);
+        mcp_service.addPromptRead(promptGetMethod);
+
+        mcp_service.addResources(resources_list);
+        mcp_service.addResourceRead(resourceReadMethod);
+
+        mcp_service.addToolDescriptions(tools_list);
+        mcp_service.addTool("calculator", executeCalculator);
+        mcp_service.addTool("get_current_time", executeGetCurrentTime);
+        mcp_service.addTool("get_weather", executeGetWeather);
+        mcp_service.addTool("get_session_history", executeGetSessionHistory);
+        mcp_service.addTool("query_paginated_data", executeQueryPaginatedData);
+        mcp_service.addTool("long_running_task", executeLongRunningTask);
 
         // 5. 启动 Session 清理后台线程
         // std::thread cleanup_thread(session_cleanup_thread);

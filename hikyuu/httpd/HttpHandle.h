@@ -257,6 +257,15 @@ public:
     }
 
     /**
+     * 休眠指定时间（协程版本）
+     */
+    net::awaitable<void> sleep_for(std::chrono::milliseconds duration) {
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        ctx->timer.expires_after(duration);
+        co_await ctx->timer.async_wait(net::use_awaitable);
+    }
+
+    /**
      * 获取客户端 IP 地址
      * @param tryFromHeader 优先尝试从请求头中获取真实客户 ip，否则为直连对端 ip
      * @return 客户端 IP 地址

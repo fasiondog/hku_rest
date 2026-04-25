@@ -69,7 +69,7 @@ net::awaitable<JsonResult> McpService::dispatchMethod(McpHandle* handle, const s
         } else if (method == "tools/call") {
             co_return co_await toolsCallMethod(handle, params, session_id);
         } else if (method == "resources/list") {
-            co_return resourceListMethod(params, session_id);
+            co_return JsonResult{{"resources", m_resource_descriptions}};
         } else if (method == "resources/read") {
             if (!m_resource_read_method) {
                 co_return BIZ_MCP_RESOURCE_NOT_FOUND;
@@ -167,12 +167,15 @@ JsonResult McpService::unregisterSessionMethod(const std::string& session_id) {
     return result;
 }
 
-void McpService::addTool(const nlohmann::json& description, ToolMethod&& tool) {
-    HKU_ASSERT(tool);
+void McpService::addToolDescription(const nlohmann::json& description) {
     validate_required_fields(description);
     validate_input_schema(description);
-    m_tools[description["method"]] = std::move(tool);
     m_tool_descriptions.push_back(description);
+}
+
+void McpService::addTool(const std::string& name, ToolMethod&& method) {
+    HKU_ASSERT(method);
+    m_tools.emplace(name, std::move(method));
 }
 
 net::awaitable<JsonResult> McpService::toolsCallMethod(McpHandle* handle, const json& params,
@@ -496,16 +499,7 @@ void McpService::addResource(const json& resource) {
         throw std::logic_error("Field 'mimeType' must be a string if present.");
     }
 
-    m_resource_map[resource["uri"].get<std::string>()] = resource;
-}
-
-McpService::json McpService::resourceListMethod(const nlohmann::json& params,
-                                                const std::string& session_id) {
-    json result = json::array();
-    for (auto& resource : m_resource_map) {
-        result.push_back(resource.second);
-    }
-    return {{"resources", result}};
+    m_resource_descriptions.push_back(resource);
 }
 
 }  // namespace hku

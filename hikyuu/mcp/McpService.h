@@ -44,14 +44,28 @@ public:
     }
 
     using InitializeMethod = std::function<net::awaitable<JsonResult>(
-      McpHandle* handle, const nlohmann::json&, const std::string&)>;
+      McpHandle*, const nlohmann::json&, const std::string&)>;
     void setInitializeMethod(InitializeMethod method) {
         m_initialize_method = method;
     }
 
-    using ToolMethod = std::function<net::awaitable<JsonResult>(
-      McpHandle* handle, const nlohmann::json&, const std::string&)>;
-    void addTool(const nlohmann::json& description, ToolMethod&& tool);
+    void addToolDescription(const nlohmann::json& description);
+    void addToolDescriptions(const std::vector<json>& descriptions) {
+        for (auto& desc : descriptions) {
+            addToolDescription(desc);
+        }
+    }
+
+    void addToolDescriptions(const json& description_array) {
+        CLS_CHECK(!description_array.is_array(), "addToolDescriptions requires a JSON array");
+        for (auto& desc : description_array) {
+            addToolDescription(desc);
+        }
+    }
+
+    using ToolMethod = std::function<net::awaitable<JsonResult>(McpHandle*, const nlohmann::json&,
+                                                                const std::string&)>;
+    void addTool(const std::string& name, ToolMethod&& method);
 
     void addPrompt(const json& description);
     void addPrompts(const std::vector<json>& descriptions) {
@@ -68,15 +82,25 @@ public:
     }
 
     using PromptReadMethod = std::function<net::awaitable<JsonResult>(
-      McpHandle* handle, const nlohmann::json&, const std::string&)>;
+      McpHandle*, const nlohmann::json&, const std::string&)>;
     void addPromptRead(PromptReadMethod&& method) {
         m_prompt_read_method = std::move(method);
     }
 
     void addResource(const json& resource);
+    void addResources(const std::vector<json>& descriptions) {
+        for (auto& desc : descriptions) {
+            addResource(desc);
+        }
+    }
+
+    void addResources(const json& description) {
+        CLS_CHECK(!description.is_object(), "addResource requires a JSON object");
+        m_resource_descriptions.push_back(description);
+    }
 
     using ResourceMethod = std::function<net::awaitable<JsonResult>(
-      McpHandle* handle, const nlohmann::json&, const std::string&)>;
+      McpHandle*, const nlohmann::json&, const std::string&)>;
     void addResourceRead(ResourceMethod&& method) {
         m_resource_read_method = std::move(method);
     }
@@ -108,8 +132,6 @@ private:
     net::awaitable<JsonResult> toolsCallMethod(McpHandle* handle, const json& params,
                                                const std::string& session_id);
 
-    json resourceListMethod(const nlohmann::json& params, const std::string& session_id);
-
     json pingMethod(const std::string& session_id);
 
     JsonResult sessionInfoMethod(const std::string& session_id);
@@ -129,7 +151,7 @@ private:
     json m_prompt_descriptions{json::array()};
     PromptReadMethod m_prompt_read_method;
 
-    std::unordered_map<std::string, json> m_resource_map;
+    json m_resource_descriptions;
     ResourceMethod m_resource_read_method;
 };
 
