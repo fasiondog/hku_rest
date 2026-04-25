@@ -120,11 +120,7 @@ else
             cmake = true,
     }}
 end
-if has_config("use_hikyuu") then
-    add_requireconfs("hikyuu.boost", {override=true, system = false, configs = boost_config.configs})
-else
-    add_requireconfs("hku_utils.boost", {override=true, system = false, configs = boost_config.configs})
-end
+add_requireconfs("**.boost", {override = true, configs = boost_config}) 
 
 if has_config("leak_check") then
     -- 需要 export LD_PRELOAD=libasan.so
