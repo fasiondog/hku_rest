@@ -12,9 +12,7 @@
 #include <boost/uuid/uuid.hpp>
 #include <boost/uuid/uuid_generators.hpp>
 #include <boost/uuid/uuid_io.hpp>
-#include "hikyuu/utilities/base64.h"
 #include "hikyuu/httpd/HttpHandle.h"
-#include "hikyuu/utilities/datetime/Datetime.h"
 #include "McpError.h"
 #include "SessionManager.h"
 

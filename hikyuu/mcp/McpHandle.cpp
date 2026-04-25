@@ -5,6 +5,7 @@
  *      Author: fasiondog
  */
 
+#include "hikyuu/utilities/datetime/Datetime.h"
 #include "McpService.h"
 #include "McpHandle.h"
 
