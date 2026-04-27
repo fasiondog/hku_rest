@@ -93,7 +93,6 @@ struct BizResult<void> {
     int32_t err_ = 0;
 
     BizResult() = default;
-    BizResult(std::nullptr_t v) : err_(0) {}
     BizResult(int32_t e) : err_(e) {}
 
     bool has_value() const noexcept {
