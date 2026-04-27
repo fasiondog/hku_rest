@@ -80,8 +80,7 @@ class HKU_HTTPD_API RestHandle : public HttpHandle {
     CLASS_LOGGER_IMP(RestHandle)
 
 public:
-    explicit RestHandle(void* beast_context)
-    : HttpHandle(beast_context), req(json::object()), res(json::object()) {
+    explicit RestHandle(void* beast_context) : HttpHandle(beast_context) {
         // addFilter(AuthorizeFilter);
     }
 
@@ -91,20 +90,14 @@ public:
     virtual VoidBizResult after_run() noexcept override;
 
 protected:
-    VoidBizResult check_missing_param() {
-        return BIZ_OK;
-    }
-
     VoidBizResult check_missing_param(std::string_view param) {
-        if (req.is_null() || !req.is_object()) [[unlikely]] {
-            return BIZ_BASE_MISS_PARAMETER;
-        }
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
         }
         return BIZ_OK;
     }
 
+    // 不能使用模板方式实现，协程中使用会导致this指针可能会挂
     VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
         for (const auto& key : keys) {
             if (!req.contains(key)) {
@@ -256,8 +249,7 @@ class HKU_HTTPD_API BizHandle : public HttpHandle {
     CLASS_LOGGER_IMP(BizHandle)
 
 public:
-    explicit BizHandle(void* beast_context)
-    : HttpHandle(beast_context), req(json::object()), res(json::object()) {
+    explicit BizHandle(void* beast_context) : HttpHandle(beast_context) {
         // addFilter(AuthorizeFilter);
     }
 
@@ -276,10 +268,6 @@ public:
     virtual VoidBizResult biz_run() = 0;
 
 protected:
-    VoidBizResult check_missing_param() {
-        return BIZ_OK;
-    }
-
     VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
