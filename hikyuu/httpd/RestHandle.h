@@ -26,63 +26,62 @@ using json = nlohmann::json;                  // 不保持插入排序
 using ordered_json = nlohmann::ordered_json;  // 保持插入排序
 
 /**
- * @brief RESTful API 请求处理器基类（同步模式）
+ * @brief RESTful API 请求处理器基类
  *
- * RestHandle 用于处理标准的 RESTful API 请求，采用**同步执行模型**。
- * 子类只需重写业务逻辑方法，框架会自动处理 JSON 解析、响应封装和 GZIP 压缩。
+ * RestHandle 用于处理标准的 RESTful API 请求，是 HttpHandle 的派生类。
+ * **子类必须重写 run() 方法实现具体业务逻辑。**
  *
  * ## 核心特性
- * - **同步执行**: run() 方法在调用线程中直接执行，适合 CPU 密集型或简单 IO 操作
  * - **自动 JSON 处理**: before_run() 自动解析请求体 JSON 到 req 成员变量
  * - **统一响应格式**: after_run() 自动将 res 封装为 {"ret": 0, "data": ...} 格式
  * - **GZIP 压缩**: 响应数据超过 1KB 且客户端支持时自动启用 GZIP 压缩
  * - **参数校验工具**: 提供 check_missing_param() 模板方法快速校验必填参数
- *
- * ## 适用场景
- * - 简单的 CRUD 操作
- * - CPU 密集型计算任务
- * - 不涉及复杂异步 IO 的业务逻辑
- * - 需要快速响应的轻量级接口
- *
- * ## 不适用场景
- * - 需要调用外部异步服务（如数据库异步查询、远程 RPC）
- * - 长时间运行的 IO 操作会阻塞线程池
- * - 需要精细控制协程生命周期的场景
+ * - **异步协程支持**: run() 方法基于 Boost.Asio 协程，可使用 co_await 进行异步操作
  *
  * ## 使用示例
  * ```cpp
  * class UserQueryHandle : public RestHandle {
  *     REST_HANDLE_IMP(UserQueryHandle)
  *
- *     virtual VoidBizResult run() override {
+ *     virtual net::awaitable<VoidBizResult> run() override {
  *         // 1. 校验参数
  *         auto ret = check_missing_param("user_id");
- *         if (!ret) return ret;
+ *         if (!ret) co_return ret;
  *
- *         // 2. 业务逻辑（同步执行）
+ *         // 2. 业务逻辑（支持协程）
  *         std::string user_id = req["user_id"];
+ *
+ *         // 可以调用异步操作
+ *         // auto data = co_await someAsyncOperation(user_id);
+ *
  *         res["name"] = "张三";
  *         res["age"] = 25;
  *
- *         return BIZ_OK;
+ *         co_return BIZ_OK;
  *     }
  * };
  * ```
  *
  * ## 生命周期方法
- * 1. **before_run()**: 解析 JSON → 设置 Content-Type
- * 2. **run()**: 子类实现具体业务逻辑（同步）
- * 3. **after_run()**: 封装响应 → GZIP 压缩 → 返回结果
+ * 1. **before_run()**: 解析 JSON → 设置 Content-Type（框架自动调用）
+ * 2. **run()**: 子类必须重写此方法实现业务逻辑（协程）
+ * 3. **after_run()**: 封装响应 → GZIP 压缩 → 返回结果（框架自动调用）
  *
- * @note 如果业务涉及异步操作，请使用 BizHandle 替代
- * @see BizHandle 异步业务处理器
+ * ## 与 BizHandle 的区别
+ * - **RestHandle**: 适合轻量级业务，run() 在 HTTP 工作线程中执行（可 co_await）
+ * - **BizHandle**: 适合耗时业务，整个 biz_run() 投递到业务线程池执行
+ *
+ * @note 子类必须实现 `virtual net::awaitable<VoidBizResult> run() override`
+ * @note 在 run() 中可以使用 co_await 进行异步操作
+ * @see BizHandle 异步业务处理器（整体投递到线程池）
  * @see HttpHandle 底层 HTTP 协议处理器
  */
 class HKU_HTTPD_API RestHandle : public HttpHandle {
     CLASS_LOGGER_IMP(RestHandle)
 
 public:
-    explicit RestHandle(void* beast_context) : HttpHandle(beast_context) {
+    explicit RestHandle(void* beast_context)
+    : HttpHandle(beast_context), res(json::object()), req(json::object()) {
         // addFilter(AuthorizeFilter);
     }
 
@@ -97,6 +96,9 @@ protected:
     }
 
     VoidBizResult check_missing_param(std::string_view param) {
+        if (req.is_null() || !req.is_object()) [[unlikely]] {
+            return BIZ_BASE_MISS_PARAMETER;
+        }
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
         }
