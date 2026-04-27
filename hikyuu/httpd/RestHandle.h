@@ -81,7 +81,7 @@ class HKU_HTTPD_API RestHandle : public HttpHandle {
 
 public:
     explicit RestHandle(void* beast_context)
-    : HttpHandle(beast_context), res(json::object()), req(json::object()) {
+    : HttpHandle(beast_context), req(json::object()), res(json::object()) {
         // addFilter(AuthorizeFilter);
     }
 
@@ -256,7 +256,8 @@ class HKU_HTTPD_API BizHandle : public HttpHandle {
     CLASS_LOGGER_IMP(BizHandle)
 
 public:
-    explicit BizHandle(void* beast_context) : HttpHandle(beast_context) {
+    explicit BizHandle(void* beast_context)
+    : HttpHandle(beast_context), req(json::object()), res(json::object()) {
         // addFilter(AuthorizeFilter);
     }
 

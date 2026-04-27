@@ -21,7 +21,10 @@ VoidBizResult RestHandle::before_run() noexcept {
         if (!data.empty()) {
             req = json::parse(data);
         }
-    } catch (json::exception& e) {
+    } catch (const std::exception& e) {
+        HKU_ERROR("Failed parse json: {}", data);
+        return BIZ_BASE_INVALID_JSON;
+    } catch (...) {
         HKU_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     }
@@ -63,11 +66,13 @@ VoidBizResult BizHandle::before_run() noexcept {
         if (!data.empty()) {
             req = json::parse(data);
         }
-    } catch (json::exception& e) {
+    } catch (const std::exception& e) {
+        HKU_ERROR("Failed parse json: {}", data);
+        return BIZ_BASE_INVALID_JSON;
+    } catch (...) {
         HKU_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     }
-
     return BIZ_OK;
 }
 
