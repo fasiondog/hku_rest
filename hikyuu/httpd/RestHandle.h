@@ -105,13 +105,13 @@ protected:
         return BIZ_OK;
     }
 
-    template <typename First, typename... Rest>
-    VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
-        auto ret = check_missing_param(first);
-        if (!ret) {
-            return ret;  // 短路！立即返回
+    VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
+        for (const auto& key : keys) {
+            if (!req.contains(key)) {
+                return BIZ_BASE_MISS_PARAMETER;
+            }
         }
-        return check_missing_param(rest...);
+        return BIZ_OK;
     }
 
     /**
@@ -287,13 +287,13 @@ protected:
         return BIZ_OK;
     }
 
-    template <typename First, typename... Rest>
-    VoidBizResult check_missing_param(const First& first, const Rest&... rest) {
-        auto ret = check_missing_param(first);  // 调用单参数版本
-        if (!ret) {
-            return ret;
+    VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
+        for (const auto& key : keys) {
+            if (!req.contains(key)) {
+                return BIZ_BASE_MISS_PARAMETER;
+            }
         }
-        return check_missing_param(rest...);
+        return BIZ_OK;
     }
 
 protected:
