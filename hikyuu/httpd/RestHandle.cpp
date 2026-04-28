@@ -67,10 +67,10 @@ VoidBizResult BizHandle::before_run() noexcept {
             req = json::parse(data);
         }
     } catch (const std::exception& e) {
-        HKU_ERROR("Failed parse json: {}", data);
+        CLS_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     } catch (...) {
-        HKU_ERROR("Failed parse json: {}", data);
+        CLS_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     }
     return BIZ_OK;
@@ -107,8 +107,20 @@ net::awaitable<VoidBizResult> BizHandle::run() {
     if (!before_result) {
         co_return before_result;
     }
-    co_return co_await co_run(pod::CommonPod::executor(),
-                              [this]() -> VoidBizResult { return biz_run(); });
+    co_return co_await co_run(pod::CommonPod::executor(), [this]() -> VoidBizResult {
+        try {
+            return biz_run();
+        } catch (const BizException& e) {
+            CLS_ERROR("BizException in biz_run: {}, {}", e.errcode(), e.what());
+            return e.errcode();
+        } catch (const std::exception& e) {
+            CLS_ERROR("Exception in biz_run: {}", e.what());
+            return BIZ_BASE_FAILED;
+        } catch (...) {
+            CLS_ERROR("Unknown exception in biz_run");
+            return BIZ_BASE_FAILED;
+        }
+    });
 }
 
 }  // namespace hku
