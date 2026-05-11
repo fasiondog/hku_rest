@@ -476,7 +476,7 @@ net::awaitable<bool> HttpHandle::writeChunk(const std::string& data) noexcept {
 
         // 写入 socket
         beast::error_code ec;
-        co_await net::async_write(ctx->socket, net::buffer(chunk), net::use_awaitable);
+        co_await asio::async_write(ctx->socket, boost::asio::buffer(chunk), net::use_awaitable);
 
         if (ec.failed()) {
             CLS_ERROR("Failed to write chunk: {}", ec.message());
@@ -537,7 +537,7 @@ bool HttpHandle::writeChunkSync(const std::string& data) noexcept {
 
             // 同步写入响应头
             beast::error_code ec;
-            net::write(ctx->socket, net::buffer(header_str), ec);
+            asio::write(ctx->socket, asio::buffer(header_str), ec);
 
             if (ec.failed()) {
                 CLS_ERROR("Failed to send response headers: {}", ec.message());
@@ -552,7 +552,7 @@ bool HttpHandle::writeChunkSync(const std::string& data) noexcept {
 
         // 同步写入数据块
         beast::error_code ec;
-        net::write(ctx->socket, net::buffer(chunk), ec);
+        asio::write(ctx->socket, boost::asio::buffer(chunk), ec);
 
         return !ec.failed();
 
@@ -583,7 +583,7 @@ net::awaitable<bool> HttpHandle::finishChunkedTransfer() noexcept {
         std::string final_chunk = "0\r\n\r\n";
 
         beast::error_code ec;
-        co_await net::async_write(ctx->socket, net::buffer(final_chunk), net::use_awaitable);
+        co_await asio::async_write(ctx->socket, asio::buffer(final_chunk), net::use_awaitable);
 
         // 重置状态并标记响应已发送
         m_chunked_transfer = false;
@@ -632,7 +632,7 @@ bool HttpHandle::finishChunkedTransferSync() noexcept {
         std::string final_chunk = "0\r\n\r\n";
 
         beast::error_code ec;
-        net::write(ctx->socket, net::buffer(final_chunk), ec);
+        asio::write(ctx->socket, asio::buffer(final_chunk), ec);
 
         // 重置状态并标记响应已发送
         m_chunked_transfer = false;

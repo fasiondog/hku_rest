@@ -14,18 +14,27 @@
 namespace hku {
 
 VoidBizResult RestHandle::before_run() noexcept {
-    setResHeader("Content-Type", "application/json; charset=UTF-8");
-
     std::string data = getReqData();
     try {
         if (!data.empty()) {
-            req = json::parse(data);
+            auto content_type = getReqHeader("Content-Type");
+            if (content_type.empty()) {
+                req = json::parse(data);
+            } else if (content_type.find("application/json") != std::string::npos) {
+                req = json::parse(data);
+            } else if (content_type.find("application/msgpack") != std::string::npos) {
+                req = json::from_msgpack(data);
+            } else if (content_type.find("application/cbor") != std::string::npos) {
+                req = json::from_cbor(data);
+            } else {
+                req = json::parse(data);
+            }
         }
     } catch (const std::exception& e) {
-        HKU_ERROR("Failed parse json: {}", data);
+        CLS_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     } catch (...) {
-        HKU_ERROR("Failed parse json: {}", data);
+        CLS_ERROR("Failed parse json: {}", data);
         return BIZ_BASE_INVALID_JSON;
     }
 
@@ -33,38 +42,76 @@ VoidBizResult RestHandle::before_run() noexcept {
 }
 
 VoidBizResult RestHandle::after_run() noexcept {
-    json new_res;
-    new_res["ret"] = 0;
-    new_res["data"] = std::move(res);
+    try {
+        auto accept_type = getReqHeader("Accept");
+        int code_type = 0;  // 0: json; 1: msgpack; 2: cbor
+        if (!accept_type.empty()) {
+            if (accept_type.find("application/msgpack") != std::string::npos) {
+                code_type = 1;
+            } else if (accept_type.find("application/cbor") != std::string::npos) {
+                code_type = 2;
+            }
+        }
 
-    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        if (code_type == 0) {
+            std::string content = response.dump();
+            if (content.size() >= 10240) [[unlikely]] {
+                std::string encodings = getReqHeader("Accept-Encoding");
+                size_t pos = encodings.find("gzip");
+                if (pos != std::string::npos) {
+                    setResHeader("Content-Encoding", "gzip");
+                    gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
+                    comp.compress(ctx->res.body(), content.data(), content.size());
+                } else {
+                    ctx->res.body() = std::move(content);
+                }
+            } else {
+                ctx->res.body() = std::move(content);
+            }
 
-    std::string content = new_res.dump();
-    if (content.size() < 1024) {
-        ctx->res.body() = std::move(content);
+            setResHeader("Content-Type", "application/json; charset=UTF-8");
+            return BIZ_OK;
+        }
+
+        std::vector<std::uint8_t> data;
+        if (code_type == 1) {
+            data = json::to_msgpack(response);
+            ctx->res.body().assign(data.begin(), data.end());
+            setResHeader("Content-Type", "application/msgpack");
+            return BIZ_OK;
+        }
+
+        data = json::to_cbor(response);
+        ctx->res.body().assign(data.begin(), data.end());
+        setResHeader("Content-Type", "application/cbor");
         return BIZ_OK;
-    }
 
-    std::string encodings = getReqHeader("Accept-Encoding");
-    size_t pos = encodings.find("gzip");
-    if (pos != std::string::npos) {
-        setResHeader("Content-Encoding", "gzip");
-        gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
-        comp.compress(ctx->res.body(), content.data(), content.size());
-    } else {
-        ctx->res.body() = std::move(content);
+    } catch (const std::exception& e) {
+        CLS_ERROR("{}", e.what());
+        return BIZ_BASE_FAILED;
+    } catch (...) {
+        HKU_ERROR_UNKNOWN;
+        return BIZ_BASE_FAILED;
     }
-
-    return BIZ_OK;
 }
 
 VoidBizResult BizHandle::before_run() noexcept {
-    setResHeader("Content-Type", "application/json; charset=UTF-8");
-
     std::string data = getReqData();
     try {
         if (!data.empty()) {
-            req = json::parse(data);
+            auto content_type = getReqHeader("Content-Type");
+            if (content_type.empty()) {
+                req = json::parse(data);
+            } else if (content_type.find("application/json") != std::string::npos) {
+                req = json::parse(data);
+            } else if (content_type.find("application/msgpack") != std::string::npos) {
+                req = json::from_msgpack(data);
+            } else if (content_type.find("application/cbor") != std::string::npos) {
+                req = json::from_cbor(data);
+            } else {
+                req = json::parse(data);
+            }
         }
     } catch (const std::exception& e) {
         CLS_ERROR("Failed parse json: {}", data);
@@ -77,29 +124,62 @@ VoidBizResult BizHandle::before_run() noexcept {
 }
 
 VoidBizResult BizHandle::after_run() noexcept {
-    json new_res;
-    new_res["ret"] = 0;
-    new_res["data"] = std::move(res);
+    try {
+        json new_res;
+        new_res["ret"] = 0;
+        new_res["data"] = std::move(res);
 
-    auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        auto accept_type = getReqHeader("Accept");
+        int code_type = 0;  // 0: json; 1: msgpack; 2: cbor
+        if (!accept_type.empty()) {
+            if (accept_type.find("application/msgpack") != std::string::npos) {
+                code_type = 1;
+            } else if (accept_type.find("application/cbor") != std::string::npos) {
+                code_type = 2;
+            }
+        }
 
-    std::string content = new_res.dump();
-    if (content.size() < 1024) {
-        ctx->res.body() = std::move(content);
+        auto* ctx = static_cast<BeastContext*>(m_beast_context);
+        if (code_type == 0) {
+            std::string content = new_res.dump();
+            if (content.size() >= 10240) [[unlikely]] {
+                std::string encodings = getReqHeader("Accept-Encoding");
+                size_t pos = encodings.find("gzip");
+                if (pos != std::string::npos) {
+                    setResHeader("Content-Encoding", "gzip");
+                    gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
+                    comp.compress(ctx->res.body(), content.data(), content.size());
+                } else {
+                    ctx->res.body() = std::move(content);
+                }
+            } else {
+                ctx->res.body() = std::move(content);
+            }
+
+            setResHeader("Content-Type", "application/json; charset=UTF-8");
+            return BIZ_OK;
+        }
+
+        std::vector<std::uint8_t> data;
+        if (code_type == 1) {
+            data = json::to_msgpack(new_res);
+            ctx->res.body().assign(data.begin(), data.end());
+            setResHeader("Content-Type", "application/msgpack");
+            return BIZ_OK;
+        }
+
+        data = json::to_cbor(new_res);
+        ctx->res.body().assign(data.begin(), data.end());
+        setResHeader("Content-Type", "application/cbor");
         return BIZ_OK;
-    }
 
-    std::string encodings = getReqHeader("Accept-Encoding");
-    size_t pos = encodings.find("gzip");
-    if (pos != std::string::npos) {
-        setResHeader("Content-Encoding", "gzip");
-        gzip::Compressor comp(Z_DEFAULT_COMPRESSION);
-        comp.compress(ctx->res.body(), content.data(), content.size());
-    } else {
-        ctx->res.body() = std::move(content);
+    } catch (const std::exception& e) {
+        CLS_ERROR("{}", e.what());
+        return BIZ_BASE_FAILED;
+    } catch (...) {
+        HKU_ERROR_UNKNOWN;
+        return BIZ_BASE_FAILED;
     }
-
-    return BIZ_OK;
 }
 
 net::awaitable<VoidBizResult> BizHandle::run() {

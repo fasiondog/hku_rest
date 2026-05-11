@@ -5,7 +5,6 @@
 #include <chrono>
 
 using json = nlohmann::json;
-namespace net = boost::asio;
 
 namespace hku {
 

@@ -42,9 +42,8 @@ namespace hku {
 
 namespace beast = boost::beast;
 namespace http = beast::http;
-namespace net = boost::asio;
-namespace ssl = net::ssl;
-using tcp = net::ip::tcp;
+namespace ssl = net::asio::ssl;
+using tcp = net::tcp;
 
 class HKU_HTTPD_API HttpServer;
 

@@ -32,6 +32,8 @@
 #include <boost/asio/awaitable.hpp>
 #include <boost/asio/steady_timer.hpp>
 
+#include "hikyuu/utilities/net.h"
+
 #ifndef HKU_HTTPD_API
 #define HKU_HTTPD_API
 #endif
@@ -40,8 +42,8 @@ namespace hku {
 
 namespace beast = boost::beast;
 namespace http = beast::http;
-namespace net = boost::asio;
-using tcp = net::ip::tcp;
+namespace asio = net::asio;
+using tcp = net::tcp;
 
 /**
  * Beast 上下文 - 封装 beast 的请求和响应对象
@@ -57,7 +59,7 @@ struct BeastContext {
     net::io_context* io_ctx_ptr{nullptr};
 
     // 新增：取消令牌源，用于主动中断超时操作
-    net::cancellation_signal cancel_signal;
+    asio::cancellation_signal cancel_signal;
 
     // P99 优化：Keep-Alive 状态标记
     bool keep_alive = true;

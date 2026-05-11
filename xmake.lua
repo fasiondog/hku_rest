@@ -37,7 +37,7 @@ if has_config("use_hikyuu") then
     }})
 else
     -- add_requires("hku_utils >=1.3.6", 
-    add_requires("hku_utils f45d547841724d1b91650d914875d7bb95aa5de4", 
+    add_requires("hku_utils 326418e91f76a8edcd3efb99b34b56810d5c805b", 
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,

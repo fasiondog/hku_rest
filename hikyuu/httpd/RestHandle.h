@@ -149,7 +149,8 @@ protected:
 
 protected:
     json req;  // 子类在 run 方法中，直接使用此 req
-    json res;
+    json response{{"ret", 0}, {"data", json()}};
+    json& res = response["data"];
 };
 
 #define REST_HANDLE_IMP(cls)                                         \

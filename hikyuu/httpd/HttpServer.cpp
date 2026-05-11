@@ -40,14 +40,15 @@
 #include <boost/asio/detached.hpp>
 #include <boost/asio/ssl.hpp>
 #include <boost/asio/awaitable.hpp>
+#include <hikyuu/utilities/net.h>
 
 namespace hku {
 
 namespace beast = boost::beast;
 namespace http = beast::http;
-namespace net = boost::asio;
-namespace ssl = net::ssl;
-using tcp = net::ip::tcp;
+namespace ssl = boost::asio::ssl;
+namespace asio = net::asio;
+using tcp = net::tcp;
 
 // ============================================================================
 // IP地址处理辅助函数
@@ -320,7 +321,7 @@ WebSocketConnection::~WebSocketConnection() {
 
 void WebSocketConnection::start() {
     auto self = shared_from_this();
-    net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
+    asio::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
 }
 
 net::awaitable<bool> WebSocketConnection::sslHandshake() {
@@ -514,7 +515,7 @@ net::awaitable<void> WebSocketConnection::readLoop(std::shared_ptr<WebSocketConn
     }
 
     // 【新增】启动心跳保活机制（按 PING_INTERVAL 周期性发送 Ping）
-    net::co_spawn(m_io_ctx, sendPing(), net::detached);
+    asio::co_spawn(m_io_ctx, sendPing(), net::detached);
 
     // WebSocket 消息读取循环
     while (true) {
@@ -907,8 +908,8 @@ net::awaitable<bool> WebSocketConnection::send(std::string_view message, bool is
 
     // 异步发送消息（使用 buffer）
     beast::error_code ec;
-    co_await m_ws_stream->async_write(net::buffer(message),
-                                      net::redirect_error(net::use_awaitable, ec));
+    co_await m_ws_stream->async_write(asio::buffer(message),
+                                      asio::redirect_error(net::use_awaitable, ec));
 
     // 取消定时器
     m_ws_ctx->timer.cancel();
@@ -1065,7 +1066,7 @@ void Connection::start() {
     // HKU_TRACE("Connection::start: m_router={}, this={}", (void*)m_router, (void*)this);
     // 使用 shared_from_this 确保 Connection 对象在协程执行期间不会被销毁
     auto self = shared_from_this();
-    net::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
+    asio::co_spawn(m_socket.get_executor(), readLoop(self), net::detached);
 }
 
 net::awaitable<bool> Connection::sslHandshake() {
@@ -1177,7 +1178,7 @@ net::awaitable<void> Connection::readLoop(std::shared_ptr<Connection> self) {
                     // 尝试锁定 shared_ptr
                     if (auto sess = weak_sess.lock()) {
                         // 主动取消正在进行的异步操作
-                        sess->cancel_signal.emit(net::cancellation_type::all);
+                        sess->cancel_signal.emit(asio::cancellation_type::all);
                         HKU_DEBUG("Read timeout triggered for client {}:{}", sess->client_ip,
                                   sess->client_port);
                     }
@@ -1503,7 +1504,7 @@ net::awaitable<void> Connection::processHandle(std::shared_ptr<BeastContext> con
                 // 尝试锁定 shared_ptr
                 if (auto ctx = weak_ctx.lock()) {
                     // 主动取消正在进行的异步操作
-                    ctx->cancel_signal.emit(net::cancellation_type::all);
+                    ctx->cancel_signal.emit(asio::cancellation_type::all);
                 }
             }
         });
@@ -1940,7 +1941,7 @@ net::awaitable<void> HttpServer::doAccept() {
             // 有数据，读取并丢弃第一个字节（探测连接不会有数据）
             char buf[1];
             boost::system::error_code read_ec;
-            socket.read_some(net::buffer(buf), read_ec);
+            socket.read_some(asio::buffer(buf), read_ec);
             CLS_DEBUG("Normal request detected from {}:{}, first byte read", client_ip,
                       remote_ep.port());
         }
@@ -2042,13 +2043,13 @@ void HttpServer::start() {
 
             // 使用协程开始接受 SSL 连接
             CLS_INFO("Spawning doAcceptSsl coroutine...");
-            net::co_spawn(*m_io_context, doAcceptSsl(), net::detached);
+            asio::co_spawn(*m_io_context, doAcceptSsl(), asio::detached);
         } else {
             CLS_INFO("HTTP Server started on {}:{}", m_host, m_port);
 
             // 使用协程开始接受连接
             CLS_INFO("Spawning doAccept coroutine...");
-            net::co_spawn(*m_io_context, doAccept(), net::detached);
+            asio::co_spawn(*m_io_context, doAccept(), asio::detached);
         }
 
         CLS_INFO("Setting m_running = true");

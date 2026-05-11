@@ -14,12 +14,9 @@
 #include <functional>
 #include <vector>
 #include <memory>
-#include <boost/asio.hpp>
-#include <boost/asio/awaitable.hpp>
+#include <hikyuu/utilities/net.h>
 
 namespace hku {
-
-namespace net = boost::asio;
 
 /**
  * HTTP 路由器 - 负责注册和分发请求到对应的 Handle
@@ -39,7 +36,7 @@ public:
 
     void registerHandler(std::string method, std::string path, HandlerFunc handler);
     HandlerFunc findHandler(const std::string& method, const std::string& path);
-    
+
     // 获取所有注册的路由
     const std::vector<std::pair<RouteKey, HandlerFunc>>& getRoutes() const {
         return m_routes;
@@ -60,7 +57,7 @@ public:
 
     void registerHandler(std::string path, HandleFactory factory);
     HandleFactory findHandler(const std::string& path);
-    
+
     // 获取所有注册的路由
     const std::vector<std::pair<std::string, HandleFactory>>& getRoutes() const {
         return m_routes;

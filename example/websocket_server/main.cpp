@@ -81,7 +81,7 @@ int main(int argc, char* argv[]) {
         // server->GET<HelloHandle>("/api/hello");
 
         // 方式 2: Lambda 方式 - 简单示例
-        server->registerHttpHandle("GET", "/api/hello", [](void* ctx) -> net::awaitable<void> {
+        server->registerHttpHandle("GET", "/api/hello", [](void* ctx) -> asio::awaitable<void> {
             auto context = static_cast<BeastContext*>(ctx);
 
             // 构建 HTTP 响应 (使用 context->res)
@@ -98,7 +98,7 @@ int main(int argc, char* argv[]) {
         // ========== 流式传输示例 ==========
 
         // 简单测试路由
-        server->registerHttpHandle("GET", "/test-download", [](void* ctx) -> net::awaitable<void> {
+        server->registerHttpHandle("GET", "/test-download", [](void* ctx) -> asio::awaitable<void> {
             HKU_INFO("Test download handler called");
             auto context = static_cast<BeastContext*>(ctx);
             context->res.result(http::status::ok);
@@ -109,7 +109,7 @@ int main(int argc, char* argv[]) {
         // 文件下载示例（需要传递 file 参数）
         // GET /api/download?file=/path/to/file.txt
         HKU_INFO("Registering /api/download route");
-        server->registerHttpHandle("GET", "/api/download", [](void* ctx) -> net::awaitable<void> {
+        server->registerHttpHandle("GET", "/api/download", [](void* ctx) -> asio::awaitable<void> {
             HKU_INFO("Download handler called");
             FileDownloadHandle handle(ctx);
             auto ret = co_await handle.run();
@@ -121,7 +121,7 @@ int main(int argc, char* argv[]) {
 
         // SSE 实时推送
         // GET /api/sse
-        server->registerHttpHandle("GET", "/api/sse", [](void* ctx) -> net::awaitable<void> {
+        server->registerHttpHandle("GET", "/api/sse", [](void* ctx) -> asio::awaitable<void> {
             SSEHandle handle(ctx);
             (void)co_await handle.run();
         });

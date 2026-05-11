@@ -19,6 +19,7 @@
 #include <boost/asio/strand.hpp>
 #include <boost/asio/awaitable.hpp>
 
+#include <hikyuu/utilities/net.h>
 #include <hikyuu/utilities/Log.h>
 #include "HttpConfig.h"
 
@@ -30,9 +31,9 @@ namespace hku {
 
 namespace beast = boost::beast;
 namespace websocket = beast::websocket;
-namespace net = boost::asio;
 namespace ws = websocket;
-using tcp = net::ip::tcp;
+using tcp = net::tcp;
+namespace asio = net::asio;
 
 /**
  * WebSocket 上下文 - 封装 WebSocket 连接的状态
@@ -42,7 +43,7 @@ struct WebSocketContext {
     uint16_t client_port = 0;
     beast::flat_buffer buffer;
     net::steady_timer timer;
-    net::cancellation_signal cancel_signal;
+    asio::cancellation_signal cancel_signal;
 
     // 保存发送和关闭的回调函数（由 WebSocketConnection 设置）
     std::function<net::awaitable<bool>(std::string_view, bool)> send_callback;
@@ -54,7 +55,7 @@ struct WebSocketContext {
         buffer.max_size(WebSocketConfig::MAX_READ_BUFFER_SIZE);
     }
 
-    WebSocketContext(const net::any_io_executor& exec)
+    WebSocketContext(const asio::any_io_executor& exec)
     : buffer(WebSocketConfig::MAX_READ_BUFFER_SIZE), timer(exec) {
         // 设置缓冲区大小限制，防止内存耗尽攻击
         buffer.max_size(WebSocketConfig::MAX_READ_BUFFER_SIZE);
