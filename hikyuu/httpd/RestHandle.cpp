@@ -43,6 +43,7 @@ VoidBizResult RestHandle::before_run() noexcept {
 
 VoidBizResult RestHandle::after_run() noexcept {
     try {
+        json new_res = {{"ret", 0}, {"data", std::move(res)}};
         auto accept_type = getReqHeader("Accept");
         int code_type = 0;  // 0: json; 1: msgpack; 2: cbor
         if (!accept_type.empty()) {
@@ -55,7 +56,7 @@ VoidBizResult RestHandle::after_run() noexcept {
 
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         if (code_type == 0) {
-            std::string content = response.dump();
+            std::string content = new_res.dump();
             if (content.size() >= 10240) [[unlikely]] {
                 std::string encodings = getReqHeader("Accept-Encoding");
                 size_t pos = encodings.find("gzip");
@@ -76,13 +77,13 @@ VoidBizResult RestHandle::after_run() noexcept {
 
         std::vector<std::uint8_t> data;
         if (code_type == 1) {
-            data = json::to_msgpack(response);
+            data = json::to_msgpack(new_res);
             ctx->res.body().assign(data.begin(), data.end());
             setResHeader("Content-Type", "application/msgpack");
             return BIZ_OK;
         }
 
-        data = json::to_cbor(response);
+        data = json::to_cbor(new_res);
         ctx->res.body().assign(data.begin(), data.end());
         setResHeader("Content-Type", "application/cbor");
         return BIZ_OK;
@@ -125,10 +126,7 @@ VoidBizResult BizHandle::before_run() noexcept {
 
 VoidBizResult BizHandle::after_run() noexcept {
     try {
-        json new_res;
-        new_res["ret"] = 0;
-        new_res["data"] = std::move(res);
-
+        json new_res = {{"ret", 0}, {"data", std::move(res)}};
         auto accept_type = getReqHeader("Accept");
         int code_type = 0;  // 0: json; 1: msgpack; 2: cbor
         if (!accept_type.empty()) {
