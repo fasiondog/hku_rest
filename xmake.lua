@@ -32,6 +32,7 @@ if has_config("use_hikyuu") then
         http_client_zip = true,
         async_log = has_config("async_log"),
         mysql = has_config("mysql"), 
+        disable_libmysqlclient = false,
         sqlite = has_config("sqlite"),
         stacktrace = has_config("stacktrace")
     }})
