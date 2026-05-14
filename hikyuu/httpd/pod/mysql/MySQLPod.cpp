@@ -11,11 +11,17 @@
 namespace hku {
 namespace pod {
 
+std::unique_ptr<ResourceHybridPool<AsyncMySQLConnect>> MySQLPod::ms_async_db_pool;
 std::unique_ptr<ResourcePool<MySQLConnect>> MySQLPod::ms_db_pool;
 
 void MySQLPod::init() {
     auto& config = PodConfig::instance();
-    CLS_WARN_IF_RETURN(!config.get<bool>("mysql_enable", false), void(), "mysql is disabled");
+    bool enable_async = config.get<bool>("mysql_async_enable", false);
+    bool enable_sync = config.get<bool>("mysql_sync_enable", false);
+
+    CLS_INFO("mysql_async_enable: {}", enable_async);
+    CLS_INFO("mysql_sync_enable: {}", enable_sync);
+    CLS_WARN_IF_RETURN(!enable_async && !enable_sync, void(), "mysql is disabled");
 
     CLS_INFO("Init MySQLPod ...");
     Parameter param;
@@ -24,10 +30,19 @@ void MySQLPod::init() {
     param.set<std::string>("user", config.get<std::string>("mysql_user"));
     param.set<std::string>("pwd", config.get<std::string>("mysql_pwd"));
     param.set<std::string>("db", config.get<std::string>("mysql_db", ""));
-    ms_db_pool =
-      std::make_unique<ResourcePool<MySQLConnect>>(param, config.get<int>("mysql_max_connect", 20),
-                                                   config.get<int>("mysql_max_idle_connect", 20));
-    CLS_CHECK(ms_db_pool, "Failed allocate mysql connect pool!");
+
+    if (enable_async) {
+        ms_async_db_pool = std::make_unique<ResourceHybridPool<AsyncMySQLConnect>>(
+          param, config.get<int>("mysql_tls_connect", 2), config.get<int>("mysql_max_connect", 20));
+        CLS_ASSERT(ms_async_db_pool);
+    }
+
+    if (enable_sync) {
+        ms_db_pool = std::make_unique<ResourcePool<MySQLConnect>>(
+          param, config.get<int>("mysql_max_connect", 20),
+          config.get<int>("mysql_max_idle_connect", 20));
+        CLS_ASSERT(ms_db_pool);
+    }
 }
 
 void MySQLPod::quit() {
