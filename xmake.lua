@@ -1,7 +1,7 @@
 set_xmakever("3.0.0")
 set_project("hku_rest")
 
-set_version("1.2.1", {build="%Y%m%d%H%M"})
+set_version("1.2.2", {build="%Y%m%d%H%M"})
 
 set_warnings("all")
 set_languages("c++20")
@@ -36,8 +36,7 @@ if has_config("use_hikyuu") then
         stacktrace = has_config("stacktrace")
     }})
 else
-    -- add_requires("hku_utils >=1.3.6", 
-    add_requires("hku_utils ad74d45bf1c94b93a6b407ca6d63bc002bc20a93", 
+    add_requires("hku_utils >=1.3.6", 
         {configs = {
             shared = is_kind("shared"), 
             log_level = log_level,
@@ -75,30 +74,10 @@ if is_plat("windows") then
     end
 end
 
-local boost_config
-if is_plat("windows") then
-    boost_config = {
-        system = false,
-        debug = is_mode("debug"),
-        configs = {
-            shared = true,
-            runtimes = get_config("runtimes"),
-            multi = true,
-            date_time = true,
-            filesystem = false,
-            property_tree= true, --mqtt need
-            serialization = true,
-            system = true,
-            python = false,
-            asio = true,
-            beast = true,
-            cmake = false,
-    }}
-else
-    boost_config = {
+local boost_config = {
         system = false,
         configs = {
-            shared = true, -- is_plat("windows"),
+            shared = is_plat("windows"),
             runtimes = get_config("runtimes"),
             multi = true,
             date_time = true,
@@ -118,9 +97,9 @@ else
             thread = true,
             asio = true,  
             beast = true,
-            cmake = true,
+            cmake = false,
     }}
-end
+
 add_requireconfs("**.boost", {override = true, configs = boost_config}) 
 
 if has_config("leak_check") then
