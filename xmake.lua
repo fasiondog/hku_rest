@@ -75,33 +75,34 @@ if is_plat("windows") then
     end
 end
 
-local boost_config = {
-        system = false,
-        configs = {
-            shared = is_plat("windows"),
-            runtimes = get_config("runtimes"),
-            multi = true,
-            date_time = true,
-            filesystem = false,
-            serialization = true, --get_config("serialize"),
-            system = true,
-            python = false,
-            -- 以下为兼容 arrow 等其他组件
-            thread = true,   -- parquet need
-            chrono = true,   -- parquet need
-            charconv = true, -- parquet need
-            atomic = true,
-            container = true,
-            math = true,
-            regex = true,
-            random = true,
-            thread = true,
-            asio = true,  
-            beast = true,
-            cmake = false,
-    }}
+-- local boost_config = {
+--         system = false,
+--         configs = {
+--             shared = is_plat("windows"),
+--             runtimes = get_config("runtimes"),
+--             multi = true,
+--             date_time = true,
+--             filesystem = false,
+--             serialization = true, --get_config("serialize"),
+--             system = true,
+--             python = false,
+--             -- 以下为兼容 arrow 等其他组件
+--             thread = true,   -- parquet need
+--             chrono = true,   -- parquet need
+--             charconv = true, -- parquet need
+--             atomic = true,
+--             container = true,
+--             math = true,
+--             regex = true,
+--             random = true,
+--             thread = true,
+--             asio = true,  
+--             beast = true,
+--             mysql = true,
+--             cmake = false,
+--     }}
 
-add_requireconfs("**.boost", {override = true, configs = boost_config}) 
+-- -- add_requireconfs("**.boost", {override = true, configs = boost_config}) 
 
 if has_config("leak_check") then
     -- 需要 export LD_PRELOAD=libasan.so
