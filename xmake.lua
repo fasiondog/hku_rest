@@ -21,60 +21,6 @@ add_rules("mode.debug", "mode.release")
 
 add_repositories("hikyuu-repo https://github.com/fasiondog/hikyuu_extern_libs.git")
 
-local log_level = get_config("log_level")
-if has_config("use_hikyuu") then
-    add_requires("hikyuu", 
-    {configs = {
-        shared = is_kind("shared"), 
-        log_level = log_level,
-        http_client = true,
-        http_client_ssl = true,
-        http_client_zip = true,
-        async_log = has_config("async_log"),
-        mysql = has_config("mysql"), 
-        disable_libmysqlclient = false,
-        sqlite = has_config("sqlite"),
-        stacktrace = has_config("stacktrace")
-    }})
-else
-    add_requires("hku_utils >=1.3.6", 
-        {configs = {
-            shared = is_kind("shared"), 
-            log_level = log_level,
-            http_client = true,
-            http_client_ssl = true,
-            http_client_zip = true,
-            async_log = has_config("async_log"),
-            mysql = has_config("mysql"), 
-            sqlite = has_config("sqlite"),
-            stacktrace = has_config("stacktrace")
-    }})
-end
-
-set_objectdir("$(builddir)/$(mode)/$(plat)/$(arch)/.objs")
-set_targetdir("$(builddir)/$(mode)/$(plat)/$(arch)/lib")
-
--- is release now
-if is_mode("release") then
-    if is_plat("windows") then
-        -- Unix-like systems hidden symbols will cause the link dynamic libraries to failed!
-        set_symbols("hidden")
-    end
-end
-
--- for the windows platform (msvc)
-if is_plat("windows") then
-    -- add some defines only for windows
-    add_defines("NOCRYPT", "NOGDI")
-    add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
-    add_cxflags("-wd4819") -- template dll export warning
-    add_defines("WIN32_LEAN_AND_MEAN", "_WIN32_WINNT=0x0601")
-    add_cxflags("/bigobj")
-    if is_mode("debug") then
-        add_cxflags("-Gs", "-RTC1")
-    end
-end
-
 local boost_config = {
         system = false,
         configs = {
@@ -102,7 +48,62 @@ local boost_config = {
             cmake = false,
     }}
 
-add_requireconfs("**.boost", {override = true, configs = boost_config}) 
+local log_level = get_config("log_level")
+if has_config("use_hikyuu") then
+    add_requires("hikyuu", 
+    {configs = {
+        shared = is_kind("shared"), 
+        log_level = log_level,
+        http_client = true,
+        http_client_ssl = true,
+        http_client_zip = true,
+        async_log = has_config("async_log"),
+        mysql = has_config("mysql"), 
+        disable_libmysqlclient = false,
+        sqlite = has_config("sqlite"),
+        stacktrace = has_config("stacktrace")
+    }})
+    add_requireconfs("hikyuu.boost", {override = true, configs = boost_config}) 
+
+else
+    add_requires("hku_utils >=1.3.6", 
+        {configs = {
+            shared = is_kind("shared"), 
+            log_level = log_level,
+            http_client = true,
+            http_client_ssl = true,
+            http_client_zip = true,
+            async_log = has_config("async_log"),
+            mysql = has_config("mysql"), 
+            sqlite = has_config("sqlite"),
+            stacktrace = has_config("stacktrace")
+    }})
+    add_requireconfs("hku_utils.boost", {override = true, configs = boost_config}) 
+end
+
+set_objectdir("$(builddir)/$(mode)/$(plat)/$(arch)/.objs")
+set_targetdir("$(builddir)/$(mode)/$(plat)/$(arch)/lib")
+
+-- is release now
+if is_mode("release") then
+    if is_plat("windows") then
+        -- Unix-like systems hidden symbols will cause the link dynamic libraries to failed!
+        set_symbols("hidden")
+    end
+end
+
+-- for the windows platform (msvc)
+if is_plat("windows") then
+    -- add some defines only for windows
+    add_defines("NOCRYPT", "NOGDI")
+    add_cxflags("-EHsc", "/Zc:__cplusplus", "/utf-8")
+    add_cxflags("-wd4819") -- template dll export warning
+    add_defines("WIN32_LEAN_AND_MEAN", "_WIN32_WINNT=0x0601")
+    add_cxflags("/bigobj")
+    if is_mode("debug") then
+        add_cxflags("-Gs", "-RTC1")
+    end
+end
 
 if has_config("leak_check") then
     -- 需要 export LD_PRELOAD=libasan.so
@@ -113,12 +114,7 @@ if has_config("leak_check") then
 end
 
 add_requires("gzip-hpp", {system = false})
-
-if is_plat("linux") then
-  add_requires("apt::libssl-dev", {alias="openssl3"})
-else
-  add_requires("openssl3", {system = false})
-end
+add_requires("openssl3", {system = false, configs = {shared = true}})
 
 if has_config("mqtt") then
     add_requires("async_mqtt", {system = false, configs = {tls = true, ws = true, log=false}})
