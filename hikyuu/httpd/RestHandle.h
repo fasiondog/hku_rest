@@ -90,7 +90,7 @@ public:
     virtual VoidBizResult after_run() noexcept override;
 
 protected:
-    VoidBizResult check_missing_param(std::string_view param) {
+    [[nodiscard]] VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
         }
@@ -98,7 +98,7 @@ protected:
     }
 
     // 不能使用模板方式实现，协程中使用会导致this指针可能会挂
-    VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
+    [[nodiscard]] VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
         for (const auto& key : keys) {
             if (!req.contains(key)) {
                 return BIZ_BASE_MISS_PARAMETER;
@@ -268,14 +268,14 @@ public:
     virtual VoidBizResult biz_run() = 0;
 
 protected:
-    VoidBizResult check_missing_param(std::string_view param) {
+    [[nodiscard]] VoidBizResult check_missing_param(std::string_view param) {
         if (!req.contains(param)) {
             return BIZ_BASE_MISS_PARAMETER;
         }
         return BIZ_OK;
     }
 
-    VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
+    [[nodiscard]] VoidBizResult check_missing_param(std::initializer_list<std::string> keys) {
         for (const auto& key : keys) {
             if (!req.contains(key)) {
                 return BIZ_BASE_MISS_PARAMETER;
