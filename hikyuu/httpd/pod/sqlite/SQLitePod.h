@@ -36,6 +36,7 @@ public:
      */
     static asio::awaitable<AsyncDBConnectPtr> getAsyncConnect(
       std::chrono::steady_clock::duration timeout = std::chrono::seconds(5)) {
+        HKU_ASSERT(ms_async_db_pool);
         auto ret = co_await ms_async_db_pool->asyncGet(timeout);
         if (!ret) {
             HKU_THROW("Failed get connect! {}", ret.error());
@@ -45,17 +46,18 @@ public:
 
     /** 获取本地数据库空闲连接数量 */
     static DBConnectPtr getConnect() {
+        HKU_ASSERT(ms_db_pool);
         return ms_db_pool->getAndWait();
     }
 
     /** 获取本地数据库连接总数量 */
     static size_t getCount() {
-        return ms_db_pool->count();
+        return ms_db_pool ? ms_db_pool->count() : 0;
     }
 
     /** 获取本地数据库空闲连接数量 */
     static size_t getIdleCount() {
-        return ms_db_pool->idleCount();
+        return ms_db_pool ? ms_db_pool->idleCount() : 0;
     }
 
 private:
