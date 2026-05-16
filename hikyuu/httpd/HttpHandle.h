@@ -156,6 +156,9 @@ public:
     /** 获取 query 参数 */
     BizResult<QueryParams> getQueryParams() const noexcept;
 
+    /** 获取 query 参数 */
+    BizResult<std::string> getQueryParam(std::string name) const noexcept;
+
     void setResHeader(std::string_view key, std::string_view val) {
         // 直接写入 BeastContext，避免中间存储
         if (m_beast_context) {

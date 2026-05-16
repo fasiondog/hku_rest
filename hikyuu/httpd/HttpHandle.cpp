@@ -383,6 +383,15 @@ BizResult<HttpHandle::QueryParams> HttpHandle::getQueryParams() const noexcept {
     return query_params;
 }
 
+BizResult<std::string> HttpHandle::getQueryParam(std::string name) const noexcept {
+    auto params = getQueryParams().value_or(QueryParams());
+    auto iter = params.find(name);
+    if (iter == params.end()) {
+        return BIZ_BASE_MISS_PARAMETER;
+    }
+    return iter->second;
+}
+
 std::string HttpHandle::getLanguage() const {
     std::string lang = getReqHeader("Accept-Language");
     auto pos = lang.find_first_of(',');
