@@ -1,6 +1,13 @@
 # 版本发布说明
 
-## 1.2.2 - 2026年5yue
+## 1.2.3 - 2026年5月17日
+
+1. feat(httpd): HttpHandle 添加获取单个query参数的功能
+2. feat(httpd): RestHandle/BizHandle添加[[nodiscard]]属性到check_missing_param方法
+3. fix(mysql,sqlite): 添加数据库连接池空指针检查
+4. refactor(mysql,sqlite): 改为提供getAsyncDBPool和getDBPool方法来直接访问, 建议初始化完毕后根据需要进行检查
+
+## 1.2.2 - 2026年5月15日
 
 ### 新功能
 
