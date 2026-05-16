@@ -50,14 +50,12 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    /** 获取本地数据库连接总数量 */
-    static size_t getCount() {
-        return ms_db_pool ? ms_db_pool->count() : 0;
+    static std::unique_ptr<ResourceHybridPool<AsyncSQLiteConnect>>& getAsyncDBPool() noexcept {
+        return ms_async_db_pool;
     }
 
-    /** 获取本地数据库空闲连接数量 */
-    static size_t getIdleCount() {
-        return ms_db_pool ? ms_db_pool->idleCount() : 0;
+    static std::unique_ptr<ResourcePool<SQLiteConnect>>& getDBPool() noexcept {
+        return ms_db_pool;
     }
 
 private:
