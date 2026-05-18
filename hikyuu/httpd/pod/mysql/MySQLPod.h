@@ -50,12 +50,12 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    static std::unique_ptr<ResourceHybridPool<AsyncMySQLConnect>>& getAsyncDBPool() {
-        return ms_async_db_pool;
+    static ResourceHybridPool<AsyncMySQLConnect>* getAsyncDBPool() {
+        return ms_async_db_pool.get();
     }
 
-    static std::unique_ptr<ResourcePool<MySQLConnect>>& getDBPool() {
-        return ms_db_pool;
+    static ResourcePool<MySQLConnect>* getDBPool() {
+        return ms_db_pool.get();
     }
 
 private:

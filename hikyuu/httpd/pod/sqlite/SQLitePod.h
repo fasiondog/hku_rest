@@ -50,12 +50,12 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    static std::unique_ptr<ResourceHybridPool<AsyncSQLiteConnect>>& getAsyncDBPool() noexcept {
-        return ms_async_db_pool;
+    static ResourceHybridPool<AsyncSQLiteConnect>* getAsyncDBPool() noexcept {
+        return ms_async_db_pool.get();
     }
 
-    static std::unique_ptr<ResourcePool<SQLiteConnect>>& getDBPool() noexcept {
-        return ms_db_pool;
+    static ResourcePool<SQLiteConnect>* getDBPool() noexcept {
+        return ms_db_pool.get();
     }
 
 private:
