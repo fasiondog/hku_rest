@@ -33,14 +33,15 @@ void MySQLPod::init() {
 
     if (enable_async) {
         ms_async_db_pool = std::make_unique<ResourceHybridPool<AsyncMySQLConnect>>(
-          param, config.get<int>("mysql_tls_connect", 2), config.get<int>("mysql_max_connect", 20));
+          param, config.get<int>("mysql_async_tls_connect", 2),
+          config.get<int>("mysql_async_max_connect", 20));
         CLS_ASSERT(ms_async_db_pool);
     }
 
     if (enable_sync) {
         ms_db_pool = std::make_unique<ResourcePool<MySQLConnect>>(
-          param, config.get<int>("mysql_max_connect", 20),
-          config.get<int>("mysql_max_idle_connect", 20));
+          param, config.get<int>("mysql_sync_max_connect", 20),
+          config.get<int>("mysql_sync_max_idle_connect", 20));
         CLS_ASSERT(ms_db_pool);
     }
 }
