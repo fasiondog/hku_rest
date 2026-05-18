@@ -128,7 +128,7 @@ void HttpHandle::processBizException(const BizException& e) noexcept {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.result(http::status::ok);  // 传输成功，统一返回200
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", e.errcode(), e.what());
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"biz exception"}})", e.errcode());
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());
@@ -144,7 +144,7 @@ void HttpHandle::processException(std::string_view err_msg) noexcept {
         auto* ctx = static_cast<BeastContext*>(m_beast_context);
         ctx->res.result(http::status::internal_server_error);
         ctx->res.set(http::field::content_type, "application/json; charset=UTF-8");
-        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"{}"}})", BIZ_BASE_FAILED, err_msg);
+        ctx->res.body() = fmt::format(R"({{"ret":{},"errmsg":"internal error"}})", BIZ_BASE_FAILED);
         ctx->res.prepare_payload();
     } catch (std::exception& e) {
         CLS_ERROR("Exception in processException: {}", e.what());
