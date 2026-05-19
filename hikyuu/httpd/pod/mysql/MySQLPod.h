@@ -50,7 +50,7 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    static ResourceAsioPool<AsyncMySQLConnect>* getAsyncDBPool() {
+    static ResourceAsioPool<AsyncMySQLConnect, std::mutex>* getAsyncDBPool() {
         return ms_async_db_pool.get();
     }
 

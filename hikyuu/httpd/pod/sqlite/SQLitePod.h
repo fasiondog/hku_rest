@@ -50,7 +50,7 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    static ResourceAsioPool<AsyncSQLiteConnect>* getAsyncDBPool() noexcept {
+    static ResourceAsioPool<AsyncSQLiteConnect, std::mutex>* getAsyncDBPool() noexcept {
         return ms_async_db_pool.get();
     }
 
@@ -59,7 +59,7 @@ public:
     }
 
 private:
-    static std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect>>
+    static std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect, std::mutex>>
       ms_async_db_pool;                                                    // 异步任务数据库
     static std::unique_ptr<ResourceHybridPool<SQLiteConnect>> ms_db_pool;  // 同步任务数据库
 };

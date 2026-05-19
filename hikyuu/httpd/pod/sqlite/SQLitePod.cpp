@@ -13,7 +13,7 @@
 namespace hku {
 namespace pod {
 
-std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect>> SQLitePod::ms_async_db_pool;
+std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect, std::mutex>> SQLitePod::ms_async_db_pool;
 std::unique_ptr<ResourceHybridPool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
