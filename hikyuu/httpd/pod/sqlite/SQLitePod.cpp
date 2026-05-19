@@ -30,7 +30,7 @@ void SQLitePod::init() {
     param.set<std::string>("db", config.get<std::string>("sqlite_db"));
 
     if (enable_async) {
-        ms_async_db_pool = std::make_unique<ResourceAsioPool<AsyncSQLiteConnect>>(
+        ms_async_db_pool = std::make_unique<ResourceAsioPool<AsyncSQLiteConnect, std::mutex>>(
           param, config.get<int>("sqlite_async_max_connect", 32));
         CLS_ASSERT(ms_async_db_pool);
 

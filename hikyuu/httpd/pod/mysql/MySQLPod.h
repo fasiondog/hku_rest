@@ -59,8 +59,9 @@ public:
     }
 
 private:
-    static std::unique_ptr<ResourceAsioPool<AsyncMySQLConnect>> ms_async_db_pool;  // 异步任务数据库
-    static std::unique_ptr<ResourceHybridPool<MySQLConnect>> ms_db_pool;           // 同步任务数据库
+    static std::unique_ptr<ResourceAsioPool<AsyncMySQLConnect, std::mutex>>
+      ms_async_db_pool;                                                   // 异步任务数据库
+    static std::unique_ptr<ResourceHybridPool<MySQLConnect>> ms_db_pool;  // 同步任务数据库
 };
 
 }  // namespace pod
