@@ -1,5 +1,9 @@
 # 版本发布说明
 
+## 1.2.8 - 2026年5月20日
+
+fixed: 调整MySQLPod、SQLitePod连接池类型以便适应多线程协程环境
+
 ## 1.2.7 - 2026年5月19日
 
 refactor(pod):  调整MySQL 和 SQLite 的同步、异步数据库连接池实现
