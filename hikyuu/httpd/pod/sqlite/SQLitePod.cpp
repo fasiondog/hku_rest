@@ -13,8 +13,8 @@
 namespace hku {
 namespace pod {
 
-std::unique_ptr<ResourceHybridPool<AsyncSQLiteConnect>> SQLitePod::ms_async_db_pool;
-std::unique_ptr<ResourcePool<SQLiteConnect>> SQLitePod::ms_db_pool;
+std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect>> SQLitePod::ms_async_db_pool;
+std::unique_ptr<ResourceHybridPool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
     auto& config = PodConfig::instance();
@@ -30,7 +30,8 @@ void SQLitePod::init() {
     param.set<std::string>("db", config.get<std::string>("sqlite_db"));
 
     if (enable_async) {
-        ms_async_db_pool = std::make_unique<ResourceHybridPool<AsyncSQLiteConnect>>(param);
+        ms_async_db_pool = std::make_unique<ResourceAsioPool<AsyncSQLiteConnect>>(
+          param, config.get<int>("sqlite_async_max_connect", 32));
         CLS_ASSERT(ms_async_db_pool);
 
         // 创建临时 io_context 用于异步初始化 SQLite PRAGMA 设置
@@ -60,7 +61,9 @@ void SQLitePod::init() {
     }
 
     if (enable_sync) {
-        ms_db_pool = std::make_unique<ResourcePool<SQLiteConnect>>(param);
+        ms_db_pool = std::make_unique<ResourceHybridPool<SQLiteConnect>>(
+          param, config.get<int>("sqlite_sync_max_tls_connect", 2),
+          config.get<int>("sqlite_sync_max_connect", 32));
         CLS_ASSERT(ms_db_pool);
         if (!enable_async) {
             auto connect = ms_db_pool->get();

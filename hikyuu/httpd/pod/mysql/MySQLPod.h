@@ -8,7 +8,7 @@
 #pragma once
 
 #include "hikyuu/utilities/db_connect/DBConnect.h"
-#include "hikyuu/utilities/ResourcePool.h"
+#include "hikyuu/utilities/ResourceAsioPool.h"
 #include "hikyuu/utilities/ResourceHybridPool.h"
 #include "hikyuu/utilities/Log.h"
 
@@ -34,7 +34,7 @@ public:
      * @param timeout 获取连接的超时时间，默认为5秒
      * @return 异步MySQL连接智能指针的协程，如果超时或获取失败，抛出异常
      */
-    static asio::awaitable<AsyncDBConnectPtr> getAsyncConnect(
+    static net::awaitable<AsyncDBConnectPtr> getAsyncConnect(
       std::chrono::steady_clock::duration timeout = std::chrono::seconds(5)) {
         HKU_ASSERT(ms_async_db_pool);
         auto ret = co_await ms_async_db_pool->asyncGet(timeout);
@@ -50,18 +50,17 @@ public:
         return ms_db_pool->getAndWait();
     }
 
-    static ResourceHybridPool<AsyncMySQLConnect>* getAsyncDBPool() {
+    static ResourceAsioPool<AsyncMySQLConnect>* getAsyncDBPool() {
         return ms_async_db_pool.get();
     }
 
-    static ResourcePool<MySQLConnect>* getDBPool() {
+    static ResourceHybridPool<MySQLConnect>* getDBPool() {
         return ms_db_pool.get();
     }
 
 private:
-    static std::unique_ptr<ResourceHybridPool<AsyncMySQLConnect>>
-      ms_async_db_pool;                                             // 异步任务数据库
-    static std::unique_ptr<ResourcePool<MySQLConnect>> ms_db_pool;  // 本地任务数据库
+    static std::unique_ptr<ResourceAsioPool<AsyncMySQLConnect>> ms_async_db_pool;  // 异步任务数据库
+    static std::unique_ptr<ResourceHybridPool<MySQLConnect>> ms_db_pool;           // 同步任务数据库
 };
 
 }  // namespace pod
