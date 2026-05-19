@@ -8,8 +8,8 @@
 #pragma once
 
 #include "hikyuu/utilities/db_connect/DBConnect.h"
+#include "hikyuu/utilities/ResourcePool.h"
 #include "hikyuu/utilities/ResourceAsioPool.h"
-#include "hikyuu/utilities/ResourceHybridPool.h"
 #include "hikyuu/utilities/Log.h"
 
 #ifndef HKU_HTTPD_API
@@ -54,14 +54,14 @@ public:
         return ms_async_db_pool.get();
     }
 
-    static ResourceHybridPool<SQLiteConnect>* getDBPool() noexcept {
+    static ResourcePool<SQLiteConnect>* getDBPool() noexcept {
         return ms_db_pool.get();
     }
 
 private:
     static std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect, std::mutex>>
-      ms_async_db_pool;                                                    // 异步任务数据库
-    static std::unique_ptr<ResourceHybridPool<SQLiteConnect>> ms_db_pool;  // 同步任务数据库
+      ms_async_db_pool;                                              // 异步任务数据库
+    static std::unique_ptr<ResourcePool<SQLiteConnect>> ms_db_pool;  // 同步任务数据库
 };
 
 }  // namespace pod

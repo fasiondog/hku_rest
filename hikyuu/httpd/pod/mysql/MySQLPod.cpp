@@ -12,7 +12,7 @@ namespace hku {
 namespace pod {
 
 std::unique_ptr<ResourceAsioPool<AsyncMySQLConnect, std::mutex>> MySQLPod::ms_async_db_pool;
-std::unique_ptr<ResourceHybridPool<MySQLConnect>> MySQLPod::ms_db_pool;
+std::unique_ptr<ResourcePool<MySQLConnect>> MySQLPod::ms_db_pool;
 
 void MySQLPod::init() {
     auto& config = PodConfig::instance();
@@ -38,9 +38,9 @@ void MySQLPod::init() {
     }
 
     if (enable_sync) {
-        ms_db_pool = std::make_unique<ResourceHybridPool<MySQLConnect>>(
-          param, config.get<int>("mysql_sync_tls_connect", 2),
-          config.get<int>("mysql_sync_max_connect", 20));
+        ms_db_pool = std::make_unique<ResourcePool<MySQLConnect>>(
+          param, config.get<int>("mysql_sync_max_connect", 20),
+          config.get<int>("mysql_sync_max_idle_connect", 10));
         CLS_ASSERT(ms_db_pool);
     }
 }

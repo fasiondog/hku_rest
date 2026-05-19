@@ -14,7 +14,7 @@ namespace hku {
 namespace pod {
 
 std::unique_ptr<ResourceAsioPool<AsyncSQLiteConnect, std::mutex>> SQLitePod::ms_async_db_pool;
-std::unique_ptr<ResourceHybridPool<SQLiteConnect>> SQLitePod::ms_db_pool;
+std::unique_ptr<ResourcePool<SQLiteConnect>> SQLitePod::ms_db_pool;
 
 void SQLitePod::init() {
     auto& config = PodConfig::instance();
@@ -61,9 +61,9 @@ void SQLitePod::init() {
     }
 
     if (enable_sync) {
-        ms_db_pool = std::make_unique<ResourceHybridPool<SQLiteConnect>>(
-          param, config.get<int>("sqlite_sync_max_tls_connect", 2),
-          config.get<int>("sqlite_sync_max_connect", 32));
+        ms_db_pool = std::make_unique<ResourcePool<SQLiteConnect>>(
+          param, config.get<int>("sqlite_sync_max_connect", 20),
+          config.get<int>("sqlite_sync_max_idle_connect", 10));
         CLS_ASSERT(ms_db_pool);
         if (!enable_async) {
             auto connect = ms_db_pool->get();
